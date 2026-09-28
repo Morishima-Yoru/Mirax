@@ -17,9 +17,10 @@ import me.trinitrix.mirax.session.SessionSnapshot
 /**
  * Foreground keep-alive while the shared broadcast switch is on.
  *
- * Does not implement the real WFD beacon (issue #6). Keeps the process and
- * the advertising phase alive after the activity is backgrounded until the
- * user turns broadcast off.
+ * Keeps the process alive after the activity is backgrounded so the privileged
+ * WFD owner can keep advertising until the user turns broadcast off. The real
+ * Primary Sink beacon runs in the Shizuku user-service or the adb helper, not
+ * in this service.
  */
 class AdvertisingKeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null

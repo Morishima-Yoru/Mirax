@@ -37,6 +37,14 @@ android {
 
     buildFeatures {
         viewBinding = true
+        aidl = true
+    }
+
+    sourceSets {
+        getByName("main") {
+            // Shared shell-UID WFD beacon and helper entry (also packaged via helper/build.ps1).
+            java.srcDir("${rootDir}/helper/src")
+        }
     }
 
     testOptions {

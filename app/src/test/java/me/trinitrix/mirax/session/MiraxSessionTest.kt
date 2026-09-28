@@ -4,10 +4,11 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 /**
- * Behaviour tests for the Mirax session seam (issues #2–#4).
+ * Behaviour tests for the Mirax session seam (issues #2–#6).
  *
  * Seam under test: [MiraxSession] — feed settings, privilege reports, and
- * user actions; assert phase, WFD owner, tile state, and widget status.
+ * user actions; assert phase, WFD owner, tile state, widget status, and the
+ * WFD advertise command the privileged owner must apply.
  */
 class MiraxSessionTest {
 
@@ -728,5 +729,112 @@ class MiraxSessionTest {
         assertThat(session.snapshot().standardModes).isEmpty()
         assertThat(session.snapshot().nextAdvertisementModes)
             .containsExactly(VideoMode(1920, 1080, 60))
+    }
+
+    @Test
+    fun advertisingOff_withOwner_emitsNoWfdAdvertiseCommand() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(DeviceNameReport("Pixel Fold"))
+        assertThat(session.snapshot().wfdAdvertise).isNull()
+    }
+
+    @Test
+    fun advertisingOn_withoutOwner_emitsNoWfdAdvertiseCommand() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport())
+        session.report(DeviceNameReport("Pixel Fold"))
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(session.snapshot().wfdAdvertise).isNull()
+    }
+
+    @Test
+    fun helperOwner_advertisingOn_emitsAdvertiseForHelperWithNameAndModes() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(DeviceNameReport("Living Room Fold"))
+        val snap = session.snapshot()
+        val command = snap.wfdAdvertise
+        assertThat(command).isNotNull()
+        assertThat(command!!.owner).isEqualTo(WfdOwner.HELPER)
+        assertThat(command.broadcastName).isEqualTo("Living Room Fold")
+        assertThat(command.modes).isEqualTo(snap.nextAdvertisementModes)
+        assertThat(command.modes).containsExactly(
+            VideoMode(1280, 720, 60),
+            VideoMode(1920, 1080, 30),
+            VideoMode(1920, 1080, 60),
+        )
+    }
+
+    @Test
+    fun shizukuOwner_advertisingOn_emitsAdvertiseForShizukuWithOverrideName() {
+        val session = MiraxSession(
+            SessionSettings(
+                advertisingEnabled = true,
+                displayNameOverride = "Mirax Desk",
+            ),
+        )
+        session.report(
+            PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = true),
+        )
+        session.report(DeviceNameReport("Phone Model Name"))
+        val command = session.snapshot().wfdAdvertise
+        assertThat(command).isNotNull()
+        assertThat(command!!.owner).isEqualTo(WfdOwner.SHIZUKU)
+        assertThat(command.broadcastName).isEqualTo("Mirax Desk")
+        assertThat(command.broadcastName).doesNotContain("Z Fold")
+        assertThat(command.broadcastName).doesNotContain("ZFold")
+        assertThat(command.modes).isEqualTo(session.snapshot().nextAdvertisementModes)
+    }
+
+    @Test
+    fun shizukuTakesOver_stopsHelperThenAdvertisesAsShizuku() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().wfdAdvertise!!.owner).isEqualTo(WfdOwner.HELPER)
+
+        session.report(
+            PrivilegeReport(
+                shizukuServiceRunning = true,
+                shizukuAuthorized = true,
+                helperRunning = true,
+            ),
+        )
+        val snap = session.snapshot()
+        assertThat(snap.effects).contains(SessionEffect.StopHelper)
+        assertThat(snap.wfdAdvertise).isNotNull()
+        assertThat(snap.wfdAdvertise!!.owner).isEqualTo(WfdOwner.SHIZUKU)
+    }
+
+    @Test
+    fun turnAdvertisingOff_clearsWfdAdvertiseCommand() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().wfdAdvertise).isNotNull()
+
+        session.handle(SessionAction.SetAdvertising(false))
+        assertThat(session.snapshot().wfdAdvertise).isNull()
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.READY)
+    }
+
+    @Test
+    fun ownerLostWhileAdvertising_clearsWfdAdvertiseCommand() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().wfdAdvertise).isNotNull()
+
+        session.report(PrivilegeReport())
+        assertThat(session.snapshot().advertisingEnabled).isTrue()
+        assertThat(session.snapshot().wfdAdvertise).isNull()
+    }
+
+    @Test
+    fun preferredModesPassThroughAdvertiseCommand_unchangedPolicy() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
+        val snap = session.snapshot()
+        assertThat(snap.wfdAdvertise!!.modes).isEqualTo(snap.nextAdvertisementModes)
+        assertThat(snap.wfdAdvertise!!.modes).contains(VideoMode(2176, 1812, 60))
     }
 }

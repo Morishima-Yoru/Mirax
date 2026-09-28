@@ -184,6 +184,22 @@ sealed interface SessionEffect {
 }
 
 /**
+ * Desired Primary Sink advertise command for the privileged WFD owner.
+ *
+ * Null on [SessionSnapshot.wfdAdvertise] means the phone must not be a
+ * connectable sink. The app process never applies this; the owner
+ * ([WfdOwner.SHIZUKU] or [WfdOwner.HELPER]) does.
+ *
+ * [modes] is the same set as [SessionSnapshot.nextAdvertisementModes] for
+ * later RTSP; the listen beacon itself only needs Primary Sink identity.
+ */
+data class WfdAdvertiseCommand(
+    val owner: WfdOwner,
+    val broadcastName: String,
+    val modes: Set<VideoMode>,
+)
+
+/**
  * Observable session output for Activities and status surfaces.
  *
  * [effectiveBroadcastName] is the single name Wi-Fi Direct and the RTSP friendly
@@ -193,6 +209,9 @@ sealed interface SessionEffect {
  * [nextAdvertisementModes] is the set for the next advertise — not a priority order.
  * The resolution UI only renders these outputs and forwards edit, leave-field, and
  * use-this-screen actions.
+ *
+ * [wfdAdvertise] is the continuous desired state for the privileged owner:
+ * non-null when broadcast is on and a WFD owner exists.
  */
 data class SessionSnapshot(
     val phase: ScreenPhase,
@@ -218,6 +237,7 @@ data class SessionSnapshot(
     val currentResolutionText: String = "",
     val miraxDisplayId: Int = 0,
     val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
+    val wfdAdvertise: WfdAdvertiseCommand? = null,
 )
 
 /**

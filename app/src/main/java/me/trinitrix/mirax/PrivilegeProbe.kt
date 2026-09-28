@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.util.Log
+import me.trinitrix.mirax.helper.Helper
 import me.trinitrix.mirax.session.PrivilegeReport
 import rikka.shizuku.Shizuku
 import java.io.IOException
@@ -17,7 +18,6 @@ import java.io.IOException
  */
 object PrivilegeProbe {
     private const val TAG = "MiraxPrivilege"
-    private const val HELPER_SOCKET_NAME = "mirax-helper"
     private const val REQUEST_CODE = 0x4D58
 
     /**
@@ -68,7 +68,7 @@ object PrivilegeProbe {
     fun requestStopHelper() {
         try {
             LocalSocket().use { socket ->
-                socket.connect(LocalSocketAddress(HELPER_SOCKET_NAME))
+                socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
                 socket.outputStream.write("STOP\n".toByteArray(Charsets.UTF_8))
                 socket.outputStream.flush()
             }
@@ -102,7 +102,7 @@ object PrivilegeProbe {
     private fun probeHelper(): Boolean {
         return try {
             LocalSocket().use { socket ->
-                socket.connect(LocalSocketAddress(HELPER_SOCKET_NAME))
+                socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
                 true
             }
         } catch (err: IOException) {

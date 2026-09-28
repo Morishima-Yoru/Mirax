@@ -8,15 +8,18 @@ import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.TileState
 import me.trinitrix.mirax.session.WfdOwner
 import me.trinitrix.mirax.tile.BroadcastTileService
+import me.trinitrix.mirax.wfd.WfdOwnerBridge
 import me.trinitrix.mirax.widget.BroadcastStatusWidget
 
 /**
  * Host-side bridge that applies session actions, persists settings, keeps the
  * advertising foreground service in sync, refreshes the Quick Settings tile and
- * home-screen widget, reads `wm size` when the session allows, and shows toasts.
+ * home-screen widget, reads `wm size` when the session allows, applies the
+ * privileged WFD advertise command, and shows toasts.
  *
  * Product decisions stay in [me.trinitrix.mirax.session.MiraxSession]; this
- * object only performs Android side effects.
+ * object only performs Android side effects. The app process never calls
+ * `setWfdInfo`.
  */
 object SessionHost {
     /**
@@ -82,7 +85,10 @@ object SessionHost {
         BroadcastStatusWidget.updateAll(appContext, snapshot)
         BroadcastTileService.requestListening(appContext)
         applyEffects(appContext, snapshot)
-        return session.snapshot()
+        // StopHelper runs before advertise so Shizuku takes exclusive ownership.
+        val afterEffects = MiraxApp.instance.session.snapshot()
+        WfdOwnerBridge.sync(appContext, afterEffects.wfdAdvertise)
+        return MiraxApp.instance.session.snapshot()
     }
 
     /**

@@ -3,12 +3,14 @@ package me.trinitrix.mirax.session
 /**
  * Mirax product session: the single test seam for screen phase, WFD owner,
  * tile state, widget status, resolved language, effective broadcast name,
- * preferred mode, standard-mode checklist, and the next advertisement set.
+ * preferred mode, standard-mode checklist, the next advertisement set, and
+ * the WFD advertise command the privileged owner must apply.
  *
  * Activities, the Quick Settings tile, and the home-screen widget only render
  * [snapshot] outputs and forward [SessionAction]s. Privileged work (wm size,
  * WFD advertise) is never performed in the app process; this module only
- * decides who may own WFD and whether wm size may be read through that owner.
+ * decides who may own WFD, whether wm size may be read, and which name and
+ * mode set the owner should receive.
  *
  * A *stay* is the lifetime of one [MiraxSession] instance (the app process
  * from this open). Shizuku permission is requested at most once per stay.
@@ -166,6 +168,7 @@ class MiraxSession(
         val followsDevice = displayNameOverride == null
         val effectiveName = if (followsDevice) deviceName else displayNameOverride.orEmpty()
         val canRead = owner != WfdOwner.NONE
+        val nextModes = resolveNextAdvertisementModes()
         val standardRows = StandardVideoModes.catalog(maxVideoBitrateBps).map { mode ->
             StandardModeRow(mode = mode, checked = mode in checkedStandardModes)
         }
@@ -189,10 +192,11 @@ class MiraxSession(
             preferredModeText = preferredMode?.format().orEmpty(),
             canUseThisScreen = canRead,
             standardModes = standardRows,
-            nextAdvertisementModes = resolveNextAdvertisementModes(),
+            nextAdvertisementModes = nextModes,
             currentResolutionText = preferredMode?.format().orEmpty(),
             miraxDisplayId = miraxDisplayId,
             maxVideoBitrateBps = maxVideoBitrateBps,
+            wfdAdvertise = resolveWfdAdvertise(owner, effectiveName, nextModes),
         )
     }
 
@@ -354,6 +358,21 @@ class MiraxSession(
         } else {
             checked + preferred
         }
+    }
+
+    private fun resolveWfdAdvertise(
+        owner: WfdOwner,
+        broadcastName: String,
+        modes: Set<VideoMode>,
+    ): WfdAdvertiseCommand? {
+        if (!advertisingEnabled || owner == WfdOwner.NONE) {
+            return null
+        }
+        return WfdAdvertiseCommand(
+            owner = owner,
+            broadcastName = broadcastName,
+            modes = modes,
+        )
     }
 
     private fun resolveAppLanguage(): AppLanguage {

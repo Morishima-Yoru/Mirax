@@ -4,6 +4,7 @@ import android.content.pm.PackageManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.util.Log
+import me.trinitrix.mirax.helper.Helper
 import me.trinitrix.mirax.session.WmSizeReading
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
@@ -19,7 +20,6 @@ import java.util.concurrent.TimeUnit
  */
 object WmSizeReader {
     private const val TAG = "MiraxWmSize"
-    private const val HELPER_SOCKET_NAME = "mirax-helper"
 
     /**
      * Read plain `wm size` (no display id) for provisioning.
@@ -62,7 +62,7 @@ object WmSizeReader {
     private fun readViaHelper(displayId: Int?): WmSizeReading? {
         return try {
             LocalSocket().use { socket ->
-                socket.connect(LocalSocketAddress(HELPER_SOCKET_NAME))
+                socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
                 val command = if (displayId == null) {
                     "WM_SIZE\n"
                 } else {
