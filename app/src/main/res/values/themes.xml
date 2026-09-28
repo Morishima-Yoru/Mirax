@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Mirax" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/mirax_accent</item>
+        <item name="colorPrimaryVariant">@color/mirax_accent</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="android:statusBarColor">@color/mirax_background</item>
+        <item name="android:navigationBarColor">@color/mirax_background</item>
+        <item name="android:windowBackground">@color/mirax_background</item>
+        <item name="android:textColorPrimary">@color/mirax_on_surface</item>
+        <item name="android:textColorSecondary">@color/mirax_muted</item>
+    </style>
+</resources>

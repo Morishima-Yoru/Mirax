@@ -40,3 +40,4 @@ receiver/player-classes/
 receiver/player-dex/
 *.jar
 *.idsig
+!gradle/wrapper/gradle-wrapper.jar

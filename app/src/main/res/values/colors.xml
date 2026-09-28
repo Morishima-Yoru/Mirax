@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mirax_background">#FF121418</color>
+    <color name="mirax_surface">#FF1C1F26</color>
+    <color name="mirax_on_surface">#FFE8EAED</color>
+    <color name="mirax_muted">#FF9AA0A6</color>
+    <color name="mirax_accent">#FF5B9FD4</color>
+</resources>

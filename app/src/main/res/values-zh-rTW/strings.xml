@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="waiting_title">等待特權路徑</string>
+    <string name="waiting_body">Mirax 需要已授權的 Shizuku，或以 adb 啟動的 helper，才能作為顯示器廣播。Mirax 不安裝也不啟動 Shizuku。</string>
+    <string name="waiting_retry">重試</string>
+    <string name="waiting_adb_label">僅啟動 helper</string>
+    <string name="display_card_title">這台顯示器</string>
+    <string name="display_card_status_ready">就緒</string>
+    <string name="display_card_status_advertising">廣播中</string>
+    <string name="display_card_status_connected">已連線</string>
+    <string name="display_card_hint">請在 Windows 使用 Win+K 連線。沒有 App 內配對。</string>
+    <string name="advertising_switch">廣播這台顯示器</string>
+    <string name="advanced_adb_title">進階 adb</string>
+</resources>

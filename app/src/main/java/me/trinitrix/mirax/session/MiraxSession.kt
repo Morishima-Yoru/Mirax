@@ -1,0 +1,166 @@
+package me.trinitrix.mirax.session
+
+/**
+ * Mirax product session: the single test seam for screen phase, WFD owner,
+ * tile state, and widget status.
+ *
+ * Activities only render [snapshot] outputs and forward [SessionAction]s.
+ * Privileged work (wm size, WFD advertise) is never performed in the app
+ * process; this module only decides who may own WFD and whether wm size may
+ * be read through that owner.
+ *
+ * A *stay* is the lifetime of one [MiraxSession] instance (the app process
+ * from this open). Shizuku permission is requested at most once per stay.
+ */
+class MiraxSession(
+    initialSettings: SessionSettings = SessionSettings(),
+) {
+    private var advertisingEnabled: Boolean = initialSettings.advertisingEnabled
+    private var privilege: PrivilegeReport = PrivilegeReport()
+    private var connected: Boolean = false
+    private var permissionRequestedThisStay: Boolean = false
+    private var pendingPermissionRequest: Boolean = false
+    private var pendingEffects: List<SessionEffect> = emptyList()
+
+    /**
+     * Feed the latest privilege-path observation from the environment.
+     *
+     * Args:
+     *     report: Current Shizuku and helper availability.
+     */
+    fun report(report: PrivilegeReport) {
+        val previousOwner = resolveOwner(privilege)
+        val nextOwner = resolveOwner(report)
+        if (
+            nextOwner == WfdOwner.SHIZUKU &&
+            report.helperRunning &&
+            previousOwner != WfdOwner.SHIZUKU
+        ) {
+            pendingEffects = pendingEffects + SessionEffect.StopHelper
+        }
+        privilege = report
+        if (nextOwner == WfdOwner.NONE) {
+            connected = false
+        }
+    }
+
+    /**
+     * Apply a user or lifecycle action.
+     *
+     * Args:
+     *     action: Open, retry, advertising toggle, or connection event.
+     */
+    fun handle(action: SessionAction) {
+        when (action) {
+            SessionAction.OpenApp -> onOpenApp()
+            SessionAction.Retry, SessionAction.AutoWait -> {
+                pendingPermissionRequest = false
+            }
+            is SessionAction.SetAdvertising -> setAdvertising(action.enabled)
+            SessionAction.AcknowledgeEffects -> pendingEffects = emptyList()
+            SessionAction.ConnectionEstablished -> {
+                if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
+                    connected = true
+                }
+            }
+            SessionAction.ConnectionEnded -> connected = false
+        }
+    }
+
+    /**
+     * Current observable output for the UI and status surfaces.
+     *
+     * Returns:
+     *     A [SessionSnapshot] derived solely from settings and privilege.
+     */
+    fun snapshot(): SessionSnapshot {
+        val owner = resolveOwner(privilege)
+        val phase = resolvePhase(owner)
+        return SessionSnapshot(
+            phase = phase,
+            wfdOwner = owner,
+            tileState = resolveTile(owner, phase),
+            widgetStatus = resolveWidget(owner, phase),
+            advertisingEnabled = advertisingEnabled,
+            shouldRequestShizukuPermission = pendingPermissionRequest,
+            canReadWmSize = owner != WfdOwner.NONE,
+            helperStartCommand = HELPER_START_COMMAND,
+            effects = pendingEffects,
+        )
+    }
+
+    private fun onOpenApp() {
+        val shouldAsk =
+            privilege.shizukuServiceRunning &&
+                !privilege.shizukuAuthorized &&
+                !permissionRequestedThisStay
+        if (shouldAsk) {
+            permissionRequestedThisStay = true
+            pendingPermissionRequest = true
+        } else {
+            pendingPermissionRequest = false
+        }
+    }
+
+    private fun setAdvertising(enabled: Boolean) {
+        val owner = resolveOwner(privilege)
+        if (enabled && owner == WfdOwner.NONE) {
+            return
+        }
+        advertisingEnabled = enabled
+        if (!enabled) {
+            connected = false
+        }
+    }
+
+    private fun resolveOwner(report: PrivilegeReport): WfdOwner {
+        val shizukuReady = report.shizukuServiceRunning && report.shizukuAuthorized
+        return when {
+            shizukuReady -> WfdOwner.SHIZUKU
+            report.helperRunning -> WfdOwner.HELPER
+            else -> WfdOwner.NONE
+        }
+    }
+
+    private fun resolvePhase(owner: WfdOwner): ScreenPhase {
+        if (owner == WfdOwner.NONE) {
+            return ScreenPhase.FROZEN
+        }
+        if (connected) {
+            return ScreenPhase.CONNECTED
+        }
+        return if (advertisingEnabled) {
+            ScreenPhase.ADVERTISING
+        } else {
+            ScreenPhase.READY
+        }
+    }
+
+    private fun resolveTile(owner: WfdOwner, phase: ScreenPhase): TileState {
+        return when {
+            owner == WfdOwner.NONE -> TileState.GRAY
+            phase == ScreenPhase.CONNECTED -> TileState.CONNECTED
+            phase == ScreenPhase.ADVERTISING -> TileState.ADVERTISING
+            else -> TileState.OFF
+        }
+    }
+
+    private fun resolveWidget(owner: WfdOwner, phase: ScreenPhase): WidgetStatus {
+        return when {
+            owner == WfdOwner.NONE -> WidgetStatus.UNAVAILABLE
+            phase == ScreenPhase.CONNECTED -> WidgetStatus.CONNECTED
+            phase == ScreenPhase.ADVERTISING -> WidgetStatus.ADVERTISING
+            else -> WidgetStatus.OFF
+        }
+    }
+
+    companion object {
+        /**
+         * Shared adb command shown on the waiting screen and in advanced adb.
+         * Starts only the Mirax helper; it does not install or manage Shizuku.
+         */
+        const val HELPER_START_COMMAND: String =
+            "adb shell \"CLASSPATH=/data/local/tmp/mirax-helper.jar " +
+                "app_process /system/bin me.trinitrix.mirax.helper.Helper\""
+    }
+}

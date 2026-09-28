@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Mirax</string>
+    <string name="waiting_title">Waiting for a privilege path</string>
+    <string name="waiting_body">Mirax needs Shizuku (authorized) or the adb helper before it can broadcast as a display. Mirax does not install or start Shizuku.</string>
+    <string name="waiting_retry">Retry</string>
+    <string name="waiting_adb_label">Start helper only</string>
+    <string name="display_card_title">This display</string>
+    <string name="display_card_status_ready">Ready</string>
+    <string name="display_card_status_advertising">Broadcasting</string>
+    <string name="display_card_status_connected">Connected</string>
+    <string name="display_card_hint">Use Win+K on Windows to connect. There is no in-app pairing.</string>
+    <string name="advertising_switch">Broadcast this display</string>
+    <string name="advanced_adb_title">Advanced adb</string>
+</resources>
