@@ -36,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     private var updatingPreferredMode = false
     private var updatingStandardModes = false
     private var updatingBottomHandle = false
+    private var updatingFloatingBall = false
     private var preferredModeEdited = false
     private var appliedAppLanguage: AppLanguage? = null
 
@@ -133,24 +134,40 @@ class MainActivity : AppCompatActivity() {
             render(SessionHost.setBottomHandleEnabled(this, isChecked))
         }
 
+        binding.floatingBallSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (updatingFloatingBall) {
+                return@setOnCheckedChangeListener
+            }
+            render(SessionHost.setFloatingBallEnabled(this, isChecked))
+        }
+
+        binding.overlayReminderButton.setOnClickListener {
+            render(SessionHost.requestOverlayPermission(this))
+        }
+
         val session = MiraxApp.instance.session
         refreshEnvironmentInputs()
         refreshPrivilege()
         session.handle(SessionAction.OpenApp)
+        // Apply OpenApp effects (including the initial overlay permission request).
+        SessionHost.commit(this)
         maybeRequestShizuku(session.snapshot())
         render(session.snapshot())
     }
 
     override fun onStart() {
         super.onStart()
+        showing = true
         refreshEnvironmentInputs()
         refreshPrivilege()
-        render(MiraxApp.instance.session.snapshot())
+        // Opening Mirax's dashboard while connected is not "going home".
+        render(SessionHost.openedMiraxDashboard(this))
         scheduleAutoWaitIfFrozen()
     }
 
     override fun onStop() {
         handler.removeCallbacks(autoWaitRunnable)
+        showing = false
         super.onStop()
     }
 
@@ -229,6 +246,8 @@ class MainActivity : AppCompatActivity() {
         renderPreferredMode(snapshot)
         renderStandardModes(snapshot)
         renderBottomHandle(snapshot)
+        renderFloatingBall(snapshot)
+        renderOverlayReminder(snapshot)
         binding.useThisScreenButton.isEnabled = snapshot.canUseThisScreen
 
         if (!frozen) {
@@ -350,7 +369,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderFloatingBall(snapshot: SessionSnapshot) {
+        if (binding.floatingBallSwitch.isChecked != snapshot.floatingBallEnabled) {
+            updatingFloatingBall = true
+            binding.floatingBallSwitch.isChecked = snapshot.floatingBallEnabled
+            updatingFloatingBall = false
+        }
+    }
+
+    private fun renderOverlayReminder(snapshot: SessionSnapshot) {
+        val show = !frozenPhase(snapshot) && snapshot.showOverlayPermissionReminder
+        binding.overlayReminder.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun frozenPhase(snapshot: SessionSnapshot): Boolean =
+        snapshot.phase == ScreenPhase.FROZEN
+
     companion object {
         private const val AUTO_WAIT_MS = 2_000L
+
+        @Volatile
+        private var showing: Boolean = false
+
+        fun isShowing(): Boolean = showing
     }
 }

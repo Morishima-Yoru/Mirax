@@ -6,22 +6,24 @@ package me.trinitrix.mirax.session
  * preferred mode, standard-mode checklist, the next advertisement set, the
  * WFD advertise command the privileged owner must apply, connection events
  * through PLAY (selected mode and picture phase), system Back confirm while
- * connected, and the picture bottom-handle outputs.
+ * connected, the picture bottom-handle outputs, overlay-permission reminder,
+ * and floating-ball visibility when leaving projection for the home screen.
  *
- * Activities, the Quick Settings tile, and the home-screen widget only render
- * [snapshot] outputs and forward [SessionAction]s. Privileged work (wm size,
- * WFD advertise) is never performed in the app process; this module only
- * decides who may own WFD, whether wm size may be read, and which name and
- * mode set the owner should receive. RTSP encode/decode stays behind this
- * seam; views never interpret RTSP themselves.
+ * Activities, the Quick Settings tile, the home-screen widget, and the floating
+ * ball only render [snapshot] outputs and forward [SessionAction]s. Privileged
+ * work (wm size, WFD advertise) is never performed in the app process; this
+ * module only decides who may own WFD, whether wm size may be read, and which
+ * name and mode set the owner should receive. RTSP encode/decode stays behind
+ * this seam; views never interpret RTSP themselves.
  *
  * A *stay* is the lifetime of one [MiraxSession] instance (the app process
  * from this open). Shizuku permission is requested at most once per stay.
  *
- * Language, display name, preferred-mode text, and standard-mode checks remain
- * editable while the phase is frozen. The session does not write the system
- * device name. A group drop before PLAY does not change the next advertisement
- * set and does not latch extra modes.
+ * Language, display name, preferred-mode text, standard-mode checks, and the
+ * floating-ball switch remain editable while the phase is frozen. Overlay
+ * permission is requested on the initial screen, including while frozen. The
+ * session does not write the system device name. A group drop before PLAY does
+ * not change the next advertisement set and does not latch extra modes.
  */
 class MiraxSession(
     initialSettings: SessionSettings = SessionSettings(),
@@ -36,10 +38,13 @@ class MiraxSession(
     private var provisioningConsumed: Boolean =
         initialSettings.provisioningConsumed || initialSettings.preferredMode != null
     private var bottomHandleEnabled: Boolean = initialSettings.bottomHandleEnabled
+    private var floatingBallEnabled: Boolean = initialSettings.floatingBallEnabled
     private var privilege: PrivilegeReport = PrivilegeReport()
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
     private var miraxDisplayId: Int = 0
+    private var overlayGranted: Boolean = false
+    private var overlayCanPrompt: Boolean = true
     private var connected: Boolean = false
     private var selectedMode: VideoMode? = null
     /** Modes frozen for the current connection's RTSP advertisement. */
@@ -50,6 +55,11 @@ class MiraxSession(
      */
     private var backEndsConnectionPending: Boolean = false
     private var bottomHandleExpanded: Boolean = false
+    /**
+     * True while connected and the user left projection for the phone home
+     * screen (not Mirax's own dashboard).
+     */
+    private var awayOnHomeScreen: Boolean = false
     private var permissionRequestedThisStay: Boolean = false
     private var pendingPermissionRequest: Boolean = false
     private var pendingEffects: List<SessionEffect> = emptyList()
@@ -115,11 +125,23 @@ class MiraxSession(
     }
 
     /**
+     * Feed overlay ("display over other apps") permission state.
+     *
+     * Args:
+     *     report: Whether overlay is granted and whether the host can still prompt.
+     */
+    fun report(report: OverlayPermissionReport) {
+        overlayGranted = report.granted
+        overlayCanPrompt = report.canPrompt
+        maybeEndHomeStayWithoutBall()
+    }
+
+    /**
      * Apply a user or lifecycle action.
      *
      * Args:
      *     action: Open, retry, advertising toggle, language, display name,
-     *     resolution, or connection event.
+     *     resolution, overlay, floating ball, or connection event.
      */
     fun handle(action: SessionAction) {
         when (action) {
@@ -194,6 +216,22 @@ class MiraxSession(
                     bottomHandleExpanded = !bottomHandleExpanded
                 }
             }
+            is SessionAction.SetFloatingBallEnabled -> {
+                floatingBallEnabled = action.enabled
+                maybeEndHomeStayWithoutBall()
+            }
+            SessionAction.RequestOverlayPermission -> {
+                onRequestOverlayPermission()
+            }
+            SessionAction.LeftProjectionToHome -> {
+                onLeftProjectionToHome()
+            }
+            SessionAction.OpenedMiraxDashboard -> {
+                awayOnHomeScreen = false
+            }
+            SessionAction.FloatingBallTapped -> {
+                onFloatingBallTapped()
+            }
         }
     }
 
@@ -220,6 +258,11 @@ class MiraxSession(
         val handleResolution = selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
         val handleRefresh = selectedMode?.refreshHz
         val showHandle = phase == ScreenPhase.CONNECTED && bottomHandleEnabled
+        val showBall =
+            phase == ScreenPhase.CONNECTED &&
+                awayOnHomeScreen &&
+                overlayGranted &&
+                floatingBallEnabled
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
@@ -252,6 +295,9 @@ class MiraxSession(
             bottomHandleExpanded = showHandle && this.bottomHandleExpanded,
             handleResolutionText = if (showHandle) handleResolution else "",
             handleRefreshRateHz = if (showHandle) handleRefresh else null,
+            floatingBallEnabled = floatingBallEnabled,
+            showOverlayPermissionReminder = !overlayGranted,
+            showFloatingBall = showBall,
         )
     }
 
@@ -268,6 +314,7 @@ class MiraxSession(
             maxVideoBitrateBps = maxVideoBitrateBps,
             provisioningConsumed = provisioningConsumed,
             bottomHandleEnabled = bottomHandleEnabled,
+            floatingBallEnabled = floatingBallEnabled,
         )
     }
 
@@ -282,7 +329,53 @@ class MiraxSession(
         } else {
             pendingPermissionRequest = false
         }
+        if (!overlayGranted) {
+            enqueueEffect(SessionEffect.RequestOverlayPermission)
+        }
         maybeRequestProvisioningRead()
+    }
+
+    private fun onRequestOverlayPermission() {
+        if (overlayGranted) {
+            return
+        }
+        if (overlayCanPrompt) {
+            enqueueEffect(SessionEffect.RequestOverlayPermission)
+        } else {
+            enqueueEffect(SessionEffect.OpenOverlaySettings)
+        }
+    }
+
+    private fun onLeftProjectionToHome() {
+        if (!connected) {
+            return
+        }
+        if (overlayGranted && floatingBallEnabled) {
+            awayOnHomeScreen = true
+            return
+        }
+        // No ball available: end immediately, no toast, broadcast stays on.
+        endConnectionFromUser()
+    }
+
+    private fun onFloatingBallTapped() {
+        if (!connected || !awayOnHomeScreen) {
+            return
+        }
+        awayOnHomeScreen = false
+        enqueueEffect(SessionEffect.BringProjectionToFront)
+    }
+
+    private fun maybeEndHomeStayWithoutBall() {
+        if (connected && awayOnHomeScreen && (!overlayGranted || !floatingBallEnabled)) {
+            endConnectionFromUser()
+        }
+    }
+
+    private fun enqueueEffect(effect: SessionEffect) {
+        if (effect !in pendingEffects) {
+            pendingEffects = pendingEffects + effect
+        }
     }
 
     private fun onTileTap() {
@@ -357,6 +450,7 @@ class MiraxSession(
     private fun enterPlay() {
         if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
             connected = true
+            awayOnHomeScreen = false
         }
     }
 
@@ -365,6 +459,7 @@ class MiraxSession(
         connectionAdvertisedModes = null
         backEndsConnectionPending = false
         bottomHandleExpanded = false
+        awayOnHomeScreen = false
     }
 
     private fun commitPreferredModeText(text: String) {

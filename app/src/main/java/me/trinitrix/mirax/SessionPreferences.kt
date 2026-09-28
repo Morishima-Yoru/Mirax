@@ -20,6 +20,7 @@ object SessionPreferences {
     private const val KEY_PROVISIONING_CONSUMED = "provisioning_consumed"
     private const val KEY_MAX_VIDEO_BITRATE_BPS = "max_video_bitrate_bps"
     private const val KEY_BOTTOM_HANDLE_ENABLED = "bottom_handle_enabled"
+    private const val KEY_FLOATING_BALL_ENABLED = "floating_ball_enabled"
 
     fun load(context: Context): SessionSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -50,6 +51,7 @@ object SessionPreferences {
             ),
             provisioningConsumed = prefs.getBoolean(KEY_PROVISIONING_CONSUMED, preferred != null),
             bottomHandleEnabled = prefs.getBoolean(KEY_BOTTOM_HANDLE_ENABLED, true),
+            floatingBallEnabled = prefs.getBoolean(KEY_FLOATING_BALL_ENABLED, true),
         )
     }
 
@@ -83,8 +85,8 @@ object SessionPreferences {
     }
 
     /**
-     * Persist preferred mode, checklist, bitrate cap, provisioning flag, and
-     * bottom-handle setting.
+     * Persist preferred mode, checklist, bitrate cap, provisioning flag,
+     * bottom-handle, and floating-ball settings.
      */
     fun saveResolutionSettings(context: Context, settings: SessionSettings) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -102,6 +104,7 @@ object SessionPreferences {
                 putBoolean(KEY_PROVISIONING_CONSUMED, settings.provisioningConsumed)
                 putLong(KEY_MAX_VIDEO_BITRATE_BPS, settings.maxVideoBitrateBps)
                 putBoolean(KEY_BOTTOM_HANDLE_ENABLED, settings.bottomHandleEnabled)
+                putBoolean(KEY_FLOATING_BALL_ENABLED, settings.floatingBallEnabled)
             }
             .apply()
     }
@@ -110,6 +113,13 @@ object SessionPreferences {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_BOTTOM_HANDLE_ENABLED, enabled)
+            .apply()
+    }
+
+    fun saveFloatingBallEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_FLOATING_BALL_ENABLED, enabled)
             .apply()
     }
 

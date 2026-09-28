@@ -56,4 +56,8 @@
     <string name="handle_refresh_value">%1$d Hz</string>
     <string name="settings_bottom_handle_title">底部把手</string>
     <string name="settings_bottom_handle_switch">投影時顯示底部把手</string>
+    <string name="settings_floating_ball_title">浮動球</string>
+    <string name="settings_floating_ball_switch">離開投影時顯示浮動球</string>
+    <string name="overlay_reminder_body">Mirax 需要「顯示在其他應用程式上層」權限，才能在您離開投影時顯示浮動球。</string>
+    <string name="overlay_reminder_button">授予顯示在上層權限</string>
 </resources>

@@ -1,6 +1,7 @@
 package me.trinitrix.mirax
 
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionEffect
@@ -17,12 +18,13 @@ import me.trinitrix.mirax.widget.BroadcastStatusWidget
  * advertising foreground service in sync, refreshes the Quick Settings tile and
  * home-screen widget, reads `wm size` when the session allows, applies the
  * privileged WFD advertise command, runs the app-process RTSP/RTP receive path,
- * and shows toasts.
+ * syncs the floating-ball overlay, and shows toasts.
  *
  * Product decisions stay in [me.trinitrix.mirax.session.MiraxSession]; this
  * object only performs Android side effects. The app process never calls
  * `setWfdInfo`. Views do not interpret RTSP — connection events are forwarded
- * into the session here.
+ * into the session here. The home-screen widget does not require overlay
+ * permission.
  */
 object SessionHost {
     /**
@@ -87,6 +89,7 @@ object SessionHost {
         AdvertisingKeepAliveService.sync(appContext, snapshot)
         BroadcastStatusWidget.updateAll(appContext, snapshot)
         BroadcastTileService.requestListening(appContext)
+        FloatingBallService.sync(appContext, snapshot)
         applyEffects(appContext, snapshot)
         // StopHelper runs before advertise so Shizuku takes exclusive ownership.
         val afterEffects = MiraxApp.instance.session.snapshot()
@@ -134,6 +137,16 @@ object SessionHost {
     }
 
     /**
+     * Persist and apply the floating-ball setting.
+     */
+    fun setFloatingBallEnabled(context: Context, enabled: Boolean): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SetFloatingBallEnabled(enabled))
+        SessionPreferences.saveFloatingBallEnabled(context.applicationContext, enabled)
+        return commit(context)
+    }
+
+    /**
      * User tapped the thin bottom handle to expand or collapse its panel.
      */
     fun toggleBottomHandleExpanded(context: Context): SessionSnapshot {
@@ -143,11 +156,50 @@ object SessionHost {
     }
 
     /**
-     * Refresh privilege and push status surfaces without a user action.
+     * Dashboard reminder: ask again for overlay permission (or open settings).
+     */
+    fun requestOverlayPermission(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.report(OverlayPermission.report(context))
+        session.handle(SessionAction.RequestOverlayPermission)
+        return commit(context)
+    }
+
+    /**
+     * User left projection for the phone home screen.
+     */
+    fun leftProjectionToHome(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.report(OverlayPermission.report(context))
+        session.handle(SessionAction.LeftProjectionToHome)
+        return commit(context)
+    }
+
+    /**
+     * User opened Mirax's own dashboard while connected.
+     */
+    fun openedMiraxDashboard(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.OpenedMiraxDashboard)
+        return commit(context)
+    }
+
+    /**
+     * User tapped the floating ball to return to projection.
+     */
+    fun floatingBallTapped(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.FloatingBallTapped)
+        return commit(context)
+    }
+
+    /**
+     * Refresh privilege, overlay grant, and push status surfaces without a user action.
      */
     fun refreshPrivilegeAndSurfaces(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
         session.report(PrivilegeProbe.probe(context))
+        session.report(OverlayPermission.report(context))
         return commit(context)
     }
 
@@ -187,6 +239,27 @@ object SessionHost {
         }
         if (SessionEffect.DropActiveConnection in snapshot.effects) {
             SinkConnectionController.dropActiveConnection()
+            consumed = true
+        }
+        if (SessionEffect.RequestOverlayPermission in snapshot.effects) {
+            OverlayPermission.request(context)
+            consumed = true
+        }
+        if (SessionEffect.OpenOverlaySettings in snapshot.effects) {
+            OverlayPermission.openSettings(context)
+            consumed = true
+        }
+        if (SessionEffect.BringProjectionToFront in snapshot.effects) {
+            context.applicationContext.startActivity(
+                Intent(
+                    context.applicationContext,
+                    PictureActivity::class.java,
+                ).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+                ),
+            )
             consumed = true
         }
         if (consumed) {

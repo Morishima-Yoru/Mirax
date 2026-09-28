@@ -19,6 +19,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import me.trinitrix.mirax.session.SessionSnapshot
+import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import java.lang.ref.WeakReference
 
@@ -110,7 +111,35 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        applySession(MiraxApp.instance.session.snapshot())
+        // Projection is foreground again — hide the ball without ending the connection.
+        val session = MiraxApp.instance.session
+        if (session.snapshot().showFloatingBall) {
+            applySession(SessionHost.openedMiraxDashboard(this))
+        } else {
+            applySession(session.snapshot())
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Home / Recents leave. Opening Mirax's own dashboard is reported from MainActivity.
+        if (!isChangingConfigurations && !MainActivity.isShowing()) {
+            SessionHost.leftProjectionToHome(this)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (isChangingConfigurations || isFinishing) {
+            return
+        }
+        // Fallback when onUserLeaveHint did not run (some OEM home gestures).
+        if (!MainActivity.isShowing()) {
+            val snap = MiraxApp.instance.session.snapshot()
+            if (snap.phase == ScreenPhase.CONNECTED && !snap.showFloatingBall) {
+                SessionHost.leftProjectionToHome(this)
+            }
+        }
     }
 
     override fun onDestroy() {

@@ -143,6 +143,19 @@ data class StandardModeRow(
 )
 
 /**
+ * Overlay ("display over other apps") observation fed by the host.
+ *
+ * Args:
+ *     granted: Whether [Settings.canDrawOverlays] is true for Mirax.
+ *     canPrompt: Whether the host can still present the manage-overlay UI.
+ *         When false, the reminder button opens the system overlay settings page.
+ */
+data class OverlayPermissionReport(
+    val granted: Boolean = false,
+    val canPrompt: Boolean = true,
+)
+
+/**
  * Persisted settings the session reads and updates.
  *
  * Args:
@@ -154,6 +167,7 @@ data class StandardModeRow(
  *     maxVideoBitrateBps: Cap used only to filter the standard-mode list.
  *     provisioningConsumed: Whether the one-time preferred-mode provisioning chance is gone.
  *     bottomHandleEnabled: Whether the picture bottom handle is shown while connected.
+ *     floatingBallEnabled: Whether the floating ball may appear when leaving to home.
  */
 data class SessionSettings(
     val advertisingEnabled: Boolean = false,
@@ -164,6 +178,7 @@ data class SessionSettings(
     val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
     val provisioningConsumed: Boolean = false,
     val bottomHandleEnabled: Boolean = true,
+    val floatingBallEnabled: Boolean = true,
 )
 
 /**
@@ -194,6 +209,23 @@ sealed interface SessionEffect {
      * Host closes the current RTSP client; the listen beacon stays up.
      */
     data object DropActiveConnection : SessionEffect
+
+    /**
+     * Ask the host to present the package-scoped manage-overlay UI.
+     * Used on first open and when the reminder button can still prompt.
+     */
+    data object RequestOverlayPermission : SessionEffect
+
+    /**
+     * Open the system "display over other apps" settings when the manage UI
+     * will no longer be shown.
+     */
+    data object OpenOverlaySettings : SessionEffect
+
+    /**
+     * Bring the fullscreen projection activity to the front (floating-ball tap).
+     */
+    data object BringProjectionToFront : SessionEffect
 }
 
 /**
@@ -235,6 +267,11 @@ data class WfdAdvertiseCommand(
  * is on. [bottomHandleExpanded] is whether the handle panel is open.
  * [handleResolutionText] and [handleRefreshRateHz] are the handle content for
  * the current selected mode (empty / null when the handle is not shown).
+ *
+ * [showOverlayPermissionReminder] is true only when overlay permission is
+ * missing — never when permission is granted and the user merely turned the
+ * floating ball off. [showFloatingBall] is true only while connected, away on
+ * the phone home screen, overlay granted, and the floating-ball switch on.
  */
 data class SessionSnapshot(
     val phase: ScreenPhase,
@@ -268,6 +305,9 @@ data class SessionSnapshot(
     val bottomHandleExpanded: Boolean = false,
     val handleResolutionText: String = "",
     val handleRefreshRateHz: Int? = null,
+    val floatingBallEnabled: Boolean = true,
+    val showOverlayPermissionReminder: Boolean = false,
+    val showFloatingBall: Boolean = false,
 )
 
 /**
@@ -396,4 +436,31 @@ sealed interface SessionAction {
      * Only meaningful while [SessionSnapshot.showBottomHandle] is true.
      */
     data object ToggleBottomHandleExpanded : SessionAction
+
+    /**
+     * User toggled the floating-ball setting. Persisted; defaults on.
+     */
+    data class SetFloatingBallEnabled(val enabled: Boolean) : SessionAction
+
+    /**
+     * Dashboard reminder button: ask again for overlay permission, or open
+     * system overlay settings when the host can no longer prompt.
+     */
+    data object RequestOverlayPermission : SessionAction
+
+    /**
+     * User left projection for the phone home screen (or another non-Mirax app)
+     * while a connection may still be active.
+     */
+    data object LeftProjectionToHome : SessionAction
+
+    /**
+     * User opened Mirax's own dashboard. Not "going home"; connection continues.
+     */
+    data object OpenedMiraxDashboard : SessionAction
+
+    /**
+     * User tapped the floating ball to return to projection.
+     */
+    data object FloatingBallTapped : SessionAction
 }

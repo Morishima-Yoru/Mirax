@@ -1081,6 +1081,171 @@ class MiraxSessionTest {
         assertThat(session.snapshot().showBottomHandle).isFalse()
     }
 
+    @Test
+    fun floatingBall_defaultsOn_andPersistsInExport() {
+        val session = MiraxSession()
+        assertThat(session.snapshot().floatingBallEnabled).isTrue()
+        assertThat(session.exportSettings().floatingBallEnabled).isTrue()
+
+        session.handle(SessionAction.SetFloatingBallEnabled(false))
+        assertThat(session.snapshot().floatingBallEnabled).isFalse()
+        assertThat(session.exportSettings().floatingBallEnabled).isFalse()
+
+        session.handle(SessionAction.SetFloatingBallEnabled(true))
+        assertThat(session.exportSettings().floatingBallEnabled).isTrue()
+    }
+
+    @Test
+    fun overlayReminder_shownOnlyWhenPermissionMissing() {
+        val session = MiraxSession()
+        session.report(OverlayPermissionReport(granted = false))
+        assertThat(session.snapshot().showOverlayPermissionReminder).isTrue()
+
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.SetFloatingBallEnabled(false))
+        assertThat(session.snapshot().showOverlayPermissionReminder).isFalse()
+    }
+
+    @Test
+    fun openApp_requestsOverlayPermissionWhenMissing_includingWhileFrozen() {
+        val session = MiraxSession()
+        session.report(OverlayPermissionReport(granted = false))
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
+
+        session.handle(SessionAction.OpenApp)
+        assertThat(session.snapshot().effects).contains(SessionEffect.RequestOverlayPermission)
+    }
+
+    @Test
+    fun requestOverlayPermission_promptsWhenAllowed_elseOpensSettings() {
+        val session = MiraxSession()
+        session.report(OverlayPermissionReport(granted = false, canPrompt = true))
+        session.handle(SessionAction.RequestOverlayPermission)
+        assertThat(session.snapshot().effects).contains(SessionEffect.RequestOverlayPermission)
+
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.report(OverlayPermissionReport(granted = false, canPrompt = false))
+        session.handle(SessionAction.RequestOverlayPermission)
+        assertThat(session.snapshot().effects).contains(SessionEffect.OpenOverlaySettings)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.RequestOverlayPermission)
+    }
+
+    @Test
+    fun connected_leftToHome_withOverlayAndBallOn_showsFloatingBall_keepsConnection() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        assertThat(session.snapshot().floatingBallEnabled).isTrue()
+
+        session.handle(SessionAction.LeftProjectionToHome)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.showFloatingBall).isTrue()
+        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
+    }
+
+    @Test
+    fun connected_leftToHome_withoutOverlay_endsImmediately_noToast_keepsBroadcast() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = false))
+
+        session.handle(SessionAction.LeftProjectionToHome)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.showFloatingBall).isFalse()
+        assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
+        assertThat(snap.effects).doesNotContain(SessionEffect.ShowPressBackAgainToEndToast)
+    }
+
+    @Test
+    fun connected_leftToHome_withBallOff_endsImmediately_noToast_keepsBroadcast() {
+        val session = MiraxSession(
+            SessionSettings(advertisingEnabled = true, floatingBallEnabled = false),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+
+        session.handle(SessionAction.LeftProjectionToHome)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.showFloatingBall).isFalse()
+        assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
+        assertThat(snap.effects).doesNotContain(SessionEffect.ShowPressBackAgainToEndToast)
+    }
+
+    @Test
+    fun connected_openedDashboard_keepsConnection_doesNotShowBall() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(snap.showFloatingBall).isFalse()
+        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
+    }
+
+    @Test
+    fun floatingBallTap_returnsToProjection_hidesBall() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+
+        session.handle(SessionAction.FloatingBallTapped)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(snap.showFloatingBall).isFalse()
+        assertThat(snap.effects).contains(SessionEffect.BringProjectionToFront)
+    }
+
+    @Test
+    fun floatingBall_endConnection_hidesBall_keepsBroadcast_evenIfHandleOff() {
+        val session = MiraxSession(
+            SessionSettings(
+                advertisingEnabled = true,
+                bottomHandleEnabled = false,
+            ),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1280, 720, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+        assertThat(session.snapshot().showBottomHandle).isFalse()
+
+        session.handle(SessionAction.EndConnection)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.showFloatingBall).isFalse()
+        assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
+    }
+
+    @Test
+    fun connectionEnded_hidesFloatingBall() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+
+        session.handle(SessionAction.ConnectionEnded)
+        assertThat(session.snapshot().showFloatingBall).isFalse()
+    }
+
     private fun connectedSession(): MiraxSession {
         val session = MiraxSession(SessionSettings(advertisingEnabled = true))
         session.report(PrivilegeReport(helperRunning = true))
