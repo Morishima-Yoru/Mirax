@@ -29,6 +29,9 @@
     <string name="settings_display_name_title">顯示名稱</string>
     <string name="display_name_save">儲存名稱</string>
     <string name="advanced_adb_title">進階 adb</string>
+    <string name="sidebar_title">設定</string>
+    <string name="sidebar_open">設定</string>
+    <string name="sidebar_close">關閉</string>
 
     <string name="shizuku_not_open">Shizuku 未開啟</string>
 

@@ -29,7 +29,7 @@ import me.trinitrix.mirax.session.VideoMode
  * available while the session is frozen. Resolution UI only renders the session
  * advertisement-set output and forwards edit, leave-field, and use-this-screen.
  * Picture scale is rendered from the session and forwarded; placement is not
- * computed here.
+ * computed here. The sidebar only renders session output and forwards actions.
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -43,6 +43,8 @@ class MainActivity : AppCompatActivity() {
     private var updatingPictureScale = false
     private var preferredModeEdited = false
     private var appliedAppLanguage: AppLanguage? = null
+    /** When the window is narrow, whether the settings overlay is open. */
+    private var sidebarOverlayOpen = false
 
     private val autoWaitRunnable = object : Runnable {
         override fun run() {
@@ -166,6 +168,11 @@ class MainActivity : AppCompatActivity() {
             render(SessionHost.requestOverlayPermission(this))
         }
 
+        binding.openSidebarButton.setOnClickListener { openSidebarOverlay() }
+        binding.openSidebarButtonWaiting.setOnClickListener { openSidebarOverlay() }
+        binding.closeSidebarButton.setOnClickListener { closeSidebarOverlay() }
+        binding.settingsScrim.setOnClickListener { closeSidebarOverlay() }
+
         val session = MiraxApp.instance.session
         refreshEnvironmentInputs()
         refreshPrivilege()
@@ -273,6 +280,7 @@ class MainActivity : AppCompatActivity() {
         renderBottomHandle(snapshot)
         renderFloatingBall(snapshot)
         renderOverlayReminder(snapshot)
+        applySidebarChrome(frozen)
         binding.useThisScreenButton.isEnabled = snapshot.canUseThisScreen
 
         if (!frozen) {
@@ -294,6 +302,52 @@ class MainActivity : AppCompatActivity() {
         }
 
         scheduleAutoWaitIfFrozen()
+    }
+
+    private fun sidebarDocked(): Boolean =
+        resources.configuration.screenWidthDp >= SIDEBAR_BREAKPOINT_DP
+
+    private fun openSidebarOverlay() {
+        if (sidebarDocked()) {
+            return
+        }
+        sidebarOverlayOpen = true
+        applySidebarChrome(frozenPhase(MiraxApp.instance.session.snapshot()))
+    }
+
+    private fun closeSidebarOverlay() {
+        if (sidebarDocked()) {
+            return
+        }
+        sidebarOverlayOpen = false
+        applySidebarChrome(frozenPhase(MiraxApp.instance.session.snapshot()))
+    }
+
+    private fun applySidebarChrome(frozen: Boolean) {
+        val docked = sidebarDocked()
+        val sidebarWidthPx = resources.getDimensionPixelSize(R.dimen.sidebar_width)
+        if (docked) {
+            sidebarOverlayOpen = false
+            binding.mainRegion.setPadding(0, 0, sidebarWidthPx, 0)
+            binding.settingsScrim.visibility = View.GONE
+            binding.settingsScroll.visibility = View.VISIBLE
+            binding.closeSidebarButton.visibility = View.GONE
+            binding.openSidebarButton.visibility = View.GONE
+            binding.openSidebarButtonWaiting.visibility = View.GONE
+            return
+        }
+        binding.mainRegion.setPadding(0, 0, 0, 0)
+        val open = sidebarOverlayOpen
+        binding.settingsScrim.visibility = if (open) View.VISIBLE else View.GONE
+        binding.settingsScroll.visibility = if (open) View.VISIBLE else View.GONE
+        binding.closeSidebarButton.visibility = if (open) View.VISIBLE else View.GONE
+        if (open) {
+            binding.openSidebarButton.visibility = View.GONE
+            binding.openSidebarButtonWaiting.visibility = View.GONE
+        } else {
+            binding.openSidebarButton.visibility = if (frozen) View.GONE else View.VISIBLE
+            binding.openSidebarButtonWaiting.visibility = if (frozen) View.VISIBLE else View.GONE
+        }
     }
 
     private fun renderLanguage(snapshot: SessionSnapshot) {
@@ -426,6 +480,8 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val AUTO_WAIT_MS = 2_000L
+        /** Window width below which the sidebar collapses to a button. */
+        private const val SIDEBAR_BREAKPOINT_DP = 600
 
         @Volatile
         private var showing: Boolean = false

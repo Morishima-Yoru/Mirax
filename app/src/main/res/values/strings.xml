@@ -30,6 +30,9 @@
     <string name="settings_display_name_title">Display name</string>
     <string name="display_name_save">Save name</string>
     <string name="advanced_adb_title">Advanced adb</string>
+    <string name="sidebar_title">Settings</string>
+    <string name="sidebar_open">Settings</string>
+    <string name="sidebar_close">Close</string>
 
     <string name="shizuku_not_open">Shizuku is not open</string>
 
