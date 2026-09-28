@@ -19,6 +19,8 @@ class MiraxApp : Application() {
         session.report(SystemLocaleReport(HostEnvironment.isSystemTraditionalChinese()))
         session.report(DeviceNameReport(HostEnvironment.readDeviceName(this)))
         HostEnvironment.applyAppLanguage(session.snapshot().appLanguage)
+        // Restore keep-alive if the saved switch was on across process start.
+        SessionHost.commit(this)
     }
 
     companion object {

@@ -4,10 +4,10 @@ package me.trinitrix.mirax.session
  * Mirax product session: the single test seam for screen phase, WFD owner,
  * tile state, widget status, resolved language, and effective broadcast name.
  *
- * Activities only render [snapshot] outputs and forward [SessionAction]s.
- * Privileged work (wm size, WFD advertise) is never performed in the app
- * process; this module only decides who may own WFD and whether wm size may
- * be read through that owner.
+ * Activities, the Quick Settings tile, and the home-screen widget only render
+ * [snapshot] outputs and forward [SessionAction]s. Privileged work (wm size,
+ * WFD advertise) is never performed in the app process; this module only
+ * decides who may own WFD and whether wm size may be read through that owner.
  *
  * A *stay* is the lifetime of one [MiraxSession] instance (the app process
  * from this open). Shizuku permission is requested at most once per stay.
@@ -84,6 +84,7 @@ class MiraxSession(
                 pendingPermissionRequest = false
             }
             is SessionAction.SetAdvertising -> setAdvertising(action.enabled)
+            SessionAction.TileTap -> onTileTap()
             SessionAction.AcknowledgeEffects -> pendingEffects = emptyList()
             SessionAction.ConnectionEstablished -> {
                 if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
@@ -141,6 +142,16 @@ class MiraxSession(
         } else {
             pendingPermissionRequest = false
         }
+    }
+
+    private fun onTileTap() {
+        val owner = resolveOwner(privilege)
+        if (owner == WfdOwner.NONE) {
+            pendingPermissionRequest = false
+            pendingEffects = pendingEffects + SessionEffect.ShowShizukuNotOpenToast
+            return
+        }
+        setAdvertising(!advertisingEnabled)
     }
 
     private fun setAdvertising(enabled: Boolean) {

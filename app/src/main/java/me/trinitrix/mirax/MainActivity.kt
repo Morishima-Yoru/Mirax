@@ -12,7 +12,6 @@ import me.trinitrix.mirax.session.DeviceNameReport
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
-import me.trinitrix.mirax.session.SessionEffect
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.SystemLocaleReport
 
@@ -54,10 +53,7 @@ class MainActivity : AppCompatActivity() {
             if (updatingSwitch) {
                 return@setOnCheckedChangeListener
             }
-            val session = MiraxApp.instance.session
-            session.handle(SessionAction.SetAdvertising(isChecked))
-            SessionPreferences.saveAdvertising(this, session.snapshot().advertisingEnabled)
-            render(session.snapshot())
+            render(SessionHost.setAdvertising(this, isChecked))
         }
 
         binding.languageGroup.setOnCheckedChangeListener { _, checkedId ->
@@ -136,16 +132,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshPrivilege() {
-        val session = MiraxApp.instance.session
-        session.report(PrivilegeProbe.probe(this))
-        applyEffects(session.snapshot())
-    }
-
-    private fun applyEffects(snapshot: SessionSnapshot) {
-        if (SessionEffect.StopHelper in snapshot.effects) {
-            PrivilegeProbe.requestStopHelper()
-            MiraxApp.instance.session.handle(SessionAction.AcknowledgeEffects)
-        }
+        SessionHost.refreshPrivilegeAndSurfaces(this)
     }
 
     private fun maybeRequestShizuku(snapshot: SessionSnapshot) {

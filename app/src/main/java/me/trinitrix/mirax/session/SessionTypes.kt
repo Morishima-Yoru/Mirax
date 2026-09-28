@@ -112,6 +112,12 @@ data class SessionSettings(
  */
 sealed interface SessionEffect {
     data object StopHelper : SessionEffect
+
+    /**
+     * Show the shared "Shizuku is not open" toast after a gray tile probe failed.
+     * Host must not open the authorization dialog for this effect.
+     */
+    data object ShowShizukuNotOpenToast : SessionEffect
 }
 
 /**
@@ -154,6 +160,16 @@ sealed interface SessionAction {
 
     /** User toggled the advertising switch. */
     data class SetAdvertising(val enabled: Boolean) : SessionAction
+
+    /**
+     * Quick Settings tile click after the host refreshed [PrivilegeReport].
+     *
+     * With a WFD owner, toggles advertising. With no owner (gray tile), emits
+     * [SessionEffect.ShowShizukuNotOpenToast] and does not request authorization.
+     * A gray-tile probe that finds Shizuku ready is handled by the host via
+     * [SetAdvertising] `(true)` after the privilege report, not by this action alone.
+     */
+    data object TileTap : SessionAction
 
     /** Host consumed one-shot effects (e.g. StopHelper). */
     data object AcknowledgeEffects : SessionAction

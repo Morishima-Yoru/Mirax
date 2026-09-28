@@ -4,7 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 /**
- * Behaviour tests for the Mirax session seam (issue #2).
+ * Behaviour tests for the Mirax session seam (issues #2–#4).
  *
  * Seam under test: [MiraxSession] — feed settings, privilege reports, and
  * user actions; assert phase, WFD owner, tile state, and widget status.
@@ -311,5 +311,135 @@ class MiraxSessionTest {
         assertThat(snap.appLanguage).isEqualTo(AppLanguage.TRADITIONAL_CHINESE)
         assertThat(snap.effectiveBroadcastName).isEqualTo("Sink-1")
         assertThat(snap.displayNameFollowsDevice).isFalse()
+    }
+
+    // --- Issue #4: shared broadcast switch, tile tap/probe, widget status ---
+
+    @Test
+    fun tileAndWidget_coverGrayOffAdvertisingConnectedAndUnavailable() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport())
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.GRAY)
+        assertThat(session.snapshot().widgetStatus).isEqualTo(WidgetStatus.UNAVAILABLE)
+
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.OFF)
+        assertThat(session.snapshot().widgetStatus).isEqualTo(WidgetStatus.OFF)
+
+        session.handle(SessionAction.SetAdvertising(true))
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.ADVERTISING)
+        assertThat(session.snapshot().widgetStatus).isEqualTo(WidgetStatus.ADVERTISING)
+
+        session.handle(SessionAction.ConnectionEstablished)
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.CONNECTED)
+        assertThat(session.snapshot().widgetStatus).isEqualTo(WidgetStatus.CONNECTED)
+    }
+
+    @Test
+    fun tileTap_withOwner_togglesAdvertising() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.TileTap)
+        assertThat(session.snapshot().advertisingEnabled).isTrue()
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+
+        session.handle(SessionAction.TileTap)
+        assertThat(session.snapshot().advertisingEnabled).isFalse()
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.READY)
+    }
+
+    @Test
+    fun tileTap_withoutOwner_showsShizukuNotOpen_keepsSwitchOff_doesNotRequestPermission() {
+        val session = MiraxSession()
+        session.report(
+            PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = false),
+        )
+        session.handle(SessionAction.TileTap)
+        val snap = session.snapshot()
+        assertThat(snap.advertisingEnabled).isFalse()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(snap.shouldRequestShizukuPermission).isFalse()
+        assertThat(snap.effects).contains(SessionEffect.ShowShizukuNotOpenToast)
+    }
+
+    @Test
+    fun tileTap_shizukuDown_sameToast_switchUnchanged() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport())
+        session.handle(SessionAction.TileTap)
+        val snap = session.snapshot()
+        assertThat(snap.advertisingEnabled).isFalse()
+        assertThat(snap.effects).contains(SessionEffect.ShowShizukuNotOpenToast)
+        assertThat(snap.shouldRequestShizukuPermission).isFalse()
+    }
+
+    @Test
+    fun grayTileProbeSuccess_hostTurnsAdvertisingOn_viaSetAdvertising() {
+        // Tile host: report privilege first, then SetAdvertising(true) when owner appears.
+        val session = MiraxSession()
+        session.report(PrivilegeReport())
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.GRAY)
+
+        session.report(
+            PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = true),
+        )
+        session.handle(SessionAction.SetAdvertising(true))
+        val snap = session.snapshot()
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.tileState).isEqualTo(TileState.ADVERTISING)
+        assertThat(snap.shouldRequestShizukuPermission).isFalse()
+    }
+
+    @Test
+    fun advertisingOn_ownerAppears_phaseBecomesAdvertising() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport())
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
+
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().advertisingEnabled).isTrue()
+    }
+
+    @Test
+    fun turnAdvertisingOff_whileConnected_endsConnection_returnsToReady() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.ConnectionEstablished)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+
+        session.handle(SessionAction.SetAdvertising(false))
+        val snap = session.snapshot()
+        assertThat(snap.advertisingEnabled).isFalse()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.READY)
+        assertThat(snap.tileState).isEqualTo(TileState.OFF)
+        assertThat(snap.widgetStatus).isEqualTo(WidgetStatus.OFF)
+    }
+
+    @Test
+    fun connectionEnded_doesNotTurnAdvertisingOff() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.ConnectionEstablished)
+        session.handle(SessionAction.ConnectionEnded)
+        val snap = session.snapshot()
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.tileState).isEqualTo(TileState.ADVERTISING)
+        assertThat(snap.widgetStatus).isEqualTo(WidgetStatus.ADVERTISING)
+    }
+
+    @Test
+    fun tileTap_whileConnected_turnsOffAndEndsConnection() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(
+            PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = true),
+        )
+        session.handle(SessionAction.ConnectionEstablished)
+        session.handle(SessionAction.TileTap)
+        val snap = session.snapshot()
+        assertThat(snap.advertisingEnabled).isFalse()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.READY)
     }
 }

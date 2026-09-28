@@ -19,4 +19,26 @@
     <string name="settings_display_name_title">Display name</string>
     <string name="display_name_save">Save name</string>
     <string name="advanced_adb_title">Advanced adb</string>
+
+    <string name="shizuku_not_open">Shizuku is not open</string>
+
+    <string name="tile_label">Mirax broadcast</string>
+    <string name="tile_subtitle_unavailable">Unable to broadcast</string>
+    <string name="tile_subtitle_off">Off</string>
+    <string name="tile_subtitle_advertising">Broadcasting</string>
+    <string name="tile_subtitle_connected">Connected</string>
+
+    <string name="widget_title">Mirax</string>
+    <string name="widget_description">Shows whether Mirax is off, broadcasting, connected, or unable to broadcast.</string>
+    <string name="widget_status_off">Off</string>
+    <string name="widget_status_advertising">Broadcasting</string>
+    <string name="widget_status_connected">Connected</string>
+    <string name="widget_status_unavailable">Unable to broadcast</string>
+
+    <string name="keepalive_channel_name">Broadcast</string>
+    <string name="keepalive_channel_description">Keeps Mirax broadcasting while the switch is on.</string>
+    <string name="keepalive_title">Mirax broadcast</string>
+    <string name="keepalive_status_advertising">Broadcasting — waiting for Win+K</string>
+    <string name="keepalive_status_connected">Connected</string>
+    <string name="keepalive_status_waiting">Broadcast on — waiting for a privilege path</string>
 </resources>
