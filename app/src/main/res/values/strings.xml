@@ -47,4 +47,7 @@
     <string name="keepalive_status_advertising">Broadcasting — waiting for Win+K</string>
     <string name="keepalive_status_connected">Connected</string>
     <string name="keepalive_status_waiting">Broadcast on — waiting for a privilege path</string>
+
+    <string name="picture_title">Mirax display</string>
+    <string name="picture_connected">Connected</string>
 </resources>

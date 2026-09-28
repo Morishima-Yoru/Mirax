@@ -3,14 +3,16 @@ package me.trinitrix.mirax.session
 /**
  * Mirax product session: the single test seam for screen phase, WFD owner,
  * tile state, widget status, resolved language, effective broadcast name,
- * preferred mode, standard-mode checklist, the next advertisement set, and
- * the WFD advertise command the privileged owner must apply.
+ * preferred mode, standard-mode checklist, the next advertisement set, the
+ * WFD advertise command the privileged owner must apply, and connection
+ * events through PLAY (selected mode and picture phase).
  *
  * Activities, the Quick Settings tile, and the home-screen widget only render
  * [snapshot] outputs and forward [SessionAction]s. Privileged work (wm size,
  * WFD advertise) is never performed in the app process; this module only
  * decides who may own WFD, whether wm size may be read, and which name and
- * mode set the owner should receive.
+ * mode set the owner should receive. RTSP encode/decode stays behind this
+ * seam; views never interpret RTSP themselves.
  *
  * A *stay* is the lifetime of one [MiraxSession] instance (the app process
  * from this open). Shizuku permission is requested at most once per stay.
@@ -37,6 +39,9 @@ class MiraxSession(
     private var deviceName: String = ""
     private var miraxDisplayId: Int = 0
     private var connected: Boolean = false
+    private var selectedMode: VideoMode? = null
+    /** Modes frozen for the current connection's RTSP advertisement. */
+    private var connectionAdvertisedModes: Set<VideoMode>? = null
     private var permissionRequestedThisStay: Boolean = false
     private var pendingPermissionRequest: Boolean = false
     private var pendingEffects: List<SessionEffect> = emptyList()
@@ -61,6 +66,7 @@ class MiraxSession(
         privilege = report
         if (nextOwner == WfdOwner.NONE) {
             connected = false
+            clearConnectionEphemerals()
             provisioningReadRequested = false
             pendingEffects = pendingEffects.filterNot {
                 it is SessionEffect.ReadPlainWmSizeForProvisioning
@@ -122,15 +128,27 @@ class MiraxSession(
                     SessionEffect.ReadPlainWmSizeForProvisioning
                     >()
             }
-            SessionAction.ConnectionEstablished -> {
-                if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
-                    connected = true
-                }
+            SessionAction.BecameDiscoverable -> {
+                freezeConnectionAdvertisedModes()
             }
-            SessionAction.ConnectionEnded -> connected = false
+            SessionAction.PrePlayProgress -> {
+                freezeConnectionAdvertisedModes()
+            }
+            is SessionAction.SourceSelectedMode -> {
+                onSourceSelectedMode(action.mode)
+            }
+            SessionAction.EnteredPlay, SessionAction.ConnectionEstablished -> {
+                enterPlay()
+            }
+            SessionAction.ConnectionEnded -> {
+                connected = false
+                clearConnectionEphemerals()
+            }
             SessionAction.PrePlayGroupDropped -> {
                 // Intentionally no-op for the advertisement set: a pre-PLAY drop
                 // must not latch extra modes or rewrite the saved set.
+                connected = false
+                clearConnectionEphemerals()
             }
             is SessionAction.SetLanguagePreference -> {
                 languagePreference = action.preference
@@ -172,6 +190,10 @@ class MiraxSession(
         val standardRows = StandardVideoModes.catalog(maxVideoBitrateBps).map { mode ->
             StandardModeRow(mode = mode, checked = mode in checkedStandardModes)
         }
+        val resolutionText = when {
+            connected && selectedMode != null -> selectedMode!!.format()
+            else -> preferredMode?.format().orEmpty()
+        }
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
@@ -193,10 +215,12 @@ class MiraxSession(
             canUseThisScreen = canRead,
             standardModes = standardRows,
             nextAdvertisementModes = nextModes,
-            currentResolutionText = preferredMode?.format().orEmpty(),
+            currentResolutionText = resolutionText,
             miraxDisplayId = miraxDisplayId,
             maxVideoBitrateBps = maxVideoBitrateBps,
             wfdAdvertise = resolveWfdAdvertise(owner, effectiveName, nextModes),
+            selectedMode = selectedMode,
+            showPicture = phase == ScreenPhase.CONNECTED,
         )
     }
 
@@ -247,7 +271,33 @@ class MiraxSession(
         advertisingEnabled = enabled
         if (!enabled) {
             connected = false
+            clearConnectionEphemerals()
         }
+    }
+
+    private fun freezeConnectionAdvertisedModes() {
+        if (connectionAdvertisedModes == null) {
+            connectionAdvertisedModes = resolveNextAdvertisementModes()
+        }
+    }
+
+    private fun onSourceSelectedMode(mode: VideoMode) {
+        freezeConnectionAdvertisedModes()
+        val allowed = connectionAdvertisedModes ?: resolveNextAdvertisementModes()
+        if (mode in allowed) {
+            selectedMode = mode
+        }
+    }
+
+    private fun enterPlay() {
+        if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
+            connected = true
+        }
+    }
+
+    private fun clearConnectionEphemerals() {
+        selectedMode = null
+        connectionAdvertisedModes = null
     }
 
     private fun commitPreferredModeText(text: String) {

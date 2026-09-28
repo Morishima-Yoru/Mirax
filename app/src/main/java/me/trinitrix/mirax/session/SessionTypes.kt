@@ -212,6 +212,11 @@ data class WfdAdvertiseCommand(
  *
  * [wfdAdvertise] is the continuous desired state for the privileged owner:
  * non-null when broadcast is on and a WFD owner exists.
+ *
+ * [selectedMode] is the mode the source chose for the current connection when
+ * it belongs to the advertised set for that connection; null otherwise.
+ * [showPicture] is true only in the connected (PLAY) phase so the host can
+ * present the fullscreen aspect-fit surface.
  */
 data class SessionSnapshot(
     val phase: ScreenPhase,
@@ -238,6 +243,8 @@ data class SessionSnapshot(
     val miraxDisplayId: Int = 0,
     val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
     val wfdAdvertise: WfdAdvertiseCommand? = null,
+    val selectedMode: VideoMode? = null,
+    val showPicture: Boolean = false,
 )
 
 /**
@@ -269,10 +276,32 @@ sealed interface SessionAction {
     /** Host consumed one-shot effects (e.g. StopHelper). */
     data object AcknowledgeEffects : SessionAction
 
+    /**
+     * Sink became discoverable (WFD listening / RTSP accept ready).
+     * Does not change the next advertisement set.
+     */
+    data object BecameDiscoverable : SessionAction
+
+    /**
+     * Progress toward PLAY (P2P group up, RTSP negotiating). Stays advertising.
+     */
+    data object PrePlayProgress : SessionAction
+
+    /**
+     * Source selected a video mode during RTSP. Accepted only when the mode
+     * belongs to the advertisement set for this connection.
+     */
+    data class SourceSelectedMode(val mode: VideoMode) : SessionAction
+
     /** Connection reached PLAY. */
+    data object EnteredPlay : SessionAction
+
+    /**
+     * Alias for [EnteredPlay] kept for earlier hosts and tests.
+     */
     data object ConnectionEstablished : SessionAction
 
-    /** Current connection ended. */
+    /** Current connection ended. Broadcast stays on when the user left it on. */
     data object ConnectionEnded : SessionAction
 
     /**

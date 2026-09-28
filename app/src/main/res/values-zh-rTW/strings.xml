@@ -46,4 +46,7 @@
     <string name="keepalive_status_advertising">廣播中 — 等待 Win+K</string>
     <string name="keepalive_status_connected">已連線</string>
     <string name="keepalive_status_waiting">廣播已開 — 等待特權路徑</string>
+
+    <string name="picture_title">Mirax 顯示</string>
+    <string name="picture_connected">已連線</string>
 </resources>

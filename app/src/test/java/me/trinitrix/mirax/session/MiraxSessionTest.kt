@@ -4,11 +4,12 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 /**
- * Behaviour tests for the Mirax session seam (issues #2–#6).
+ * Behaviour tests for the Mirax session seam (issues #2–#7).
  *
- * Seam under test: [MiraxSession] — feed settings, privilege reports, and
- * user actions; assert phase, WFD owner, tile state, widget status, and the
- * WFD advertise command the privileged owner must apply.
+ * Seam under test: [MiraxSession] — feed settings, privilege reports, user
+ * actions, and connection events; assert phase, WFD owner, tile/widget state,
+ * next advertisement set, selected mode, and the WFD advertise command.
+ * RTSP encode/decode stays behind this seam and is not asserted here.
  */
 class MiraxSessionTest {
 
@@ -836,5 +837,99 @@ class MiraxSessionTest {
         val snap = session.snapshot()
         assertThat(snap.wfdAdvertise!!.modes).isEqualTo(snap.nextAdvertisementModes)
         assertThat(snap.wfdAdvertise!!.modes).contains(VideoMode(2176, 1812, 60))
+    }
+
+    @Test
+    fun connectionEvents_beforePlay_keepAdvertisingPhase_andAcceptDiscoverableProgress() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.BecameDiscoverable)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.ADVERTISING)
+
+        session.handle(SessionAction.PrePlayProgress)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().widgetStatus).isEqualTo(WidgetStatus.ADVERTISING)
+        assertThat(session.snapshot().selectedMode).isNull()
+    }
+
+    @Test
+    fun sourceSelectedMode_mustBelongToAdvertisedSet_rejectsOthers() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
+        val advertised = session.snapshot().nextAdvertisementModes
+        assertThat(advertised).contains(VideoMode(2176, 1812, 60))
+        assertThat(advertised).doesNotContain(VideoMode(2560, 1440, 60))
+
+        session.handle(SessionAction.BecameDiscoverable)
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(2560, 1440, 60)))
+        assertThat(session.snapshot().selectedMode).isNull()
+
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(2176, 1812, 60)))
+        assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2176, 1812, 60))
+    }
+
+    @Test
+    fun enteredPlay_showsConnected_onCardTileAndWidget() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.BecameDiscoverable)
+        session.handle(SessionAction.PrePlayProgress)
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(snap.tileState).isEqualTo(TileState.CONNECTED)
+        assertThat(snap.widgetStatus).isEqualTo(WidgetStatus.CONNECTED)
+        assertThat(snap.selectedMode).isEqualTo(VideoMode(1920, 1080, 60))
+        assertThat(snap.currentResolutionText).isEqualTo("1920×1080@60")
+        assertThat(snap.showPicture).isTrue()
+    }
+
+    @Test
+    fun connectionEnded_keepsBroadcastOn_returnsToAdvertising() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1280, 720, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+
+        session.handle(SessionAction.ConnectionEnded)
+        val snap = session.snapshot()
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.selectedMode).isNull()
+        assertThat(snap.showPicture).isFalse()
+        assertThat(snap.wfdAdvertise).isNotNull()
+    }
+
+    @Test
+    fun prePlayGroupDrop_clearsSelectedMode_doesNotChangeNextSet() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
+        val before = session.snapshot().nextAdvertisementModes
+        session.handle(SessionAction.BecameDiscoverable)
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(2176, 1812, 60)))
+        assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2176, 1812, 60))
+
+        session.handle(SessionAction.PrePlayGroupDropped)
+        assertThat(session.snapshot().nextAdvertisementModes).isEqualTo(before)
+        assertThat(session.snapshot().selectedMode).isNull()
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().showPicture).isFalse()
+    }
+
+    @Test
+    fun heightNotMultipleOfSixteen_remainsLegalInAdvertisementSet() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
+        val modes = session.snapshot().nextAdvertisementModes
+        assertThat(modes).contains(VideoMode(2176, 1812, 60))
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(2176, 1812, 60)))
+        assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2176, 1812, 60))
     }
 }
