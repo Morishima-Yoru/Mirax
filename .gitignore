@@ -32,3 +32,11 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Receiver build output
+receiver/out/
+receiver/classes/
+receiver/player-classes/
+receiver/player-dex/
+*.jar
+*.idsig
