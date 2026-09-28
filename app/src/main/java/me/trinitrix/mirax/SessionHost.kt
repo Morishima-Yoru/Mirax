@@ -2,7 +2,11 @@ package me.trinitrix.mirax
 
 import android.content.Context
 import android.content.Intent
+import android.hardware.display.DisplayManager
+import android.view.Display
+import android.view.Surface
 import android.widget.Toast
+import me.trinitrix.mirax.session.PictureRotationReport
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionEffect
 import me.trinitrix.mirax.session.SessionSnapshot
@@ -24,7 +28,8 @@ import me.trinitrix.mirax.widget.BroadcastStatusWidget
  * object only performs Android side effects. The app process never calls
  * `setWfdInfo`. Views do not interpret RTSP — connection events are forwarded
  * into the session here. The home-screen widget does not require overlay
- * permission.
+ * permission. Base `wm size` and picture rotation are forwarded as facts;
+ * the session decides visible-picture axes.
  */
 object SessionHost {
     /**
@@ -72,6 +77,7 @@ object SessionHost {
             return snapshot
         }
         val reading = WmSizeReader.readForDisplay(displayId) ?: return snapshot
+        session.report(PictureRotationReport(degrees = pictureRotationDegrees(context, displayId)))
         session.handle(SessionAction.UseThisScreen(reading))
         return commit(context)
     }
@@ -83,7 +89,7 @@ object SessionHost {
         val appContext = context.applicationContext
         val session = MiraxApp.instance.session
         WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
-        maybeApplyProvisioningWmSize(session)
+        maybeApplyProvisioningWmSize(appContext, session)
         val snapshot = session.snapshot()
         SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
         SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
@@ -205,7 +211,10 @@ object SessionHost {
         return commit(context)
     }
 
-    private fun maybeApplyProvisioningWmSize(session: me.trinitrix.mirax.session.MiraxSession) {
+    private fun maybeApplyProvisioningWmSize(
+        context: Context,
+        session: me.trinitrix.mirax.session.MiraxSession,
+    ) {
         val snapshot = session.snapshot()
         if (SessionEffect.ReadPlainWmSizeForProvisioning !in snapshot.effects) {
             return
@@ -214,7 +223,33 @@ object SessionHost {
             return
         }
         val reading = WmSizeReader.readPlain() ?: return
+        session.report(
+            PictureRotationReport(degrees = pictureRotationDegrees(context, displayId = null)),
+        )
         session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+    }
+
+    /**
+     * Map [Display.getRotation] to degrees the session understands.
+     *
+     * Args:
+     *     context: Used to resolve the display manager.
+     *     displayId: Specific display, or null for the default display.
+     */
+    private fun pictureRotationDegrees(context: Context, displayId: Int?): Int {
+        val manager = context.getSystemService(DisplayManager::class.java) ?: return 0
+        val display = if (displayId == null) {
+            manager.getDisplay(Display.DEFAULT_DISPLAY)
+        } else {
+            manager.getDisplay(displayId)
+        } ?: return 0
+        return when (display.rotation) {
+            Surface.ROTATION_0 -> 0
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
     }
 
     private fun applyEffects(context: Context, snapshot: SessionSnapshot) {

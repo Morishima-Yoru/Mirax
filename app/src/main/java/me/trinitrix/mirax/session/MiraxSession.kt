@@ -3,7 +3,8 @@ package me.trinitrix.mirax.session
 /**
  * Mirax product session: the single test seam for screen phase, WFD owner,
  * tile state, widget status, resolved language, effective broadcast name,
- * preferred mode, standard-mode checklist, the next advertisement set, the
+ * preferred mode (including visible-picture axes from base `wm size` plus
+ * picture rotation), standard-mode checklist, the next advertisement set, the
  * WFD advertise command the privileged owner must apply, connection events
  * through PLAY (selected mode and picture phase), system Back confirm while
  * connected, the picture bottom-handle outputs, overlay-permission reminder,
@@ -43,6 +44,8 @@ class MiraxSession(
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
     private var miraxDisplayId: Int = 0
+    /** Current picture rotation in degrees (0, 90, 180, or 270). */
+    private var pictureRotationDegrees: Int = 0
     private var overlayGranted: Boolean = false
     private var overlayCanPrompt: Boolean = true
     private var connected: Boolean = false
@@ -122,6 +125,19 @@ class MiraxSession(
      */
     fun report(report: MiraxDisplayReport) {
         miraxDisplayId = report.displayId
+    }
+
+    /**
+     * Feed the current rotation of the picture the user sees.
+     *
+     * Does not rewrite a saved preferred mode. Axis swap applies only on the
+     * next "use this screen" or an unconsumed provisioning write.
+     *
+     * Args:
+     *     report: Rotation in degrees from the host; tests supply literals.
+     */
+    fun report(report: PictureRotationReport) {
+        pictureRotationDegrees = report.degrees
     }
 
     /**
@@ -502,9 +518,14 @@ class MiraxSession(
         }
         consumeProvisioning()
         val refresh = preferredMode?.refreshHz ?: 60
-        val corrected = PreferredModeCorrection.correct(
+        val (width, height) = visiblePictureAxes(
             reading.chosenWidth,
             reading.chosenHeight,
+            pictureRotationDegrees,
+        )
+        val corrected = PreferredModeCorrection.correct(
+            width,
+            height,
             refresh,
         )
         if (corrected != null) {
@@ -523,9 +544,14 @@ class MiraxSession(
             consumeProvisioning()
             return
         }
-        val corrected = PreferredModeCorrection.correct(
+        val (width, height) = visiblePictureAxes(
             reading.chosenWidth,
             reading.chosenHeight,
+            pictureRotationDegrees,
+        )
+        val corrected = PreferredModeCorrection.correct(
+            width,
+            height,
             60,
         )
         if (corrected != null) {
@@ -536,6 +562,22 @@ class MiraxSession(
             it is SessionEffect.ReadPlainWmSizeForProvisioning
         }
         provisioningReadRequested = false
+    }
+
+    /**
+     * Map base `wm size` axes to the picture the user sees.
+     *
+     * Rotation 90 or 270 swaps width and height; 0 and 180 leave them.
+     */
+    private fun visiblePictureAxes(
+        baseWidth: Int,
+        baseHeight: Int,
+        rotationDegrees: Int,
+    ): Pair<Int, Int> {
+        return when (rotationDegrees) {
+            90, 270 -> baseHeight to baseWidth
+            else -> baseWidth to baseHeight
+        }
     }
 
     private fun maybeRequestProvisioningRead() {

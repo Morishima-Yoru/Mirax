@@ -110,7 +110,8 @@ data class VideoMode(
 }
 
 /**
- * Parsed `wm size` query result. Override size wins when present; axes are never swapped.
+ * Parsed `wm size` query result. Override size wins when present.
+ * Visible-picture axis swap for rotation is applied by the session, not here.
  */
 data class WmSizeReading(
     val physicalWidth: Int,
@@ -132,6 +133,17 @@ data class WmSizeReading(
  */
 data class MiraxDisplayReport(
     val displayId: Int = 0,
+)
+
+/**
+ * Current rotation of the picture the user sees, in degrees.
+ *
+ * Args:
+ *     degrees: One of 0, 90, 180, or 270. Views forward the host observation;
+ *         tests supply literals.
+ */
+data class PictureRotationReport(
+    val degrees: Int = 0,
 )
 
 /**

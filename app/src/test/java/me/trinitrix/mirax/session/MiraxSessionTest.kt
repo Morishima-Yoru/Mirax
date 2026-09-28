@@ -4,11 +4,12 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 /**
- * Behaviour tests for the Mirax session seam (issues #2–#8).
+ * Behaviour tests for the Mirax session seam (issues #2–#9, #11).
  *
  * Seam under test: [MiraxSession] — feed settings, privilege reports, user
- * actions, and connection events; assert phase, WFD owner, tile/widget state,
- * next advertisement set, selected mode, the WFD advertise command, Back
+ * actions, picture rotation, and connection events; assert phase, WFD owner,
+ * tile/widget state, next advertisement set, preferred mode (including
+ * visible-picture axes), selected mode, the WFD advertise command, Back
  * confirm, and bottom-handle outputs. RTSP encode/decode stays behind this
  * seam and is not asserted here. The picture activity is not a second seam.
  */
@@ -621,6 +622,128 @@ class MiraxSessionTest {
             ),
         )
         assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(904, 2316, 60))
+    }
+
+    // --- Issue #11: preferred size follows the visible picture axes ---
+
+    @Test
+    fun useThisScreen_base1812x2176_rotation90_writes2176x1812_keepsRefresh() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@30"))
+        session.report(PictureRotationReport(degrees = 90))
+        session.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 30))
+    }
+
+    @Test
+    fun useThisScreen_rotation270_swapsAxes_rotation0And180_doNot() {
+        val at270 = MiraxSession()
+        at270.report(PrivilegeReport(helperRunning = true))
+        at270.handle(SessionAction.AcknowledgeEffects)
+        at270.report(PictureRotationReport(degrees = 270))
+        at270.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(at270.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
+
+        val at0 = MiraxSession()
+        at0.report(PrivilegeReport(helperRunning = true))
+        at0.handle(SessionAction.AcknowledgeEffects)
+        at0.report(PictureRotationReport(degrees = 0))
+        at0.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(at0.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+
+        val at180 = MiraxSession()
+        at180.report(PrivilegeReport(helperRunning = true))
+        at180.handle(SessionAction.AcknowledgeEffects)
+        at180.report(PictureRotationReport(degrees = 180))
+        at180.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(at180.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+    }
+
+    @Test
+    fun provisioning_rotation90_writesSwappedAxes_refresh60_sameRuleAsButton() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().effects)
+            .contains(SessionEffect.ReadPlainWmSizeForProvisioning)
+        session.report(PictureRotationReport(degrees = 90))
+        session.handle(
+            SessionAction.ApplyProvisioningWmSize(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
+        assertThat(session.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+    }
+
+    @Test
+    fun preferredMode_saved_laterRotationReport_doesNotRewrite() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.report(PictureRotationReport(degrees = 0))
+        session.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+
+        session.report(PictureRotationReport(degrees = 90))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+
+        // Another "use this screen" after rotation does rewrite.
+        session.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
+    }
+
+    @Test
+    fun provisioning_stillOnlyOnce_andOnlyWhilePreferredUntouched() {
+        val afterProvision = MiraxSession()
+        afterProvision.report(PrivilegeReport(helperRunning = true))
+        afterProvision.report(PictureRotationReport(degrees = 90))
+        afterProvision.handle(
+            SessionAction.ApplyProvisioningWmSize(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(afterProvision.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
+        afterProvision.report(PrivilegeReport())
+        afterProvision.report(PrivilegeReport(helperRunning = true))
+        afterProvision.report(PictureRotationReport(degrees = 0))
+        assertThat(afterProvision.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+        assertThat(afterProvision.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
+
+        val editedFirst = MiraxSession()
+        editedFirst.handle(SessionAction.PreferredModeFieldEdited)
+        editedFirst.report(PrivilegeReport(helperRunning = true))
+        editedFirst.report(PictureRotationReport(degrees = 90))
+        assertThat(editedFirst.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+        assertThat(editedFirst.snapshot().preferredMode).isNull()
     }
 
     @Test
