@@ -94,17 +94,74 @@ data class DeviceNameReport(
 )
 
 /**
+ * One video mode: width, height, and refresh in hertz.
+ *
+ * Equality is exact; the advertisement set deduplicates identical modes.
+ */
+data class VideoMode(
+    val width: Int,
+    val height: Int,
+    val refreshHz: Int,
+) {
+    /**
+     * Professional display form used in the preferred-mode field and the display card.
+     */
+    fun format(): String = "${width}×${height}@${refreshHz}"
+}
+
+/**
+ * Parsed `wm size` query result. Override size wins when present; axes are never swapped.
+ */
+data class WmSizeReading(
+    val physicalWidth: Int,
+    val physicalHeight: Int,
+    val overrideWidth: Int? = null,
+    val overrideHeight: Int? = null,
+) {
+    /** Width taken from Override size when present, otherwise Physical size. */
+    val chosenWidth: Int
+        get() = overrideWidth ?: physicalWidth
+
+    /** Height taken from Override size when present, otherwise Physical size. */
+    val chosenHeight: Int
+        get() = overrideHeight ?: physicalHeight
+}
+
+/**
+ * Display id of the window hosting Mirax, fed by the host (tests supply literals).
+ */
+data class MiraxDisplayReport(
+    val displayId: Int = 0,
+)
+
+/**
+ * One row in the standard-mode checklist.
+ */
+data class StandardModeRow(
+    val mode: VideoMode,
+    val checked: Boolean,
+)
+
+/**
  * Persisted settings the session reads and updates.
  *
  * Args:
  *     advertisingEnabled: Whether the user wants WFD advertising on.
  *     languagePreference: Follow-system, pin Traditional Chinese, or pin English.
  *     displayNameOverride: Non-blank custom broadcast name, or null to follow the device name.
+ *     preferredMode: Accepted preferred mode, or null when none.
+ *     checkedStandardModes: Standard modes the user wants in the next advertisement set.
+ *     maxVideoBitrateBps: Cap used only to filter the standard-mode list.
+ *     provisioningConsumed: Whether the one-time preferred-mode provisioning chance is gone.
  */
 data class SessionSettings(
     val advertisingEnabled: Boolean = false,
     val languagePreference: LanguagePreference = LanguagePreference.FOLLOW_SYSTEM,
     val displayNameOverride: String? = null,
+    val preferredMode: VideoMode? = null,
+    val checkedStandardModes: Set<VideoMode> = StandardVideoModes.DEFAULT_CHECKED,
+    val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
+    val provisioningConsumed: Boolean = false,
 )
 
 /**
@@ -118,6 +175,12 @@ sealed interface SessionEffect {
      * Host must not open the authorization dialog for this effect.
      */
     data object ShowShizukuNotOpenToast : SessionEffect
+
+    /**
+     * Read plain `wm size` (no display id) for one-time preferred-mode provisioning.
+     * Host feeds the result with [SessionAction.ApplyProvisioningWmSize].
+     */
+    data object ReadPlainWmSizeForProvisioning : SessionEffect
 }
 
 /**
@@ -126,6 +189,10 @@ sealed interface SessionEffect {
  * [effectiveBroadcastName] is the single name Wi-Fi Direct and the RTSP friendly
  * name must use. When [displayNameFollowsDevice] is true, [displayNameFieldHint]
  * shows the current device name in gray and is not a saved override.
+ *
+ * [nextAdvertisementModes] is the set for the next advertise — not a priority order.
+ * The resolution UI only renders these outputs and forwards edit, leave-field, and
+ * use-this-screen actions.
  */
 data class SessionSnapshot(
     val phase: ScreenPhase,
@@ -143,6 +210,14 @@ data class SessionSnapshot(
     val displayNameOverride: String? = null,
     val displayNameFollowsDevice: Boolean = true,
     val displayNameFieldHint: String = "",
+    val preferredMode: VideoMode? = null,
+    val preferredModeText: String = "",
+    val canUseThisScreen: Boolean = false,
+    val standardModes: List<StandardModeRow> = emptyList(),
+    val nextAdvertisementModes: Set<VideoMode> = emptySet(),
+    val currentResolutionText: String = "",
+    val miraxDisplayId: Int = 0,
+    val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
 )
 
 /**
@@ -180,6 +255,12 @@ sealed interface SessionAction {
     /** Current connection ended. */
     data object ConnectionEnded : SessionAction
 
+    /**
+     * Wi-Fi Direct group dropped before PLAY. Must not change the next advertisement set
+     * and must not latch extra fallback modes.
+     */
+    data object PrePlayGroupDropped : SessionAction
+
     /** User chose follow-system, Traditional Chinese, or English. */
     data class SetLanguagePreference(val preference: LanguagePreference) : SessionAction
 
@@ -189,4 +270,33 @@ sealed interface SessionAction {
      * Blank or whitespace-only clears the override and resumes following the device name.
      */
     data class SetDisplayNameOverride(val value: String) : SessionAction
+
+    /**
+     * User edited the preferred-mode text field (any change from the install-default empty).
+     * Consumes one-time provisioning without writing a preferred mode.
+     */
+    data object PreferredModeFieldEdited : SessionAction
+
+    /**
+     * User left the preferred-mode field. Commits parse/correction, or restores the last
+     * accepted mode when the text is unparseable. Blank clears the preferred mode.
+     */
+    data class CommitPreferredModeText(val text: String) : SessionAction
+
+    /**
+     * Toggle a standard mode in the checklist. Does not consume provisioning.
+     */
+    data class SetStandardModeChecked(val mode: VideoMode, val checked: Boolean) : SessionAction
+
+    /**
+     * "Use this screen" after the host read `wm size` for the Mirax display.
+     * Unavailable while frozen; host must not call this when [SessionSnapshot.canUseThisScreen]
+     * is false.
+     */
+    data class UseThisScreen(val reading: WmSizeReading) : SessionAction
+
+    /**
+     * Host completed the one-time provisioning `wm size` read (plain, no display id).
+     */
+    data class ApplyProvisioningWmSize(val reading: WmSizeReading) : SessionAction
 }

@@ -11,9 +11,9 @@ import me.trinitrix.mirax.tile.BroadcastTileService
 import me.trinitrix.mirax.widget.BroadcastStatusWidget
 
 /**
- * Host-side bridge that applies session actions, persists the advertising
- * switch, keeps the advertising foreground service in sync, refreshes the
- * Quick Settings tile and home-screen widget, and shows one-shot toasts.
+ * Host-side bridge that applies session actions, persists settings, keeps the
+ * advertising foreground service in sync, refreshes the Quick Settings tile and
+ * home-screen widget, reads `wm size` when the session allows, and shows toasts.
  *
  * Product decisions stay in [me.trinitrix.mirax.session.MiraxSession]; this
  * object only performs Android side effects.
@@ -54,13 +54,30 @@ object SessionHost {
     }
 
     /**
-     * Persist advertising, sync keep-alive / status surfaces, apply effects.
+     * "Use this screen" after confirming the session allows a wm size read.
+     */
+    fun useThisScreen(context: Context, displayId: Int): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.report(me.trinitrix.mirax.session.MiraxDisplayReport(displayId))
+        val snapshot = session.snapshot()
+        if (!snapshot.canUseThisScreen) {
+            return snapshot
+        }
+        val reading = WmSizeReader.readForDisplay(displayId) ?: return snapshot
+        session.handle(SessionAction.UseThisScreen(reading))
+        return commit(context)
+    }
+
+    /**
+     * Persist settings, sync keep-alive / status surfaces, apply effects.
      */
     fun commit(context: Context): SessionSnapshot {
         val appContext = context.applicationContext
         val session = MiraxApp.instance.session
+        maybeApplyProvisioningWmSize(session)
         val snapshot = session.snapshot()
         SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
+        SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
         AdvertisingKeepAliveService.sync(appContext, snapshot)
         BroadcastStatusWidget.updateAll(appContext, snapshot)
         BroadcastTileService.requestListening(appContext)
@@ -75,6 +92,18 @@ object SessionHost {
         val session = MiraxApp.instance.session
         session.report(PrivilegeProbe.probe(context))
         return commit(context)
+    }
+
+    private fun maybeApplyProvisioningWmSize(session: me.trinitrix.mirax.session.MiraxSession) {
+        val snapshot = session.snapshot()
+        if (SessionEffect.ReadPlainWmSizeForProvisioning !in snapshot.effects) {
+            return
+        }
+        if (!snapshot.canReadWmSize) {
+            return
+        }
+        val reading = WmSizeReader.readPlain() ?: return
+        session.handle(SessionAction.ApplyProvisioningWmSize(reading))
     }
 
     private fun applyEffects(context: Context, snapshot: SessionSnapshot) {

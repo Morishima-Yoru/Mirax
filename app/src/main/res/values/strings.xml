@@ -11,7 +11,13 @@
     <string name="display_card_status_connected">Connected</string>
     <string name="display_card_hint">Use Win+K on Windows to connect. There is no in-app pairing.</string>
     <string name="display_card_name_label">Broadcast name</string>
+    <string name="display_card_resolution_label">Resolution</string>
+    <string name="display_card_resolution_none">Not set</string>
     <string name="advertising_switch">Broadcast this display</string>
+    <string name="settings_resolution_title">Resolution</string>
+    <string name="preferred_mode_hint">Preferred mode (for example 2176×1812@60)</string>
+    <string name="use_this_screen">Use this screen</string>
+    <string name="standard_modes_label">Standard modes</string>
     <string name="settings_language_title">Language</string>
     <string name="language_follow_system">Follow system</string>
     <string name="language_traditional_chinese">Traditional Chinese</string>

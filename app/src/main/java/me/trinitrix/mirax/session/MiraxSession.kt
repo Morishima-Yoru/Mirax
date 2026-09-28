@@ -2,7 +2,8 @@ package me.trinitrix.mirax.session
 
 /**
  * Mirax product session: the single test seam for screen phase, WFD owner,
- * tile state, widget status, resolved language, and effective broadcast name.
+ * tile state, widget status, resolved language, effective broadcast name,
+ * preferred mode, standard-mode checklist, and the next advertisement set.
  *
  * Activities, the Quick Settings tile, and the home-screen widget only render
  * [snapshot] outputs and forward [SessionAction]s. Privileged work (wm size,
@@ -12,8 +13,10 @@ package me.trinitrix.mirax.session
  * A *stay* is the lifetime of one [MiraxSession] instance (the app process
  * from this open). Shizuku permission is requested at most once per stay.
  *
- * Language and display name remain editable while the phase is frozen.
- * The session does not write the system device name.
+ * Language, display name, preferred-mode text, and standard-mode checks remain
+ * editable while the phase is frozen. The session does not write the system
+ * device name. A group drop before PLAY does not change the next advertisement
+ * set and does not latch extra modes.
  */
 class MiraxSession(
     initialSettings: SessionSettings = SessionSettings(),
@@ -21,13 +24,21 @@ class MiraxSession(
     private var advertisingEnabled: Boolean = initialSettings.advertisingEnabled
     private var languagePreference: LanguagePreference = initialSettings.languagePreference
     private var displayNameOverride: String? = normalizeOverride(initialSettings.displayNameOverride)
+    private var preferredMode: VideoMode? = initialSettings.preferredMode
+    private var checkedStandardModes: Set<VideoMode> =
+        initialSettings.checkedStandardModes.toSet()
+    private var maxVideoBitrateBps: Long = initialSettings.maxVideoBitrateBps
+    private var provisioningConsumed: Boolean =
+        initialSettings.provisioningConsumed || initialSettings.preferredMode != null
     private var privilege: PrivilegeReport = PrivilegeReport()
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
+    private var miraxDisplayId: Int = 0
     private var connected: Boolean = false
     private var permissionRequestedThisStay: Boolean = false
     private var pendingPermissionRequest: Boolean = false
     private var pendingEffects: List<SessionEffect> = emptyList()
+    private var provisioningReadRequested: Boolean = false
 
     /**
      * Feed the latest privilege-path observation from the environment.
@@ -48,6 +59,12 @@ class MiraxSession(
         privilege = report
         if (nextOwner == WfdOwner.NONE) {
             connected = false
+            provisioningReadRequested = false
+            pendingEffects = pendingEffects.filterNot {
+                it is SessionEffect.ReadPlainWmSizeForProvisioning
+            }
+        } else {
+            maybeRequestProvisioningRead()
         }
     }
 
@@ -72,31 +89,67 @@ class MiraxSession(
     }
 
     /**
+     * Feed the display id of the window hosting Mirax.
+     *
+     * Args:
+     *     report: Display id from the host; tests supply literals.
+     */
+    fun report(report: MiraxDisplayReport) {
+        miraxDisplayId = report.displayId
+    }
+
+    /**
      * Apply a user or lifecycle action.
      *
      * Args:
-     *     action: Open, retry, advertising toggle, language, display name, or connection event.
+     *     action: Open, retry, advertising toggle, language, display name,
+     *     resolution, or connection event.
      */
     fun handle(action: SessionAction) {
         when (action) {
             SessionAction.OpenApp -> onOpenApp()
             SessionAction.Retry, SessionAction.AutoWait -> {
                 pendingPermissionRequest = false
+                maybeRequestProvisioningRead()
             }
             is SessionAction.SetAdvertising -> setAdvertising(action.enabled)
             SessionAction.TileTap -> onTileTap()
-            SessionAction.AcknowledgeEffects -> pendingEffects = emptyList()
+            SessionAction.AcknowledgeEffects -> {
+                // Keep an outstanding provisioning read until the host applies it.
+                pendingEffects = pendingEffects.filterIsInstance<
+                    SessionEffect.ReadPlainWmSizeForProvisioning
+                    >()
+            }
             SessionAction.ConnectionEstablished -> {
                 if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
                     connected = true
                 }
             }
             SessionAction.ConnectionEnded -> connected = false
+            SessionAction.PrePlayGroupDropped -> {
+                // Intentionally no-op for the advertisement set: a pre-PLAY drop
+                // must not latch extra modes or rewrite the saved set.
+            }
             is SessionAction.SetLanguagePreference -> {
                 languagePreference = action.preference
             }
             is SessionAction.SetDisplayNameOverride -> {
                 displayNameOverride = normalizeOverride(action.value)
+            }
+            SessionAction.PreferredModeFieldEdited -> {
+                consumeProvisioning()
+            }
+            is SessionAction.CommitPreferredModeText -> {
+                commitPreferredModeText(action.text)
+            }
+            is SessionAction.SetStandardModeChecked -> {
+                setStandardModeChecked(action.mode, action.checked)
+            }
+            is SessionAction.UseThisScreen -> {
+                useThisScreen(action.reading)
+            }
+            is SessionAction.ApplyProvisioningWmSize -> {
+                applyProvisioningWmSize(action.reading)
             }
         }
     }
@@ -112,6 +165,10 @@ class MiraxSession(
         val phase = resolvePhase(owner)
         val followsDevice = displayNameOverride == null
         val effectiveName = if (followsDevice) deviceName else displayNameOverride.orEmpty()
+        val canRead = owner != WfdOwner.NONE
+        val standardRows = StandardVideoModes.catalog(maxVideoBitrateBps).map { mode ->
+            StandardModeRow(mode = mode, checked = mode in checkedStandardModes)
+        }
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
@@ -119,7 +176,7 @@ class MiraxSession(
             widgetStatus = resolveWidget(owner, phase),
             advertisingEnabled = advertisingEnabled,
             shouldRequestShizukuPermission = pendingPermissionRequest,
-            canReadWmSize = owner != WfdOwner.NONE,
+            canReadWmSize = canRead,
             helperStartCommand = HELPER_START_COMMAND,
             effects = pendingEffects,
             languagePreference = languagePreference,
@@ -128,6 +185,29 @@ class MiraxSession(
             displayNameOverride = displayNameOverride,
             displayNameFollowsDevice = followsDevice,
             displayNameFieldHint = if (followsDevice) deviceName else "",
+            preferredMode = preferredMode,
+            preferredModeText = preferredMode?.format().orEmpty(),
+            canUseThisScreen = canRead,
+            standardModes = standardRows,
+            nextAdvertisementModes = resolveNextAdvertisementModes(),
+            currentResolutionText = preferredMode?.format().orEmpty(),
+            miraxDisplayId = miraxDisplayId,
+            maxVideoBitrateBps = maxVideoBitrateBps,
+        )
+    }
+
+    /**
+     * Settings to persist across process death.
+     */
+    fun exportSettings(): SessionSettings {
+        return SessionSettings(
+            advertisingEnabled = advertisingEnabled,
+            languagePreference = languagePreference,
+            displayNameOverride = displayNameOverride,
+            preferredMode = preferredMode,
+            checkedStandardModes = checkedStandardModes,
+            maxVideoBitrateBps = maxVideoBitrateBps,
+            provisioningConsumed = provisioningConsumed,
         )
     }
 
@@ -142,6 +222,7 @@ class MiraxSession(
         } else {
             pendingPermissionRequest = false
         }
+        maybeRequestProvisioningRead()
     }
 
     private fun onTileTap() {
@@ -162,6 +243,116 @@ class MiraxSession(
         advertisingEnabled = enabled
         if (!enabled) {
             connected = false
+        }
+    }
+
+    private fun commitPreferredModeText(text: String) {
+        // Leaving the field after any non-default content also consumes provisioning
+        // when the user had typed something (edit already consumes; blank clear too).
+        val fallbackRefresh = preferredMode?.refreshHz ?: 60
+        when (val result = PreferredModeCorrection.parse(text, fallbackRefresh)) {
+            PreferredModeCorrection.ParseResult.Cleared -> {
+                preferredMode = null
+                consumeProvisioning()
+            }
+            PreferredModeCorrection.ParseResult.Unparseable -> {
+                // Restore last accepted; field text comes from preferredMode in snapshot.
+            }
+            is PreferredModeCorrection.ParseResult.Accepted -> {
+                preferredMode = result.mode
+                consumeProvisioning()
+            }
+        }
+    }
+
+    private fun setStandardModeChecked(mode: VideoMode, checked: Boolean) {
+        val catalog = StandardVideoModes.catalog(maxVideoBitrateBps)
+        if (mode !in catalog) {
+            return
+        }
+        checkedStandardModes = if (checked) {
+            checkedStandardModes + mode
+        } else {
+            checkedStandardModes - mode
+        }
+    }
+
+    private fun useThisScreen(reading: WmSizeReading) {
+        if (resolveOwner(privilege) == WfdOwner.NONE) {
+            return
+        }
+        consumeProvisioning()
+        val refresh = preferredMode?.refreshHz ?: 60
+        val corrected = PreferredModeCorrection.correct(
+            reading.chosenWidth,
+            reading.chosenHeight,
+            refresh,
+        )
+        if (corrected != null) {
+            preferredMode = corrected
+        }
+    }
+
+    private fun applyProvisioningWmSize(reading: WmSizeReading) {
+        if (provisioningConsumed) {
+            return
+        }
+        if (resolveOwner(privilege) == WfdOwner.NONE) {
+            return
+        }
+        if (preferredMode != null) {
+            consumeProvisioning()
+            return
+        }
+        val corrected = PreferredModeCorrection.correct(
+            reading.chosenWidth,
+            reading.chosenHeight,
+            60,
+        )
+        if (corrected != null) {
+            preferredMode = corrected
+        }
+        consumeProvisioning()
+        pendingEffects = pendingEffects.filterNot {
+            it is SessionEffect.ReadPlainWmSizeForProvisioning
+        }
+        provisioningReadRequested = false
+    }
+
+    private fun maybeRequestProvisioningRead() {
+        if (provisioningConsumed || preferredMode != null) {
+            return
+        }
+        if (resolveOwner(privilege) == WfdOwner.NONE) {
+            return
+        }
+        if (provisioningReadRequested) {
+            return
+        }
+        if (SessionEffect.ReadPlainWmSizeForProvisioning in pendingEffects) {
+            return
+        }
+        provisioningReadRequested = true
+        pendingEffects = pendingEffects + SessionEffect.ReadPlainWmSizeForProvisioning
+    }
+
+    private fun consumeProvisioning() {
+        provisioningConsumed = true
+        provisioningReadRequested = false
+        pendingEffects = pendingEffects.filterNot {
+            it is SessionEffect.ReadPlainWmSizeForProvisioning
+        }
+    }
+
+    private fun resolveNextAdvertisementModes(): Set<VideoMode> {
+        val checked = checkedStandardModes.intersect(
+            StandardVideoModes.catalog(maxVideoBitrateBps).toSet(),
+        )
+        val preferred = preferredMode
+        return if (preferred == null) {
+            checked
+        } else {
+            checked + preferred
         }
     }
 

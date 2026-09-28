@@ -442,4 +442,291 @@ class MiraxSessionTest {
         assertThat(snap.advertisingEnabled).isFalse()
         assertThat(snap.phase).isEqualTo(ScreenPhase.READY)
     }
+
+    // --- Issue #5: preferred mode, standard checklist, advertisement set ---
+
+    @Test
+    fun preferredMode_keepsLegalSizes_includingNonMultipleOf16_andFoldSizes() {
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
+
+        session.handle(SessionAction.CommitPreferredModeText("2112x1760@60"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2112, 1760, 60))
+
+        session.handle(SessionAction.CommitPreferredModeText("1920×1080@60"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1920, 1080, 60))
+    }
+
+    @Test
+    fun preferredMode_2112x1760at60_staysItsOwnMode() {
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText("2112×1760@60"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2112, 1760, 60))
+        assertThat(session.snapshot().preferredMode).isNotEqualTo(VideoMode(2176, 1812, 60))
+    }
+
+    @Test
+    fun refresh_snapsToNearestAllowed_tieTakesHigher() {
+        assertThat(PreferredModeCorrection.snapRefreshHz(27.0)).isEqualTo(25)
+        assertThat(PreferredModeCorrection.snapRefreshHz(27.5)).isEqualTo(30)
+        assertThat(PreferredModeCorrection.snapRefreshHz(55.0)).isEqualTo(60)
+        assertThat(PreferredModeCorrection.snapRefreshHz(42.0)).isEqualTo(50)
+
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@55"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+    }
+
+    @Test
+    fun preferredMode_overLevel51_shrinksAlongAspect() {
+        val session = MiraxSession()
+        // Far beyond level 5.1 at 60 Hz; must shrink, not swap to a table mode.
+        session.handle(SessionAction.CommitPreferredModeText("7680×4320@60"))
+        val mode = session.snapshot().preferredMode
+        assertThat(mode).isNotNull()
+        checkNotNull(mode)
+        assertThat(H264Level51.fits(mode)).isTrue()
+        val aspect = 7680.0 / 4320.0
+        assertThat(mode.width.toDouble() / mode.height.toDouble()).isWithin(0.05).of(aspect)
+        assertThat(mode).isNotEqualTo(VideoMode(1920, 1080, 60))
+    }
+
+    @Test
+    fun preferredMode_unparseable_restoresLastAccepted_orStaysEmpty() {
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText("not-a-mode"))
+        assertThat(session.snapshot().preferredMode).isNull()
+        assertThat(session.snapshot().preferredModeText).isEmpty()
+
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@60"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+
+        session.handle(SessionAction.CommitPreferredModeText("garbage"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+        assertThat(session.snapshot().preferredModeText).isEqualTo("1280×720@60")
+    }
+
+    @Test
+    fun preferredMode_blankClearsPreferredMode() {
+        val session = MiraxSession(
+            SessionSettings(preferredMode = VideoMode(1280, 720, 60), provisioningConsumed = true),
+        )
+        session.handle(SessionAction.CommitPreferredModeText("   "))
+        assertThat(session.snapshot().preferredMode).isNull()
+        assertThat(session.snapshot().nextAdvertisementModes)
+            .containsExactlyElementsIn(
+                setOf(
+                    VideoMode(1280, 720, 60),
+                    VideoMode(1920, 1080, 30),
+                    VideoMode(1920, 1080, 60),
+                ),
+            )
+    }
+
+    @Test
+    fun freshInstall_defaultStandardChecks_andNoPreferred_advertisesOnlyChecked() {
+        val session = MiraxSession()
+        val snap = session.snapshot()
+        assertThat(snap.preferredMode).isNull()
+        assertThat(snap.nextAdvertisementModes).containsExactly(
+            VideoMode(1280, 720, 60),
+            VideoMode(1920, 1080, 30),
+            VideoMode(1920, 1080, 60),
+        )
+        val checked = snap.standardModes.filter { it.checked }.map { it.mode }.toSet()
+        assertThat(checked).containsExactly(
+            VideoMode(1280, 720, 60),
+            VideoMode(1920, 1080, 30),
+            VideoMode(1920, 1080, 60),
+        )
+    }
+
+    @Test
+    fun withPreferredMode_advertisementSetIsPreferredPlusChecked_deduped() {
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
+        var set = session.snapshot().nextAdvertisementModes
+        assertThat(set).contains(VideoMode(2176, 1812, 60))
+        assertThat(set).contains(VideoMode(1280, 720, 60))
+        assertThat(set).contains(VideoMode(1920, 1080, 60))
+
+        // Preferred identical to a checked standard mode appears once.
+        session.handle(SessionAction.CommitPreferredModeText("1920×1080@60"))
+        set = session.snapshot().nextAdvertisementModes
+        assertThat(set.count { it == VideoMode(1920, 1080, 60) }).isEqualTo(1)
+        assertThat(set).contains(VideoMode(1280, 720, 60))
+    }
+
+    @Test
+    fun prePlayGroupDrop_doesNotChangeNextSet_andDoesNotAddExtraModes() {
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.SetAdvertising(true))
+        val before = session.snapshot().nextAdvertisementModes
+        assertThat(before).doesNotContain(VideoMode(1280, 720, 30))
+
+        session.handle(SessionAction.PrePlayGroupDropped)
+        assertThat(session.snapshot().nextAdvertisementModes).isEqualTo(before)
+
+        session.handle(SessionAction.SetAdvertising(false))
+        session.handle(SessionAction.SetAdvertising(true))
+        assertThat(session.snapshot().nextAdvertisementModes).isEqualTo(before)
+    }
+
+    @Test
+    fun useThisScreen_unavailableWhileFrozen_usesOverrideOrPhysical_keepsRefresh() {
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@30"))
+        assertThat(session.snapshot().canUseThisScreen).isFalse()
+        session.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 30))
+
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.AcknowledgeEffects)
+        assertThat(session.snapshot().canUseThisScreen).isTrue()
+
+        session.report(MiraxDisplayReport(displayId = 0))
+        session.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(
+                    physicalWidth = 904,
+                    physicalHeight = 2316,
+                    overrideWidth = 1812,
+                    overrideHeight = 2176,
+                ),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 30))
+    }
+
+    @Test
+    fun useThisScreen_withoutOverride_keepsPhysicalAxes_noSwap() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@60"))
+        session.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 904, physicalHeight = 2316),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(904, 2316, 60))
+    }
+
+    @Test
+    fun provisioning_waitsWithoutShell_readsOnceWhenOwnerAppears() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport())
+        assertThat(session.snapshot().canReadWmSize).isFalse()
+        assertThat(session.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().effects)
+            .contains(SessionEffect.ReadPlainWmSizeForProvisioning)
+
+        session.handle(
+            SessionAction.ApplyProvisioningWmSize(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+        assertThat(session.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+
+        session.report(PrivilegeReport())
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+    }
+
+    @Test
+    fun provisioning_editOrUseThisScreen_consumesChance_standardToggleDoesNot() {
+        val edited = MiraxSession()
+        edited.handle(SessionAction.PreferredModeFieldEdited)
+        edited.report(PrivilegeReport(helperRunning = true))
+        assertThat(edited.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+        assertThat(edited.snapshot().preferredMode).isNull()
+
+        val usedButton = MiraxSession()
+        usedButton.report(PrivilegeReport(helperRunning = true))
+        usedButton.handle(SessionAction.AcknowledgeEffects)
+        usedButton.handle(
+            SessionAction.UseThisScreen(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(usedButton.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+        usedButton.report(PrivilegeReport())
+        usedButton.report(PrivilegeReport(helperRunning = true))
+        assertThat(usedButton.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+
+        val toggled = MiraxSession()
+        toggled.handle(
+            SessionAction.SetStandardModeChecked(VideoMode(1280, 720, 30), checked = true),
+        )
+        toggled.report(PrivilegeReport(helperRunning = true))
+        assertThat(toggled.snapshot().effects)
+            .contains(SessionEffect.ReadPlainWmSizeForProvisioning)
+    }
+
+    @Test
+    fun frozen_canEditPreferredTextAndStandardChecks() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport())
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
+
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@60"))
+        session.handle(
+            SessionAction.SetStandardModeChecked(VideoMode(1920, 1080, 60), checked = false),
+        )
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(snap.preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+        assertThat(snap.nextAdvertisementModes).containsExactly(
+            VideoMode(1280, 720, 60),
+            VideoMode(1920, 1080, 30),
+        )
+    }
+
+    @Test
+    fun standardCatalog_includesCeaVesaHhWithinLevelAndBitrate_oneRowPerMode() {
+        val session = MiraxSession()
+        val modes = session.snapshot().standardModes.map { it.mode }
+        assertThat(modes).contains(VideoMode(1280, 720, 60))
+        assertThat(modes).contains(VideoMode(1920, 1200, 60))
+        assertThat(modes).contains(VideoMode(800, 480, 60))
+        assertThat(modes.toSet().size).isEqualTo(modes.size)
+        for (mode in modes) {
+            assertThat(H264Level51.fits(mode)).isTrue()
+            assertThat(StandardVideoModes.estimatedBitrateBps(mode))
+                .isAtMost(session.snapshot().maxVideoBitrateBps)
+        }
+    }
+
+    @Test
+    fun bitrateCap_filtersStandardList_doesNotRewritePreferredMode() {
+        val session = MiraxSession(
+            SessionSettings(
+                preferredMode = VideoMode(1920, 1080, 60),
+                maxVideoBitrateBps = 1_000L,
+                provisioningConsumed = true,
+                checkedStandardModes = emptySet(),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1920, 1080, 60))
+        assertThat(session.snapshot().standardModes).isEmpty()
+        assertThat(session.snapshot().nextAdvertisementModes)
+            .containsExactly(VideoMode(1920, 1080, 60))
+    }
 }
