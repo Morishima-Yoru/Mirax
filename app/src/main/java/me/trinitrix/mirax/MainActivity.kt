@@ -102,8 +102,12 @@ class MainActivity : AppCompatActivity() {
                 if (updatingPreferredMode || preferredModeEdited) {
                     return
                 }
-                preferredModeEdited = true
                 val session = MiraxApp.instance.session
+                // View-state restore rewrites the same text; only a real change is an edit.
+                if (s?.toString().orEmpty() == session.snapshot().preferredModeText) {
+                    return
+                }
+                preferredModeEdited = true
                 session.handle(SessionAction.PreferredModeFieldEdited)
                 SessionPreferences.saveResolutionSettings(this@MainActivity, session.exportSettings())
             }
@@ -228,6 +232,9 @@ class MainActivity : AppCompatActivity() {
     private fun commitPreferredModeFromField() {
         val session = MiraxApp.instance.session
         val raw = binding.preferredModeInput.text?.toString().orEmpty()
+        if (!preferredModeEdited && raw == session.snapshot().preferredModeText) {
+            return
+        }
         session.handle(SessionAction.CommitPreferredModeText(raw))
         SessionPreferences.saveResolutionSettings(this, session.exportSettings())
         preferredModeEdited = false

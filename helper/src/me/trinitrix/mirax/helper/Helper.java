@@ -76,7 +76,17 @@ public final class Helper {
             return;
         }
         if (line.startsWith("WM_SIZE")) {
-            writeLine(out, runWmSize(line));
+            String displayId = line.substring("WM_SIZE".length()).trim();
+            writeLine(out, wmSize(displayId.isEmpty() ? -1 : Integer.parseInt(displayId)));
+            return;
+        }
+        if ("GROUP".equals(line)) {
+            writeLine(out, beacon.groupState());
+            return;
+        }
+        if ("END".equals(line)) {
+            beacon.endSession();
+            writeLine(out, "OK");
             return;
         }
         if ("STOP_ADVERTISE".equals(line)) {
@@ -106,15 +116,17 @@ public final class Helper {
         writeLine(out, "ERR unknown");
     }
 
-    private static String runWmSize(String line) {
+    /**
+     * Run the {@code wm size} query as the current (shell) process.
+     *
+     * @param displayId display to query, or a negative value for plain {@code wm size}
+     * @return the command output, or an empty string on failure
+     */
+    public static String wmSize(int displayId) {
         try {
-            ProcessBuilder builder;
-            if (line.trim().equals("WM_SIZE")) {
-                builder = new ProcessBuilder("wm", "size");
-            } else {
-                String displayId = line.substring("WM_SIZE".length()).trim();
-                builder = new ProcessBuilder("wm", "size", "-d", displayId);
-            }
+            ProcessBuilder builder = displayId < 0
+                    ? new ProcessBuilder("wm", "size")
+                    : new ProcessBuilder("wm", "size", "-d", Integer.toString(displayId));
             builder.redirectErrorStream(true);
             Process process = builder.start();
             String output;

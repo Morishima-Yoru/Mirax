@@ -6,8 +6,11 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
+import me.trinitrix.mirax.SessionHost
 import me.trinitrix.mirax.helper.Helper
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
@@ -21,20 +24,24 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Host adapter that applies [WfdAdvertiseCommand] to the privileged owner.
+ * Host adapter between the app process and the privileged WFD owner.
  *
  * The app process only talks over a local socket (helper) or a Shizuku
  * user-service binder. It never calls `setWfdInfo` or other
- * `CONFIGURE_WIFI_DISPLAY` APIs.
+ * `CONFIGURE_WIFI_DISPLAY` APIs. While Shizuku owns WFD the user-service stays
+ * bound, so `wm size` and the P2P group state are read inside it.
  */
 object WfdOwnerBridge {
     private const val TAG = "MiraxWfdBridge"
+    private const val USER_SERVICE_VERSION = 2
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val lastCommand = AtomicReference<WfdAdvertiseCommand?>(null)
     private val shellService = AtomicReference<IMiraxShellService?>(null)
-    private var userServiceBound = false
-    private var pendingShizukuCommand: WfdAdvertiseCommand? = null
+    private val activeOwner = AtomicReference(WfdOwner.NONE)
     private var boundArgs: Shizuku.UserServiceArgs? = null
+    private var pendingShizukuCommand: WfdAdvertiseCommand? = null
+    private var appContext: Context? = null
 
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -44,20 +51,40 @@ object WfdOwnerBridge {
             }
             val service = IMiraxShellService.Stub.asInterface(binder)
             shellService.set(service)
-            userServiceBound = true
+            Log.i(TAG, "Shizuku user-service connected")
             val pending = pendingShizukuCommand
-            if (pending != null) {
-                pendingShizukuCommand = null
-                if (!dispatchShizuku(service, pending)) {
-                    // Allow a later sync() with the same command to retry.
-                    lastCommand.compareAndSet(pending, null)
-                }
+            pendingShizukuCommand = null
+            if (pending != null && !dispatchShizuku(service, pending)) {
+                lastCommand.compareAndSet(pending, null)
             }
+            // Pending work such as the one-time wm size read can run now.
+            appContext?.let { ctx -> mainHandler.post { SessionHost.commit(ctx) } }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            Log.w(TAG, "Shizuku user-service disconnected")
             shellService.set(null)
-            userServiceBound = false
+            boundArgs = null
+            // The new service process has not advertised anything yet.
+            lastCommand.set(null)
+            appContext?.let { ctx -> mainHandler.post { SessionHost.commit(ctx) } }
+        }
+    }
+
+    /**
+     * Keep the Shizuku user-service bound exactly while Shizuku owns WFD.
+     *
+     * Args:
+     *     context: Any context; the application context is kept.
+     *     owner: Current WFD owner from the session.
+     */
+    fun syncOwner(context: Context, owner: WfdOwner) {
+        appContext = context.applicationContext
+        val previous = activeOwner.getAndSet(owner)
+        if (owner == WfdOwner.SHIZUKU) {
+            ensureShizukuBound(context.applicationContext)
+        } else if (previous == WfdOwner.SHIZUKU || boundArgs != null) {
+            unbindShizukuQuietly()
         }
     }
 
@@ -69,25 +96,23 @@ object WfdOwnerBridge {
      *     command: Desired advertise command, or null to stop.
      */
     fun sync(context: Context, command: WfdAdvertiseCommand?) {
+        appContext = context.applicationContext
         if (lastCommand.get() == command) {
             return
         }
         if (command == null) {
-            stopAll()
+            stopAdvertising()
             lastCommand.set(null)
             return
         }
         val applied = when (command.owner) {
-            WfdOwner.HELPER -> {
-                unbindShizukuQuietly()
-                sendHelperAdvertise(command)
-            }
+            WfdOwner.HELPER -> sendHelperAdvertise(command)
             WfdOwner.SHIZUKU -> {
-                sendHelperStopAdvertiseQuietly()
-                ensureShizukuAndAdvertise(context.applicationContext, command)
+                sendHelperQuietly("STOP_ADVERTISE")
+                advertiseViaShizuku(context.applicationContext, command)
             }
             WfdOwner.NONE -> {
-                stopAll()
+                stopAdvertising()
                 true
             }
         }
@@ -96,50 +121,102 @@ object WfdOwnerBridge {
         }
     }
 
-    private fun stopAll() {
-        pendingShizukuCommand = null
-        sendHelperStopAdvertiseQuietly()
-        val service = shellService.get()
-        if (service != null) {
-            try {
-                service.stopAdvertise()
+    /**
+     * Current P2P group state from the owner: `DOWN`, `PENDING`, or `UP <source>`.
+     * Safe to call off the main thread.
+     */
+    fun groupState(): String? {
+        return when (activeOwner.get()) {
+            WfdOwner.SHIZUKU -> try {
+                shellService.get()?.groupState()
             } catch (err: Exception) {
-                Log.w(TAG, "Shizuku stopAdvertise failed", err)
+                Log.d(TAG, "groupState via Shizuku failed", err)
+                null
             }
+            WfdOwner.HELPER -> exchangeHelper("GROUP")
+            WfdOwner.NONE -> null
         }
-        unbindShizukuQuietly()
+    }
+
+    /** End the current connection's P2P group; the owner keeps advertising. */
+    fun endSession() {
+        when (activeOwner.get()) {
+            WfdOwner.SHIZUKU -> try {
+                shellService.get()?.endSession()
+            } catch (err: Exception) {
+                Log.w(TAG, "endSession via Shizuku failed", err)
+            }
+            WfdOwner.HELPER -> sendHelperQuietly("END")
+            WfdOwner.NONE -> Unit
+        }
+    }
+
+    /**
+     * Run `wm size` inside the owner process.
+     *
+     * Args:
+     *     displayId: Display to query, or null for plain `wm size`.
+     *
+     * Returns:
+     *     The command output, or null when no owner can answer yet.
+     */
+    fun wmSize(displayId: Int?): String? {
+        val id = displayId ?: -1
+        return when (activeOwner.get()) {
+            WfdOwner.SHIZUKU -> try {
+                shellService.get()?.wmSize(id)
+            } catch (err: Exception) {
+                Log.w(TAG, "wm size via Shizuku failed", err)
+                null
+            }
+            WfdOwner.HELPER -> exchangeHelper(if (displayId == null) "WM_SIZE" else "WM_SIZE $displayId", readAll = true)
+            WfdOwner.NONE -> null
+        }
+    }
+
+    private fun stopAdvertising() {
+        pendingShizukuCommand = null
+        sendHelperQuietly("STOP_ADVERTISE")
+        try {
+            shellService.get()?.stopAdvertise()
+        } catch (err: Exception) {
+            Log.w(TAG, "Shizuku stopAdvertise failed", err)
+        }
     }
 
     /**
      * @return true when the advertise request was handed to a ready owner
      */
-    private fun ensureShizukuAndAdvertise(context: Context, command: WfdAdvertiseCommand): Boolean {
+    private fun advertiseViaShizuku(context: Context, command: WfdAdvertiseCommand): Boolean {
         if (!shizukuReady()) {
             Log.w(TAG, "Shizuku not ready for advertise")
             return false
         }
         val service = shellService.get()
-        if (service != null && userServiceBound) {
+        if (service != null) {
             return dispatchShizuku(service, command)
         }
         pendingShizukuCommand = command
-        return try {
-            if (!userServiceBound) {
-                val args = Shizuku.UserServiceArgs(
-                    ComponentName(context.packageName, MiraxShellUserService::class.java.name),
-                )
-                    .daemon(false)
-                    .processNameSuffix("wfd")
-                    .version(1)
-                boundArgs = args
-                Shizuku.bindUserService(args, userServiceConnection)
-            }
-            // Bind is async; pending command is applied in onServiceConnected.
-            true
+        ensureShizukuBound(context)
+        // Bind is async; the pending command is applied in onServiceConnected.
+        return boundArgs != null
+    }
+
+    private fun ensureShizukuBound(context: Context) {
+        if (boundArgs != null || !shizukuReady()) {
+            return
+        }
+        try {
+            val args = Shizuku.UserServiceArgs(
+                ComponentName(context.packageName, MiraxShellUserService::class.java.name),
+            )
+                .daemon(false)
+                .processNameSuffix("wfd")
+                .version(USER_SERVICE_VERSION)
+            Shizuku.bindUserService(args, userServiceConnection)
+            boundArgs = args
         } catch (err: Exception) {
             Log.w(TAG, "bindUserService failed", err)
-            pendingShizukuCommand = null
-            false
         }
     }
 
@@ -154,41 +231,36 @@ object WfdOwnerBridge {
     }
 
     private fun sendHelperAdvertise(command: WfdAdvertiseCommand): Boolean {
-        val line = "ADVERTISE\t${sanitizeName(command.broadcastName)}\t${encodeModes(command.modes)}\n"
-        return exchangeHelper(line)
+        val line = "ADVERTISE\t${sanitizeName(command.broadcastName)}\t${encodeModes(command.modes)}"
+        return exchangeHelper(line) != null
     }
 
-    private fun sendHelperStopAdvertiseQuietly() {
-        try {
-            exchangeHelper("STOP_ADVERTISE\n")
-        } catch (err: Exception) {
-            Log.d(TAG, "helper STOP_ADVERTISE not delivered", err)
-        }
+    private fun sendHelperQuietly(command: String) {
+        exchangeHelper(command)
     }
 
-    private fun exchangeHelper(command: String): Boolean {
+    private fun exchangeHelper(command: String, readAll: Boolean = false): String? {
         return try {
             LocalSocket().use { socket ->
                 socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
-                socket.outputStream.write(command.toByteArray(StandardCharsets.UTF_8))
+                socket.outputStream.write("$command\n".toByteArray(StandardCharsets.UTF_8))
                 socket.outputStream.flush()
                 BufferedReader(InputStreamReader(socket.inputStream, StandardCharsets.UTF_8)).use { reader ->
-                    reader.readLine()
+                    if (readAll) reader.readText() else reader.readLine()
                 }
             }
-            true
         } catch (err: Exception) {
-            Log.d(TAG, "helper exchange failed: ${command.trim()}", err)
-            false
+            Log.d(TAG, "helper exchange failed: $command", err)
+            null
         }
     }
 
     private fun unbindShizukuQuietly() {
-        if (!userServiceBound && shellService.get() == null && boundArgs == null) {
-            pendingShizukuCommand = null
-            return
-        }
+        pendingShizukuCommand = null
         val args = boundArgs
+        boundArgs = null
+        shellService.set(null)
+        lastCommand.set(null)
         if (args != null) {
             try {
                 Shizuku.unbindUserService(args, userServiceConnection, true)
@@ -196,10 +268,6 @@ object WfdOwnerBridge {
                 Log.d(TAG, "unbindUserService failed", err)
             }
         }
-        shellService.set(null)
-        userServiceBound = false
-        boundArgs = null
-        pendingShizukuCommand = null
     }
 
     private fun shizukuReady(): Boolean {

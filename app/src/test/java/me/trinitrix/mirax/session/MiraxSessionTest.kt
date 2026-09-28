@@ -684,6 +684,23 @@ class MiraxSessionTest {
     }
 
     @Test
+    fun provisioning_leavingUntouchedEmptyField_doesNotConsumeChance() {
+        val session = MiraxSession()
+        session.handle(SessionAction.CommitPreferredModeText(""))
+        session.handle(SessionAction.CommitPreferredModeText("   "))
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().effects)
+            .contains(SessionEffect.ReadPlainWmSizeForProvisioning)
+
+        session.handle(
+            SessionAction.ApplyProvisioningWmSize(
+                WmSizeReading(physicalWidth = 1812, physicalHeight = 2176),
+            ),
+        )
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+    }
+
+    @Test
     fun frozen_canEditPreferredTextAndStandardChecks() {
         val session = MiraxSession()
         session.report(PrivilegeReport())

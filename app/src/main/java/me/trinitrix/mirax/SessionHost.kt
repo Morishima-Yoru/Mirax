@@ -82,6 +82,7 @@ object SessionHost {
     fun commit(context: Context): SessionSnapshot {
         val appContext = context.applicationContext
         val session = MiraxApp.instance.session
+        WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
         maybeApplyProvisioningWmSize(session)
         val snapshot = session.snapshot()
         SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
@@ -93,6 +94,7 @@ object SessionHost {
         applyEffects(appContext, snapshot)
         // StopHelper runs before advertise so Shizuku takes exclusive ownership.
         val afterEffects = MiraxApp.instance.session.snapshot()
+        WfdOwnerBridge.syncOwner(appContext, afterEffects.wfdOwner)
         WfdOwnerBridge.sync(appContext, afterEffects.wfdAdvertise)
         SinkConnectionController.sync(appContext, afterEffects.wfdAdvertise)
         return MiraxApp.instance.session.snapshot()

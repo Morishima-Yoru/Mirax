@@ -468,6 +468,9 @@ class MiraxSession(
         val fallbackRefresh = preferredMode?.refreshHz ?: 60
         when (val result = PreferredModeCorrection.parse(text, fallbackRefresh)) {
             PreferredModeCorrection.ParseResult.Cleared -> {
+                if (preferredMode == null) {
+                    return
+                }
                 preferredMode = null
                 consumeProvisioning()
             }
