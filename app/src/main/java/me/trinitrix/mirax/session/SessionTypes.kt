@@ -40,6 +40,26 @@ enum class WidgetStatus {
 }
 
 /**
+ * User language choice persisted across stays.
+ */
+enum class LanguagePreference {
+    FOLLOW_SYSTEM,
+    TRADITIONAL_CHINESE,
+    ENGLISH,
+}
+
+/**
+ * Resolved UI language the host must apply.
+ *
+ * Follow-system maps Traditional Chinese systems to [TRADITIONAL_CHINESE]
+ * and every other system language (including Simplified Chinese) to [ENGLISH].
+ */
+enum class AppLanguage {
+    TRADITIONAL_CHINESE,
+    ENGLISH,
+}
+
+/**
  * Privilege path report fed into the session by the environment.
  *
  * Args:
@@ -54,13 +74,37 @@ data class PrivilegeReport(
 )
 
 /**
+ * System locale classification fed by the host (not read from Android inside tests).
+ *
+ * Args:
+ *     isTraditionalChinese: True when the primary system locale is Traditional Chinese.
+ */
+data class SystemLocaleReport(
+    val isTraditionalChinese: Boolean = false,
+)
+
+/**
+ * Current phone device name fed by the host. Mirax never writes this value back.
+ *
+ * Args:
+ *     deviceName: Name observed from the environment (e.g. Settings.Global.DEVICE_NAME).
+ */
+data class DeviceNameReport(
+    val deviceName: String = "",
+)
+
+/**
  * Persisted settings the session reads and updates.
  *
  * Args:
  *     advertisingEnabled: Whether the user wants WFD advertising on.
+ *     languagePreference: Follow-system, pin Traditional Chinese, or pin English.
+ *     displayNameOverride: Non-blank custom broadcast name, or null to follow the device name.
  */
 data class SessionSettings(
     val advertisingEnabled: Boolean = false,
+    val languagePreference: LanguagePreference = LanguagePreference.FOLLOW_SYSTEM,
+    val displayNameOverride: String? = null,
 )
 
 /**
@@ -72,6 +116,10 @@ sealed interface SessionEffect {
 
 /**
  * Observable session output for Activities and status surfaces.
+ *
+ * [effectiveBroadcastName] is the single name Wi-Fi Direct and the RTSP friendly
+ * name must use. When [displayNameFollowsDevice] is true, [displayNameFieldHint]
+ * shows the current device name in gray and is not a saved override.
  */
 data class SessionSnapshot(
     val phase: ScreenPhase,
@@ -83,6 +131,12 @@ data class SessionSnapshot(
     val canReadWmSize: Boolean,
     val helperStartCommand: String,
     val effects: List<SessionEffect> = emptyList(),
+    val languagePreference: LanguagePreference = LanguagePreference.FOLLOW_SYSTEM,
+    val appLanguage: AppLanguage = AppLanguage.ENGLISH,
+    val effectiveBroadcastName: String = "",
+    val displayNameOverride: String? = null,
+    val displayNameFollowsDevice: Boolean = true,
+    val displayNameFieldHint: String = "",
 )
 
 /**
@@ -109,4 +163,14 @@ sealed interface SessionAction {
 
     /** Current connection ended. */
     data object ConnectionEnded : SessionAction
+
+    /** User chose follow-system, Traditional Chinese, or English. */
+    data class SetLanguagePreference(val preference: LanguagePreference) : SessionAction
+
+    /**
+     * User saved a display-name field value.
+     *
+     * Blank or whitespace-only clears the override and resumes following the device name.
+     */
+    data class SetDisplayNameOverride(val value: String) : SessionAction
 }

@@ -9,6 +9,13 @@
     <string name="display_card_status_advertising">廣播中</string>
     <string name="display_card_status_connected">已連線</string>
     <string name="display_card_hint">請在 Windows 使用 Win+K 連線。沒有 App 內配對。</string>
+    <string name="display_card_name_label">廣播名稱</string>
     <string name="advertising_switch">廣播這台顯示器</string>
+    <string name="settings_language_title">語言</string>
+    <string name="language_follow_system">跟隨系統</string>
+    <string name="language_traditional_chinese">繁體中文</string>
+    <string name="language_english">英文</string>
+    <string name="settings_display_name_title">顯示名稱</string>
+    <string name="display_name_save">儲存名稱</string>
     <string name="advanced_adb_title">進階 adb</string>
 </resources>

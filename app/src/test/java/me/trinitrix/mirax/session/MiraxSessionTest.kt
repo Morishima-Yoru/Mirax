@@ -187,4 +187,129 @@ class MiraxSessionTest {
         session.handle(SessionAction.SetAdvertising(false))
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.READY)
     }
+
+    // --- Issue #3: language and effective broadcast name ---
+
+    @Test
+    fun followSystem_traditionalChineseSystem_resolvesTraditionalChinese() {
+        val session = MiraxSession()
+        session.report(SystemLocaleReport(isTraditionalChinese = true))
+        val snap = session.snapshot()
+        assertThat(snap.languagePreference).isEqualTo(LanguagePreference.FOLLOW_SYSTEM)
+        assertThat(snap.appLanguage).isEqualTo(AppLanguage.TRADITIONAL_CHINESE)
+    }
+
+    @Test
+    fun followSystem_nonTraditionalSystem_includingSimplified_resolvesEnglish() {
+        val session = MiraxSession()
+        session.report(SystemLocaleReport(isTraditionalChinese = false))
+        assertThat(session.snapshot().appLanguage).isEqualTo(AppLanguage.ENGLISH)
+    }
+
+    @Test
+    fun pinTraditionalChinese_overridesSystemLocale() {
+        val session = MiraxSession()
+        session.report(SystemLocaleReport(isTraditionalChinese = false))
+        session.handle(SessionAction.SetLanguagePreference(LanguagePreference.TRADITIONAL_CHINESE))
+        val snap = session.snapshot()
+        assertThat(snap.languagePreference).isEqualTo(LanguagePreference.TRADITIONAL_CHINESE)
+        assertThat(snap.appLanguage).isEqualTo(AppLanguage.TRADITIONAL_CHINESE)
+    }
+
+    @Test
+    fun pinEnglish_overridesTraditionalChineseSystem() {
+        val session = MiraxSession()
+        session.report(SystemLocaleReport(isTraditionalChinese = true))
+        session.handle(SessionAction.SetLanguagePreference(LanguagePreference.ENGLISH))
+        val snap = session.snapshot()
+        assertThat(snap.languagePreference).isEqualTo(LanguagePreference.ENGLISH)
+        assertThat(snap.appLanguage).isEqualTo(AppLanguage.ENGLISH)
+    }
+
+    @Test
+    fun returnToFollowSystem_usesLatestLocaleReport() {
+        val session = MiraxSession(
+            SessionSettings(languagePreference = LanguagePreference.ENGLISH),
+        )
+        session.report(SystemLocaleReport(isTraditionalChinese = true))
+        session.handle(SessionAction.SetLanguagePreference(LanguagePreference.FOLLOW_SYSTEM))
+        assertThat(session.snapshot().appLanguage).isEqualTo(AppLanguage.TRADITIONAL_CHINESE)
+    }
+
+    @Test
+    fun withoutOverride_effectiveNameFollowsDeviceNameReports() {
+        val session = MiraxSession()
+        session.report(DeviceNameReport("Fold-One"))
+        assertThat(session.snapshot().effectiveBroadcastName).isEqualTo("Fold-One")
+        assertThat(session.snapshot().displayNameFollowsDevice).isTrue()
+        assertThat(session.snapshot().displayNameOverride).isNull()
+
+        session.report(DeviceNameReport("Fold-Two"))
+        assertThat(session.snapshot().effectiveBroadcastName).isEqualTo("Fold-Two")
+        assertThat(session.snapshot().displayNameFollowsDevice).isTrue()
+    }
+
+    @Test
+    fun savedNonEmptyOverride_stopsFollowing_evenIfEqualToDeviceName() {
+        val session = MiraxSession()
+        session.report(DeviceNameReport("Phone-A"))
+        session.handle(SessionAction.SetDisplayNameOverride("Phone-A"))
+        var snap = session.snapshot()
+        assertThat(snap.effectiveBroadcastName).isEqualTo("Phone-A")
+        assertThat(snap.displayNameFollowsDevice).isFalse()
+        assertThat(snap.displayNameOverride).isEqualTo("Phone-A")
+
+        session.report(DeviceNameReport("Phone-B"))
+        snap = session.snapshot()
+        assertThat(snap.effectiveBroadcastName).isEqualTo("Phone-A")
+        assertThat(snap.displayNameFollowsDevice).isFalse()
+    }
+
+    @Test
+    fun emptyOrWhitespaceOverride_clearsAndResumesFollowing() {
+        val session = MiraxSession(
+            SessionSettings(displayNameOverride = "Custom"),
+        )
+        session.report(DeviceNameReport("Device-X"))
+        assertThat(session.snapshot().effectiveBroadcastName).isEqualTo("Custom")
+
+        session.handle(SessionAction.SetDisplayNameOverride("   "))
+        var snap = session.snapshot()
+        assertThat(snap.displayNameOverride).isNull()
+        assertThat(snap.displayNameFollowsDevice).isTrue()
+        assertThat(snap.effectiveBroadcastName).isEqualTo("Device-X")
+
+        session.handle(SessionAction.SetDisplayNameOverride(""))
+        snap = session.snapshot()
+        assertThat(snap.displayNameFollowsDevice).isTrue()
+        assertThat(snap.effectiveBroadcastName).isEqualTo("Device-X")
+    }
+
+    @Test
+    fun following_fieldHintIsDeviceName_notVariableToken() {
+        val session = MiraxSession()
+        session.report(DeviceNameReport("Living Room Fold"))
+        val snap = session.snapshot()
+        assertThat(snap.displayNameFollowsDevice).isTrue()
+        assertThat(snap.displayNameFieldHint).isEqualTo("Living Room Fold")
+        assertThat(snap.displayNameFieldHint).doesNotContain("$")
+        assertThat(snap.effectiveBroadcastName).isEqualTo("Living Room Fold")
+    }
+
+    @Test
+    fun frozen_languageAndDisplayNameRemainEditable() {
+        val session = MiraxSession()
+        session.report(PrivilegeReport())
+        session.report(SystemLocaleReport(isTraditionalChinese = false))
+        session.report(DeviceNameReport("Frozen-Phone"))
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
+
+        session.handle(SessionAction.SetLanguagePreference(LanguagePreference.TRADITIONAL_CHINESE))
+        session.handle(SessionAction.SetDisplayNameOverride("Sink-1"))
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(snap.appLanguage).isEqualTo(AppLanguage.TRADITIONAL_CHINESE)
+        assertThat(snap.effectiveBroadcastName).isEqualTo("Sink-1")
+        assertThat(snap.displayNameFollowsDevice).isFalse()
+    }
 }

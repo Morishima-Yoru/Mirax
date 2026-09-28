@@ -10,6 +10,13 @@
     <string name="display_card_status_advertising">Broadcasting</string>
     <string name="display_card_status_connected">Connected</string>
     <string name="display_card_hint">Use Win+K on Windows to connect. There is no in-app pairing.</string>
+    <string name="display_card_name_label">Broadcast name</string>
     <string name="advertising_switch">Broadcast this display</string>
+    <string name="settings_language_title">Language</string>
+    <string name="language_follow_system">Follow system</string>
+    <string name="language_traditional_chinese">Traditional Chinese</string>
+    <string name="language_english">English</string>
+    <string name="settings_display_name_title">Display name</string>
+    <string name="display_name_save">Save name</string>
     <string name="advanced_adb_title">Advanced adb</string>
 </resources>
