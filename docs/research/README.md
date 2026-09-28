@@ -12,6 +12,7 @@
 | [daemon-privilege.md](daemon-privilege.md) | `setWfdInfo()` 綁在 shell 身分，一般 APK 過不了 |
 | [app-entrypoints.md](app-entrypoints.md) | 普通 App 沒有已證實的免 ADB Sink 入口；這台韌體拒絕 `pm enable` tile |
 | [privileged-entrypoints.md](privileged-entrypoints.md) | Knox 只能嘗試打開 Samsung 自己的元件，而且尚未實測、會改裝置管理前提 |
+| [device-owner-wifi-display.md](device-owner-wifi-display.md) | Device Owner 不能取得或轉授 `CONFIGURE_WIFI_DISPLAY` |
 | [touch.md](touch.md) | 一般觸控可以走 UIBC HIDC；S Pen 不在範圍內 |
 
 現行設計以 [design.md](../design.md) 為準。研究裡若出現「下一步去改 Samsung 播放器」的句子，以 ADR 為準。
