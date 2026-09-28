@@ -9,7 +9,7 @@ import java.util.ArrayDeque
 
 /**
  * Decodes H.264 access units onto an attached [Surface].
- * Aspect-fit layout is owned by the picture activity.
+ * Picture placement is owned by the picture activity via [me.trinitrix.mirax.session.PicturePlacement].
  */
 class H264SurfaceDecoder {
     private val pending = ArrayDeque<ByteArray>()

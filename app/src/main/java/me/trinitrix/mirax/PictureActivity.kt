@@ -18,14 +18,16 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import me.trinitrix.mirax.session.PicturePlacement
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import java.lang.ref.WeakReference
 
 /**
- * Fullscreen Miracast picture. Aspect-fit with black letterboxing — no stretch,
- * no crop-to-fill. Picture taps and long-presses do nothing (no settings).
+ * Fullscreen Miracast picture. Placement follows the session [me.trinitrix.mirax.session.PictureScale]
+ * via [PicturePlacement]; views only render. Picture taps and long-presses do
+ * nothing (no settings).
  *
  * System Back and the bottom handle are decided by [me.trinitrix.mirax.session.MiraxSession];
  * this activity only renders [SessionSnapshot] outputs and forwards actions.
@@ -39,8 +41,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var handleEndButton: TextView
     private lateinit var handleResolutionValue: TextView
     private lateinit var handleRefreshValue: TextView
-    private var videoW: Int = 0
-    private var videoH: Int = 0
+    /** Decoder buffer size for [SurfaceHolder.setFixedSize]; may be padded. */
+    private var bufferW: Int = 0
+    private var bufferH: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +55,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         stage = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
+            clipChildren = true
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -61,7 +65,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER,
+                Gravity.TOP or Gravity.START,
             )
             // Taps and long-presses must not open settings.
             isClickable = true
@@ -85,13 +89,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         setContentView(stage)
 
         surfaceView.holder.addCallback(this)
-        stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitSurface() }
+        stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutPicture() }
 
         SinkConnectionController.decoder.onFormat = { w, h, _ ->
             runOnUiThread {
-                videoW = w
-                videoH = h
-                fitSurface()
+                bufferW = w
+                bufferH = h
+                layoutPicture()
             }
         }
 
@@ -157,7 +161,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         SinkConnectionController.decoder.attachSurface(holder.surface)
-        fitSurface()
+        layoutPicture()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -170,6 +174,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             return
         }
         renderHandle(snapshot)
+        layoutPicture()
     }
 
     private fun buildHandle() {
@@ -277,15 +282,35 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         ViewCompat.requestApplyInsets(handleRoot)
     }
 
-    private fun fitSurface() {
-        if (videoW <= 0 || videoH <= 0 || stage.width <= 0 || stage.height <= 0) {
+    private fun layoutPicture() {
+        if (stage.width <= 0 || stage.height <= 0) {
             return
         }
-        val scale = minOf(stage.width / videoW.toFloat(), stage.height / videoH.toFloat())
-        val width = maxOf(2, Math.round(videoW * scale))
-        val height = maxOf(2, Math.round(videoH * scale))
-        surfaceView.layoutParams = FrameLayout.LayoutParams(width, height, Gravity.CENTER)
-        surfaceView.holder.setFixedSize(videoW, videoH)
+        val snapshot = MiraxApp.instance.session.snapshot()
+        val picture = snapshot.selectedMode ?: return
+        val pictureW = picture.width
+        val pictureH = picture.height
+        if (pictureW <= 0 || pictureH <= 0) {
+            return
+        }
+        val rect = PicturePlacement.place(
+            pictureWidth = pictureW,
+            pictureHeight = pictureH,
+            panelWidth = stage.width,
+            panelHeight = stage.height,
+            scale = snapshot.pictureScale,
+        )
+        val params = FrameLayout.LayoutParams(
+            maxOf(1, rect.width),
+            maxOf(1, rect.height),
+            Gravity.TOP or Gravity.START,
+        )
+        params.leftMargin = rect.left
+        params.topMargin = rect.top
+        surfaceView.layoutParams = params
+        val fixedW = if (bufferW > 0) bufferW else pictureW
+        val fixedH = if (bufferH > 0) bufferH else pictureH
+        surfaceView.holder.setFixedSize(fixedW, fixedH)
     }
 
     private fun hideSystemBars() {
@@ -302,6 +327,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         fun finishIfShowing() {
             showing?.get()?.finish()
             showing = null
+        }
+
+        /** Re-apply placement after the session picture scale changes. */
+        fun relayoutIfShowing() {
+            showing?.get()?.runOnUiThread {
+                showing?.get()?.layoutPicture()
+            }
         }
     }
 }

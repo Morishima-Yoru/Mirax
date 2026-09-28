@@ -2,6 +2,7 @@ package me.trinitrix.mirax
 
 import android.content.Context
 import me.trinitrix.mirax.session.LanguagePreference
+import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionSettings
 import me.trinitrix.mirax.session.StandardVideoModes
 import me.trinitrix.mirax.session.VideoMode
@@ -21,6 +22,7 @@ object SessionPreferences {
     private const val KEY_MAX_VIDEO_BITRATE_BPS = "max_video_bitrate_bps"
     private const val KEY_BOTTOM_HANDLE_ENABLED = "bottom_handle_enabled"
     private const val KEY_FLOATING_BALL_ENABLED = "floating_ball_enabled"
+    private const val KEY_PICTURE_SCALE = "picture_scale"
 
     fun load(context: Context): SessionSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -39,6 +41,12 @@ object SessionPreferences {
             ?.mapNotNull { decodeMode(it) }
             ?.toSet()
             ?: StandardVideoModes.DEFAULT_CHECKED
+        val pictureScale = when (prefs.getString(KEY_PICTURE_SCALE, PictureScale.PROPORTIONAL.name)) {
+            PictureScale.CENTER_CROP.name -> PictureScale.CENTER_CROP
+            PictureScale.MATCH_EDGES.name -> PictureScale.MATCH_EDGES
+            PictureScale.ACTUAL.name -> PictureScale.ACTUAL
+            else -> PictureScale.PROPORTIONAL
+        }
         return SessionSettings(
             advertisingEnabled = prefs.getBoolean(KEY_ADVERTISING, false),
             languagePreference = language,
@@ -52,6 +60,7 @@ object SessionPreferences {
             provisioningConsumed = prefs.getBoolean(KEY_PROVISIONING_CONSUMED, preferred != null),
             bottomHandleEnabled = prefs.getBoolean(KEY_BOTTOM_HANDLE_ENABLED, true),
             floatingBallEnabled = prefs.getBoolean(KEY_FLOATING_BALL_ENABLED, true),
+            pictureScale = pictureScale,
         )
     }
 
@@ -86,7 +95,7 @@ object SessionPreferences {
 
     /**
      * Persist preferred mode, checklist, bitrate cap, provisioning flag,
-     * bottom-handle, and floating-ball settings.
+     * bottom-handle, floating-ball, and picture-scale settings.
      */
     fun saveResolutionSettings(context: Context, settings: SessionSettings) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -105,6 +114,7 @@ object SessionPreferences {
                 putLong(KEY_MAX_VIDEO_BITRATE_BPS, settings.maxVideoBitrateBps)
                 putBoolean(KEY_BOTTOM_HANDLE_ENABLED, settings.bottomHandleEnabled)
                 putBoolean(KEY_FLOATING_BALL_ENABLED, settings.floatingBallEnabled)
+                putString(KEY_PICTURE_SCALE, settings.pictureScale.name)
             }
             .apply()
     }
@@ -120,6 +130,13 @@ object SessionPreferences {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_FLOATING_BALL_ENABLED, enabled)
+            .apply()
+    }
+
+    fun savePictureScale(context: Context, scale: PictureScale) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_PICTURE_SCALE, scale.name)
             .apply()
     }
 

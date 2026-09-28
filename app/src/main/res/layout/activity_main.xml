@@ -244,9 +244,55 @@
             android:padding="20dp">
 
             <TextView
+                android:id="@+id/settingsScaleTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_scale_title"
+                android:textColor="@color/mirax_on_surface"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <RadioGroup
+                android:id="@+id/scaleGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/scaleProportional"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/scale_proportional"
+                    android:textColor="@color/mirax_on_surface" />
+
+                <RadioButton
+                    android:id="@+id/scaleCenterCrop"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/scale_center_crop"
+                    android:textColor="@color/mirax_on_surface" />
+
+                <RadioButton
+                    android:id="@+id/scaleMatchEdges"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/scale_match_edges"
+                    android:textColor="@color/mirax_on_surface" />
+
+                <RadioButton
+                    android:id="@+id/scaleActual"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/scale_actual"
+                    android:textColor="@color/mirax_on_surface" />
+            </RadioGroup>
+
+            <TextView
                 android:id="@+id/settingsResolutionTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
                 android:text="@string/settings_resolution_title"
                 android:textColor="@color/mirax_on_surface"
                 android:textSize="16sp"

@@ -4,14 +4,15 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 /**
- * Behaviour tests for the Mirax session seam (issues #2–#9, #11).
+ * Behaviour tests for the Mirax session seam (issues #2–#9, #11–#12).
  *
  * Seam under test: [MiraxSession] — feed settings, privilege reports, user
  * actions, picture rotation, and connection events; assert phase, WFD owner,
  * tile/widget state, next advertisement set, preferred mode (including
- * visible-picture axes), selected mode, the WFD advertise command, Back
- * confirm, and bottom-handle outputs. RTSP encode/decode stays behind this
- * seam and is not asserted here. The picture activity is not a second seam.
+ * visible-picture axes), selected mode, picture scale, the WFD advertise
+ * command, Back confirm, and bottom-handle outputs. RTSP encode/decode stays
+ * behind this seam and is not asserted here. The picture activity is not a
+ * second seam. Placement rectangles are covered by [PicturePlacementTest].
  */
 class MiraxSessionTest {
 
@@ -1384,6 +1385,57 @@ class MiraxSessionTest {
 
         session.handle(SessionAction.ConnectionEnded)
         assertThat(session.snapshot().showFloatingBall).isFalse()
+    }
+
+    // --- Issue #12: picture scale on the session ---
+
+    @Test
+    fun pictureScale_freshInstall_isProportional_andPersistsInExport() {
+        val session = MiraxSession()
+        assertThat(session.snapshot().pictureScale).isEqualTo(PictureScale.PROPORTIONAL)
+        assertThat(session.exportSettings().pictureScale).isEqualTo(PictureScale.PROPORTIONAL)
+    }
+
+    @Test
+    fun pictureScale_allFourModes_selectable_andExported() {
+        val session = MiraxSession()
+        for (scale in PictureScale.entries) {
+            session.handle(SessionAction.SetPictureScale(scale))
+            assertThat(session.snapshot().pictureScale).isEqualTo(scale)
+            assertThat(session.exportSettings().pictureScale).isEqualTo(scale)
+        }
+    }
+
+    @Test
+    fun pictureScale_change_doesNotAlterNextAdvertisementSet() {
+        val session = MiraxSession(
+            SessionSettings(preferredMode = VideoMode(1812, 2176, 60)),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        val before = session.snapshot().nextAdvertisementModes
+        assertThat(before).isNotEmpty()
+
+        session.handle(SessionAction.SetPictureScale(PictureScale.CENTER_CROP))
+        assertThat(session.snapshot().nextAdvertisementModes).isEqualTo(before)
+
+        session.handle(SessionAction.SetPictureScale(PictureScale.MATCH_EDGES))
+        assertThat(session.snapshot().nextAdvertisementModes).isEqualTo(before)
+
+        session.handle(SessionAction.SetPictureScale(PictureScale.ACTUAL))
+        assertThat(session.snapshot().nextAdvertisementModes).isEqualTo(before)
+
+        session.handle(SessionAction.SetPictureScale(PictureScale.PROPORTIONAL))
+        assertThat(session.snapshot().nextAdvertisementModes).isEqualTo(before)
+    }
+
+    @Test
+    fun pictureScale_changeWhileConnected_isVisibleOnNextSnapshot() {
+        val session = connectedSession()
+        assertThat(session.snapshot().pictureScale).isEqualTo(PictureScale.PROPORTIONAL)
+
+        session.handle(SessionAction.SetPictureScale(PictureScale.CENTER_CROP))
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().pictureScale).isEqualTo(PictureScale.CENTER_CROP)
     }
 
     private fun connectedSession(): MiraxSession {

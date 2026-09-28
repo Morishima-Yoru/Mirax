@@ -13,6 +13,11 @@
     <string name="display_card_resolution_label">解析度</string>
     <string name="display_card_resolution_none">未設定</string>
     <string name="advertising_switch">廣播這台顯示器</string>
+    <string name="settings_scale_title">縮放</string>
+    <string name="scale_proportional">等比</string>
+    <string name="scale_center_crop">鋪滿</string>
+    <string name="scale_match_edges">拉伸</string>
+    <string name="scale_actual">原寸</string>
     <string name="settings_resolution_title">解析度</string>
     <string name="preferred_mode_hint">偏好模式（例如 2176×1812@60）</string>
     <string name="use_this_screen">使用此螢幕</string>

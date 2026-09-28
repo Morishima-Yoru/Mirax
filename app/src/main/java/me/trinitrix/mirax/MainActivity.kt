@@ -14,6 +14,7 @@ import me.trinitrix.mirax.session.AppLanguage
 import me.trinitrix.mirax.session.DeviceNameReport
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.MiraxDisplayReport
+import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionSnapshot
@@ -27,6 +28,8 @@ import me.trinitrix.mirax.session.VideoMode
  * Language, display-name, preferred-mode text, and standard-mode checks stay
  * available while the session is frozen. Resolution UI only renders the session
  * advertisement-set output and forwards edit, leave-field, and use-this-screen.
+ * Picture scale is rendered from the session and forwarded; placement is not
+ * computed here.
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -37,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     private var updatingStandardModes = false
     private var updatingBottomHandle = false
     private var updatingFloatingBall = false
+    private var updatingPictureScale = false
     private var preferredModeEdited = false
     private var appliedAppLanguage: AppLanguage? = null
 
@@ -81,6 +85,19 @@ class MainActivity : AppCompatActivity() {
             session.handle(SessionAction.SetLanguagePreference(preference))
             SessionPreferences.saveLanguagePreference(this, preference)
             applyResolvedLanguage(session.snapshot().appLanguage, recreateUi = true)
+        }
+
+        binding.scaleGroup.setOnCheckedChangeListener { _, checkedId ->
+            if (updatingPictureScale) {
+                return@setOnCheckedChangeListener
+            }
+            val scale = when (checkedId) {
+                binding.scaleCenterCrop.id -> PictureScale.CENTER_CROP
+                binding.scaleMatchEdges.id -> PictureScale.MATCH_EDGES
+                binding.scaleActual.id -> PictureScale.ACTUAL
+                else -> PictureScale.PROPORTIONAL
+            }
+            render(SessionHost.setPictureScale(this, scale))
         }
 
         binding.displayNameSave.setOnClickListener {
@@ -249,6 +266,7 @@ class MainActivity : AppCompatActivity() {
         binding.dashboardScroll.visibility = if (frozen) View.GONE else View.VISIBLE
 
         renderLanguage(snapshot)
+        renderPictureScale(snapshot)
         renderDisplayName(snapshot)
         renderPreferredMode(snapshot)
         renderStandardModes(snapshot)
@@ -288,6 +306,20 @@ class MainActivity : AppCompatActivity() {
             updatingLanguage = true
             binding.languageGroup.check(checkedId)
             updatingLanguage = false
+        }
+    }
+
+    private fun renderPictureScale(snapshot: SessionSnapshot) {
+        val checkedId = when (snapshot.pictureScale) {
+            PictureScale.PROPORTIONAL -> binding.scaleProportional.id
+            PictureScale.CENTER_CROP -> binding.scaleCenterCrop.id
+            PictureScale.MATCH_EDGES -> binding.scaleMatchEdges.id
+            PictureScale.ACTUAL -> binding.scaleActual.id
+        }
+        if (binding.scaleGroup.checkedRadioButtonId != checkedId) {
+            updatingPictureScale = true
+            binding.scaleGroup.check(checkedId)
+            updatingPictureScale = false
         }
     }
 

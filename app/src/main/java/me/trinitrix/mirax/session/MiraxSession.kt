@@ -8,14 +8,16 @@ package me.trinitrix.mirax.session
  * WFD advertise command the privileged owner must apply, connection events
  * through PLAY (selected mode and picture phase), system Back confirm while
  * connected, the picture bottom-handle outputs, overlay-permission reminder,
- * and floating-ball visibility when leaving projection for the home screen.
+ * floating-ball visibility when leaving projection for the home screen, and
+ * picture scale (how the picture sits on the panel).
  *
  * Activities, the Quick Settings tile, the home-screen widget, and the floating
  * ball only render [snapshot] outputs and forward [SessionAction]s. Privileged
  * work (wm size, WFD advertise) is never performed in the app process; this
  * module only decides who may own WFD, whether wm size may be read, and which
  * name and mode set the owner should receive. RTSP encode/decode stays behind
- * this seam; views never interpret RTSP themselves.
+ * this seam; views never interpret RTSP themselves. Picture placement is the
+ * pure [PicturePlacement] function; the session only stores the scale choice.
  *
  * A *stay* is the lifetime of one [MiraxSession] instance (the app process
  * from this open). Shizuku permission is requested at most once per stay.
@@ -40,6 +42,7 @@ class MiraxSession(
         initialSettings.provisioningConsumed || initialSettings.preferredMode != null
     private var bottomHandleEnabled: Boolean = initialSettings.bottomHandleEnabled
     private var floatingBallEnabled: Boolean = initialSettings.floatingBallEnabled
+    private var pictureScale: PictureScale = initialSettings.pictureScale
     private var privilege: PrivilegeReport = PrivilegeReport()
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
@@ -248,6 +251,9 @@ class MiraxSession(
             SessionAction.FloatingBallTapped -> {
                 onFloatingBallTapped()
             }
+            is SessionAction.SetPictureScale -> {
+                pictureScale = action.scale
+            }
         }
     }
 
@@ -314,6 +320,7 @@ class MiraxSession(
             floatingBallEnabled = floatingBallEnabled,
             showOverlayPermissionReminder = !overlayGranted,
             showFloatingBall = showBall,
+            pictureScale = pictureScale,
         )
     }
 
@@ -331,6 +338,7 @@ class MiraxSession(
             provisioningConsumed = provisioningConsumed,
             bottomHandleEnabled = bottomHandleEnabled,
             floatingBallEnabled = floatingBallEnabled,
+            pictureScale = pictureScale,
         )
     }
 

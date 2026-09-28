@@ -40,6 +40,21 @@ enum class WidgetStatus {
 }
 
 /**
+ * How the picture sits on the panel. Persisted; default [PROPORTIONAL].
+ * Does not change the next advertisement set.
+ */
+enum class PictureScale {
+    /** Whole picture visible, aspect unchanged, centered (等比). */
+    PROPORTIONAL,
+    /** Enlarged until both panel axes are met, aspect unchanged, center-aligned (鋪滿). */
+    CENTER_CROP,
+    /** All four edges meet the panel; aspect not kept (拉伸). */
+    MATCH_EDGES,
+    /** One picture pixel per panel pixel, top-left aligned (原寸). */
+    ACTUAL,
+}
+
+/**
  * User language choice persisted across stays.
  */
 enum class LanguagePreference {
@@ -180,6 +195,7 @@ data class OverlayPermissionReport(
  *     provisioningConsumed: Whether the one-time preferred-mode provisioning chance is gone.
  *     bottomHandleEnabled: Whether the picture bottom handle is shown while connected.
  *     floatingBallEnabled: Whether the floating ball may appear when leaving to home.
+ *     pictureScale: How the picture sits on the panel (等比 / 鋪滿 / 拉伸 / 原寸).
  */
 data class SessionSettings(
     val advertisingEnabled: Boolean = false,
@@ -191,6 +207,7 @@ data class SessionSettings(
     val provisioningConsumed: Boolean = false,
     val bottomHandleEnabled: Boolean = true,
     val floatingBallEnabled: Boolean = true,
+    val pictureScale: PictureScale = PictureScale.PROPORTIONAL,
 )
 
 /**
@@ -273,7 +290,9 @@ data class WfdAdvertiseCommand(
  * [selectedMode] is the mode the source chose for the current connection when
  * it belongs to the advertised set for that connection; null otherwise.
  * [showPicture] is true only in the connected (PLAY) phase so the host can
- * present the fullscreen aspect-fit surface.
+ * present the fullscreen picture surface. [pictureScale] is how that picture
+ * sits on the panel; placement uses [PicturePlacement] with negotiated picture
+ * axes, not a padded decoder buffer.
  *
  * [showBottomHandle] is true only while connected and the bottom-handle setting
  * is on. [bottomHandleExpanded] is whether the handle panel is open.
@@ -320,6 +339,7 @@ data class SessionSnapshot(
     val floatingBallEnabled: Boolean = true,
     val showOverlayPermissionReminder: Boolean = false,
     val showFloatingBall: Boolean = false,
+    val pictureScale: PictureScale = PictureScale.PROPORTIONAL,
 )
 
 /**
@@ -475,4 +495,10 @@ sealed interface SessionAction {
      * User tapped the floating ball to return to projection.
      */
     data object FloatingBallTapped : SessionAction
+
+    /**
+     * User chose how the picture sits on the panel. Persisted; does not change
+     * the next advertisement set.
+     */
+    data class SetPictureScale(val scale: PictureScale) : SessionAction
 }

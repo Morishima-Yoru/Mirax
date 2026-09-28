@@ -7,6 +7,7 @@ import android.view.Display
 import android.view.Surface
 import android.widget.Toast
 import me.trinitrix.mirax.session.PictureRotationReport
+import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionEffect
 import me.trinitrix.mirax.session.SessionSnapshot
@@ -152,6 +153,18 @@ object SessionHost {
         session.handle(SessionAction.SetFloatingBallEnabled(enabled))
         SessionPreferences.saveFloatingBallEnabled(context.applicationContext, enabled)
         return commit(context)
+    }
+
+    /**
+     * Persist and apply picture scale. Relayouts the picture surface when shown.
+     */
+    fun setPictureScale(context: Context, scale: PictureScale): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SetPictureScale(scale))
+        SessionPreferences.savePictureScale(context.applicationContext, scale)
+        val snapshot = commit(context)
+        PictureActivity.relayoutIfShowing()
+        return snapshot
     }
 
     /**
