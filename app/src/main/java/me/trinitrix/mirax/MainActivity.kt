@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private var updatingLanguage = false
     private var updatingPreferredMode = false
     private var updatingStandardModes = false
+    private var updatingBottomHandle = false
     private var preferredModeEdited = false
     private var appliedAppLanguage: AppLanguage? = null
 
@@ -123,6 +124,13 @@ class MainActivity : AppCompatActivity() {
             val displayId = binding.root.display?.displayId ?: 0
             MiraxApp.instance.session.report(MiraxDisplayReport(displayId))
             render(SessionHost.useThisScreen(this, displayId))
+        }
+
+        binding.bottomHandleSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (updatingBottomHandle) {
+                return@setOnCheckedChangeListener
+            }
+            render(SessionHost.setBottomHandleEnabled(this, isChecked))
         }
 
         val session = MiraxApp.instance.session
@@ -220,6 +228,7 @@ class MainActivity : AppCompatActivity() {
         renderDisplayName(snapshot)
         renderPreferredMode(snapshot)
         renderStandardModes(snapshot)
+        renderBottomHandle(snapshot)
         binding.useThisScreenButton.isEnabled = snapshot.canUseThisScreen
 
         if (!frozen) {
@@ -331,6 +340,14 @@ class MainActivity : AppCompatActivity() {
             existing[row.mode]?.isChecked = row.checked
         }
         updatingStandardModes = false
+    }
+
+    private fun renderBottomHandle(snapshot: SessionSnapshot) {
+        if (binding.bottomHandleSwitch.isChecked != snapshot.bottomHandleEnabled) {
+            updatingBottomHandle = true
+            binding.bottomHandleSwitch.isChecked = snapshot.bottomHandleEnabled
+            updatingBottomHandle = false
+        }
     }
 
     companion object {

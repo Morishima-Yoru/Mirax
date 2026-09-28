@@ -4,8 +4,9 @@ package me.trinitrix.mirax.session
  * Mirax product session: the single test seam for screen phase, WFD owner,
  * tile state, widget status, resolved language, effective broadcast name,
  * preferred mode, standard-mode checklist, the next advertisement set, the
- * WFD advertise command the privileged owner must apply, and connection
- * events through PLAY (selected mode and picture phase).
+ * WFD advertise command the privileged owner must apply, connection events
+ * through PLAY (selected mode and picture phase), system Back confirm while
+ * connected, and the picture bottom-handle outputs.
  *
  * Activities, the Quick Settings tile, and the home-screen widget only render
  * [snapshot] outputs and forward [SessionAction]s. Privileged work (wm size,
@@ -34,6 +35,7 @@ class MiraxSession(
     private var maxVideoBitrateBps: Long = initialSettings.maxVideoBitrateBps
     private var provisioningConsumed: Boolean =
         initialSettings.provisioningConsumed || initialSettings.preferredMode != null
+    private var bottomHandleEnabled: Boolean = initialSettings.bottomHandleEnabled
     private var privilege: PrivilegeReport = PrivilegeReport()
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
@@ -42,6 +44,12 @@ class MiraxSession(
     private var selectedMode: VideoMode? = null
     /** Modes frozen for the current connection's RTSP advertisement. */
     private var connectionAdvertisedModes: Set<VideoMode>? = null
+    /**
+     * After the first system Back while connected, the next Back ends this
+     * connection. Cleared only by the next Back or when this connection ends.
+     */
+    private var backEndsConnectionPending: Boolean = false
+    private var bottomHandleExpanded: Boolean = false
     private var permissionRequestedThisStay: Boolean = false
     private var pendingPermissionRequest: Boolean = false
     private var pendingEffects: List<SessionEffect> = emptyList()
@@ -141,14 +149,12 @@ class MiraxSession(
                 enterPlay()
             }
             SessionAction.ConnectionEnded -> {
-                connected = false
-                clearConnectionEphemerals()
+                endConnectionState(emitDrop = false)
             }
             SessionAction.PrePlayGroupDropped -> {
                 // Intentionally no-op for the advertisement set: a pre-PLAY drop
                 // must not latch extra modes or rewrite the saved set.
-                connected = false
-                clearConnectionEphemerals()
+                endConnectionState(emitDrop = false)
             }
             is SessionAction.SetLanguagePreference -> {
                 languagePreference = action.preference
@@ -170,6 +176,23 @@ class MiraxSession(
             }
             is SessionAction.ApplyProvisioningWmSize -> {
                 applyProvisioningWmSize(action.reading)
+            }
+            SessionAction.SystemBack -> {
+                onSystemBack()
+            }
+            SessionAction.EndConnection -> {
+                endConnectionFromUser()
+            }
+            is SessionAction.SetBottomHandleEnabled -> {
+                bottomHandleEnabled = action.enabled
+                if (!action.enabled) {
+                    bottomHandleExpanded = false
+                }
+            }
+            SessionAction.ToggleBottomHandleExpanded -> {
+                if (connected && bottomHandleEnabled) {
+                    bottomHandleExpanded = !bottomHandleExpanded
+                }
             }
         }
     }
@@ -194,6 +217,9 @@ class MiraxSession(
             connected && selectedMode != null -> selectedMode!!.format()
             else -> preferredMode?.format().orEmpty()
         }
+        val handleResolution = selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
+        val handleRefresh = selectedMode?.refreshHz
+        val showHandle = phase == ScreenPhase.CONNECTED && bottomHandleEnabled
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
@@ -221,6 +247,11 @@ class MiraxSession(
             wfdAdvertise = resolveWfdAdvertise(owner, effectiveName, nextModes),
             selectedMode = selectedMode,
             showPicture = phase == ScreenPhase.CONNECTED,
+            bottomHandleEnabled = bottomHandleEnabled,
+            showBottomHandle = showHandle,
+            bottomHandleExpanded = showHandle && this.bottomHandleExpanded,
+            handleResolutionText = if (showHandle) handleResolution else "",
+            handleRefreshRateHz = if (showHandle) handleRefresh else null,
         )
     }
 
@@ -236,6 +267,7 @@ class MiraxSession(
             checkedStandardModes = checkedStandardModes,
             maxVideoBitrateBps = maxVideoBitrateBps,
             provisioningConsumed = provisioningConsumed,
+            bottomHandleEnabled = bottomHandleEnabled,
         )
     }
 
@@ -270,8 +302,41 @@ class MiraxSession(
         }
         advertisingEnabled = enabled
         if (!enabled) {
-            connected = false
-            clearConnectionEphemerals()
+            endConnectionState(emitDrop = false)
+        }
+    }
+
+    private fun onSystemBack() {
+        if (!connected) {
+            return
+        }
+        if (backEndsConnectionPending) {
+            endConnectionFromUser()
+            return
+        }
+        backEndsConnectionPending = true
+        pendingEffects = pendingEffects + SessionEffect.ShowPressBackAgainToEndToast
+    }
+
+    private fun endConnectionFromUser() {
+        if (!connected) {
+            return
+        }
+        endConnectionState(emitDrop = true)
+    }
+
+    /**
+     * Leave the connected phase. [emitDrop] asks the host to tear down the
+     * active RTSP client while advertising stays as the user left it.
+     */
+    private fun endConnectionState(emitDrop: Boolean) {
+        val wasConnected = connected
+        connected = false
+        clearConnectionEphemerals()
+        if (emitDrop && wasConnected) {
+            if (SessionEffect.DropActiveConnection !in pendingEffects) {
+                pendingEffects = pendingEffects + SessionEffect.DropActiveConnection
+            }
         }
     }
 
@@ -298,6 +363,8 @@ class MiraxSession(
     private fun clearConnectionEphemerals() {
         selectedMode = null
         connectionAdvertisedModes = null
+        backEndsConnectionPending = false
+        bottomHandleExpanded = false
     }
 
     private fun commitPreferredModeText(text: String) {

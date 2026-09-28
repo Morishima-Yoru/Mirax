@@ -106,6 +106,43 @@ object SessionHost {
     }
 
     /**
+     * System Back on the picture surface. Session decides toast vs end-connection.
+     */
+    fun onSystemBack(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SystemBack)
+        return commit(context)
+    }
+
+    /**
+     * User ended this connection from the bottom handle.
+     */
+    fun endConnection(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.EndConnection)
+        return commit(context)
+    }
+
+    /**
+     * Persist and apply the bottom-handle setting.
+     */
+    fun setBottomHandleEnabled(context: Context, enabled: Boolean): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SetBottomHandleEnabled(enabled))
+        SessionPreferences.saveBottomHandleEnabled(context.applicationContext, enabled)
+        return commit(context)
+    }
+
+    /**
+     * User tapped the thin bottom handle to expand or collapse its panel.
+     */
+    fun toggleBottomHandleExpanded(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.ToggleBottomHandleExpanded)
+        return commit(context)
+    }
+
+    /**
      * Refresh privilege and push status surfaces without a user action.
      */
     fun refreshPrivilegeAndSurfaces(context: Context): SessionSnapshot {
@@ -138,6 +175,18 @@ object SessionHost {
                 context.getString(R.string.shizuku_not_open),
                 Toast.LENGTH_SHORT,
             ).show()
+            consumed = true
+        }
+        if (SessionEffect.ShowPressBackAgainToEndToast in snapshot.effects) {
+            Toast.makeText(
+                context.applicationContext,
+                context.getString(R.string.picture_press_back_again),
+                Toast.LENGTH_SHORT,
+            ).show()
+            consumed = true
+        }
+        if (SessionEffect.DropActiveConnection in snapshot.effects) {
+            SinkConnectionController.dropActiveConnection()
             consumed = true
         }
         if (consumed) {

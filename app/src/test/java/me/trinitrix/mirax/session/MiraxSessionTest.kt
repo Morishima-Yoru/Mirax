@@ -4,12 +4,13 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 /**
- * Behaviour tests for the Mirax session seam (issues #2–#7).
+ * Behaviour tests for the Mirax session seam (issues #2–#8).
  *
  * Seam under test: [MiraxSession] — feed settings, privilege reports, user
  * actions, and connection events; assert phase, WFD owner, tile/widget state,
- * next advertisement set, selected mode, and the WFD advertise command.
- * RTSP encode/decode stays behind this seam and is not asserted here.
+ * next advertisement set, selected mode, the WFD advertise command, Back
+ * confirm, and bottom-handle outputs. RTSP encode/decode stays behind this
+ * seam and is not asserted here. The picture activity is not a second seam.
  */
 class MiraxSessionTest {
 
@@ -931,5 +932,161 @@ class MiraxSessionTest {
         assertThat(modes).contains(VideoMode(2176, 1812, 60))
         session.handle(SessionAction.SourceSelectedMode(VideoMode(2176, 1812, 60)))
         assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2176, 1812, 60))
+    }
+
+    @Test
+    fun connected_firstSystemBack_onlyToasts_keepsConnectionAndBroadcast() {
+        val session = connectedSession()
+        session.handle(SessionAction.SystemBack)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.showPicture).isTrue()
+        assertThat(snap.effects).contains(SessionEffect.ShowPressBackAgainToEndToast)
+        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
+    }
+
+    @Test
+    fun connected_secondSystemBack_endsConnection_keepsBroadcast() {
+        val session = connectedSession()
+        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.SystemBack)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.showPicture).isFalse()
+        assertThat(snap.selectedMode).isNull()
+        assertThat(snap.wfdAdvertise).isNotNull()
+        assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
+        assertThat(snap.effects).doesNotContain(SessionEffect.ShowPressBackAgainToEndToast)
+    }
+
+    @Test
+    fun backConfirmPromise_survivesOtherActions_untilNextBackOrConnectionEnd() {
+        val session = connectedSession()
+        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        // Other actions must not cancel the promise.
+        session.handle(SessionAction.SetBottomHandleEnabled(false))
+        session.handle(SessionAction.SetBottomHandleEnabled(true))
+        session.handle(SessionAction.ToggleBottomHandleExpanded)
+        session.handle(SessionAction.SetLanguagePreference(LanguagePreference.ENGLISH))
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().advertisingEnabled).isTrue()
+        assertThat(session.snapshot().effects).contains(SessionEffect.DropActiveConnection)
+    }
+
+    @Test
+    fun connectionEnded_clearsBackConfirm_soNextBackToastsAgain() {
+        val session = connectedSession()
+        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.ConnectionEnded)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().effects).contains(SessionEffect.ShowPressBackAgainToEndToast)
+    }
+
+    @Test
+    fun endConnection_fromHandle_endsThisConnection_keepsBroadcast() {
+        val session = connectedSession()
+        session.handle(SessionAction.EndConnection)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.advertisingEnabled).isTrue()
+        assertThat(snap.showPicture).isFalse()
+        assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
+    }
+
+    @Test
+    fun bottomHandle_defaultsOn_shownWhileConnected_withResolutionAndRefresh() {
+        val session = connectedSession()
+        val snap = session.snapshot()
+        assertThat(snap.bottomHandleEnabled).isTrue()
+        assertThat(snap.showBottomHandle).isTrue()
+        assertThat(snap.handleResolutionText).isEqualTo("1920×1080")
+        assertThat(snap.handleRefreshRateHz).isEqualTo(60)
+        assertThat(session.exportSettings().bottomHandleEnabled).isTrue()
+    }
+
+    @Test
+    fun bottomHandle_off_hidesHandle_butSecondBackStillEndsConnection() {
+        val session = MiraxSession(
+            SessionSettings(advertisingEnabled = true, bottomHandleEnabled = false),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1280, 720, 60)))
+        session.handle(SessionAction.EnteredPlay)
+
+        assertThat(session.snapshot().bottomHandleEnabled).isFalse()
+        assertThat(session.snapshot().showBottomHandle).isFalse()
+
+        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().advertisingEnabled).isTrue()
+    }
+
+    @Test
+    fun setBottomHandleEnabled_persistsInExport_andTogglesVisibilityWhileConnected() {
+        val session = connectedSession()
+        session.handle(SessionAction.SetBottomHandleEnabled(false))
+        assertThat(session.snapshot().showBottomHandle).isFalse()
+        assertThat(session.exportSettings().bottomHandleEnabled).isFalse()
+
+        session.handle(SessionAction.SetBottomHandleEnabled(true))
+        assertThat(session.snapshot().showBottomHandle).isTrue()
+        assertThat(session.exportSettings().bottomHandleEnabled).isTrue()
+    }
+
+    @Test
+    fun bottomHandle_expandCollapse_isSessionOwned_andClearsOnConnectionEnd() {
+        val session = connectedSession()
+        assertThat(session.snapshot().bottomHandleExpanded).isFalse()
+
+        session.handle(SessionAction.ToggleBottomHandleExpanded)
+        assertThat(session.snapshot().bottomHandleExpanded).isTrue()
+        assertThat(session.snapshot().showBottomHandle).isTrue()
+
+        session.handle(SessionAction.ToggleBottomHandleExpanded)
+        assertThat(session.snapshot().bottomHandleExpanded).isFalse()
+
+        session.handle(SessionAction.ToggleBottomHandleExpanded)
+        session.handle(SessionAction.EndConnection)
+        assertThat(session.snapshot().showBottomHandle).isFalse()
+        assertThat(session.snapshot().bottomHandleExpanded).isFalse()
+    }
+
+    @Test
+    fun bottomHandle_notShownWhenNotConnected() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().bottomHandleEnabled).isTrue()
+        assertThat(session.snapshot().showBottomHandle).isFalse()
+    }
+
+    private fun connectedSession(): MiraxSession {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        return session
     }
 }

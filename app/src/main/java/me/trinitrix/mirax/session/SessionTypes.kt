@@ -153,6 +153,7 @@ data class StandardModeRow(
  *     checkedStandardModes: Standard modes the user wants in the next advertisement set.
  *     maxVideoBitrateBps: Cap used only to filter the standard-mode list.
  *     provisioningConsumed: Whether the one-time preferred-mode provisioning chance is gone.
+ *     bottomHandleEnabled: Whether the picture bottom handle is shown while connected.
  */
 data class SessionSettings(
     val advertisingEnabled: Boolean = false,
@@ -162,6 +163,7 @@ data class SessionSettings(
     val checkedStandardModes: Set<VideoMode> = StandardVideoModes.DEFAULT_CHECKED,
     val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
     val provisioningConsumed: Boolean = false,
+    val bottomHandleEnabled: Boolean = true,
 )
 
 /**
@@ -181,6 +183,17 @@ sealed interface SessionEffect {
      * Host feeds the result with [SessionAction.ApplyProvisioningWmSize].
      */
     data object ReadPlainWmSizeForProvisioning : SessionEffect
+
+    /**
+     * Toast after the first system Back while connected: one more Back ends the connection.
+     */
+    data object ShowPressBackAgainToEndToast : SessionEffect
+
+    /**
+     * Drop the active Miracast session without turning advertising off.
+     * Host closes the current RTSP client; the listen beacon stays up.
+     */
+    data object DropActiveConnection : SessionEffect
 }
 
 /**
@@ -217,6 +230,11 @@ data class WfdAdvertiseCommand(
  * it belongs to the advertised set for that connection; null otherwise.
  * [showPicture] is true only in the connected (PLAY) phase so the host can
  * present the fullscreen aspect-fit surface.
+ *
+ * [showBottomHandle] is true only while connected and the bottom-handle setting
+ * is on. [bottomHandleExpanded] is whether the handle panel is open.
+ * [handleResolutionText] and [handleRefreshRateHz] are the handle content for
+ * the current selected mode (empty / null when the handle is not shown).
  */
 data class SessionSnapshot(
     val phase: ScreenPhase,
@@ -245,6 +263,11 @@ data class SessionSnapshot(
     val wfdAdvertise: WfdAdvertiseCommand? = null,
     val selectedMode: VideoMode? = null,
     val showPicture: Boolean = false,
+    val bottomHandleEnabled: Boolean = true,
+    val showBottomHandle: Boolean = false,
+    val bottomHandleExpanded: Boolean = false,
+    val handleResolutionText: String = "",
+    val handleRefreshRateHz: Int? = null,
 )
 
 /**
@@ -348,4 +371,29 @@ sealed interface SessionAction {
      * Host completed the one-time provisioning `wm size` read (plain, no display id).
      */
     data class ApplyProvisioningWmSize(val reading: WmSizeReading) : SessionAction
+
+    /**
+     * System Back on the picture. While connected, the first press only toasts;
+     * the second ends this connection and keeps broadcast on. The confirm
+     * promise lasts until the next Back or this connection ends; other actions
+     * do not cancel it.
+     */
+    data object SystemBack : SessionAction
+
+    /**
+     * User ended this connection from the bottom handle (or equivalent control).
+     * Broadcast stays on when the user left it on.
+     */
+    data object EndConnection : SessionAction
+
+    /**
+     * User toggled the bottom-handle setting. Persisted; defaults on.
+     */
+    data class SetBottomHandleEnabled(val enabled: Boolean) : SessionAction
+
+    /**
+     * User tapped the thin bottom-handle control to expand or collapse its panel.
+     * Only meaningful while [SessionSnapshot.showBottomHandle] is true.
+     */
+    data object ToggleBottomHandleExpanded : SessionAction
 }

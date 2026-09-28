@@ -50,4 +50,11 @@
 
     <string name="picture_title">Mirax display</string>
     <string name="picture_connected">Connected</string>
+    <string name="picture_press_back_again">Press Back again to end this connection</string>
+    <string name="handle_end_connection">End this connection</string>
+    <string name="handle_resolution_label">Resolution</string>
+    <string name="handle_refresh_label">Refresh rate</string>
+    <string name="handle_refresh_value">%1$d Hz</string>
+    <string name="settings_bottom_handle_title">Bottom handle</string>
+    <string name="settings_bottom_handle_switch">Show bottom handle while projecting</string>
 </resources>

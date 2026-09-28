@@ -49,4 +49,11 @@
 
     <string name="picture_title">Mirax 顯示</string>
     <string name="picture_connected">已連線</string>
+    <string name="picture_press_back_again">再按一次返回即可結束這次連線</string>
+    <string name="handle_end_connection">結束這次連線</string>
+    <string name="handle_resolution_label">解析度</string>
+    <string name="handle_refresh_label">更新率</string>
+    <string name="handle_refresh_value">%1$d Hz</string>
+    <string name="settings_bottom_handle_title">底部把手</string>
+    <string name="settings_bottom_handle_switch">投影時顯示底部把手</string>
 </resources>

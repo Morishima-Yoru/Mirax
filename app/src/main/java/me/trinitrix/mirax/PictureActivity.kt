@@ -1,18 +1,24 @@
 package me.trinitrix.mirax
 
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import me.trinitrix.mirax.session.ScreenPhase
+import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import java.lang.ref.WeakReference
 
@@ -20,12 +26,18 @@ import java.lang.ref.WeakReference
  * Fullscreen Miracast picture. Aspect-fit with black letterboxing — no stretch,
  * no crop-to-fill. Picture taps and long-presses do nothing (no settings).
  *
- * Issue #8 owns first/second Back toast and the bottom handle; this activity
- * only finishes when the session leaves CONNECTED.
+ * System Back and the bottom handle are decided by [me.trinitrix.mirax.session.MiraxSession];
+ * this activity only renders [SessionSnapshot] outputs and forwards actions.
  */
 class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var stage: FrameLayout
     private lateinit var surfaceView: SurfaceView
+    private lateinit var handleRoot: LinearLayout
+    private lateinit var handleBar: View
+    private lateinit var handlePanel: LinearLayout
+    private lateinit var handleEndButton: TextView
+    private lateinit var handleResolutionValue: TextView
+    private lateinit var handleRefreshValue: TextView
     private var videoW: Int = 0
     private var videoH: Int = 0
 
@@ -59,6 +71,16 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         stage.addView(surfaceView)
         stage.setOnClickListener { /* intentionally empty */ }
         stage.setOnLongClickListener { true }
+
+        buildHandle()
+        stage.addView(
+            handleRoot,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            ),
+        )
         setContentView(stage)
 
         surfaceView.holder.addCallback(this)
@@ -76,22 +98,19 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    // Issue #8 owns the double-Back confirm. Until then, ignore Back
-                    // so a single press does not tear down the stream.
+                    applySession(SessionHost.onSystemBack(this@PictureActivity))
                 }
             },
         )
 
         hideSystemBars()
+        applySession(MiraxApp.instance.session.snapshot())
     }
 
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        val phase = MiraxApp.instance.session.snapshot().phase
-        if (phase != ScreenPhase.CONNECTED) {
-            finish()
-        }
+        applySession(MiraxApp.instance.session.snapshot())
     }
 
     override fun onDestroy() {
@@ -114,6 +133,119 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         SinkConnectionController.decoder.attachSurface(null)
+    }
+
+    private fun applySession(snapshot: SessionSnapshot) {
+        if (!snapshot.showPicture) {
+            finish()
+            return
+        }
+        renderHandle(snapshot)
+    }
+
+    private fun buildHandle() {
+        fun dp(value: Int): Int =
+            (value * resources.displayMetrics.density).toInt()
+
+        handleRoot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(handleRoot) { view, insets ->
+            val nav = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
+            view.setPadding(dp(16), dp(8), dp(16), dp(8) + nav.bottom)
+            insets
+        }
+
+        handleBar = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(4)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(2).toFloat()
+                setColor(0xCCE8EAED.toInt())
+            }
+            isClickable = true
+            setOnClickListener {
+                applySession(SessionHost.toggleBottomHandleExpanded(this@PictureActivity))
+            }
+        }
+
+        handlePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(16), dp(12), dp(16), dp(8))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(12).toFloat()
+                setColor(0xE61C1F26.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = dp(8)
+            }
+        }
+
+        handleEndButton = TextView(this).apply {
+            text = getString(R.string.handle_end_connection)
+            setTextColor(getColor(R.color.mirax_accent))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            isClickable = true
+            setOnClickListener {
+                applySession(SessionHost.endConnection(this@PictureActivity))
+            }
+        }
+        handlePanel.addView(handleEndButton)
+
+        handlePanel.addView(mutedLabel(getString(R.string.handle_resolution_label), topPadDp = 12))
+        handleResolutionValue = TextView(this).apply {
+            setTextColor(getColor(R.color.mirax_on_surface))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        }
+        handlePanel.addView(handleResolutionValue)
+
+        handlePanel.addView(mutedLabel(getString(R.string.handle_refresh_label), topPadDp = 12))
+        handleRefreshValue = TextView(this).apply {
+            setTextColor(getColor(R.color.mirax_on_surface))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        }
+        handlePanel.addView(handleRefreshValue)
+
+        handleRoot.addView(handleBar)
+        handleRoot.addView(handlePanel)
+    }
+
+    private fun mutedLabel(text: String, topPadDp: Int): TextView {
+        val topPad = (topPadDp * resources.displayMetrics.density).toInt()
+        return TextView(this).apply {
+            this.text = text
+            setTextColor(getColor(R.color.mirax_muted))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, topPad, 0, 0)
+        }
+    }
+
+    private fun renderHandle(snapshot: SessionSnapshot) {
+        if (!snapshot.showBottomHandle) {
+            handleRoot.visibility = View.GONE
+            handlePanel.visibility = View.GONE
+            return
+        }
+        handleRoot.visibility = View.VISIBLE
+        handleResolutionValue.text = snapshot.handleResolutionText
+        val refresh = snapshot.handleRefreshRateHz
+        handleRefreshValue.text = if (refresh != null) {
+            getString(R.string.handle_refresh_value, refresh)
+        } else {
+            ""
+        }
+        handlePanel.visibility = if (snapshot.bottomHandleExpanded) View.VISIBLE else View.GONE
+        ViewCompat.requestApplyInsets(handleRoot)
     }
 
     private fun fitSurface() {

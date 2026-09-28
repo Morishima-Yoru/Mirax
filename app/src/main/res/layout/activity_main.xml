@@ -340,6 +340,24 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/display_name_save" />
+
+            <TextView
+                android:id="@+id/settingsBottomHandleTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/settings_bottom_handle_title"
+                android:textColor="@color/mirax_on_surface"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/bottomHandleSwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/settings_bottom_handle_switch"
+                android:textColor="@color/mirax_on_surface" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

@@ -77,6 +77,18 @@ object SinkConnectionController {
         start(command)
     }
 
+    /**
+     * Drop the active RTSP client so this connection ends while the advertise
+     * listen path keeps running. Used when the session ends a connection from
+     * Back or the bottom handle without turning broadcast off.
+     */
+    fun dropActiveConnection() {
+        try {
+            activeClient?.close()
+        } catch (_: Exception) {
+        }
+    }
+
     private fun start(command: WfdAdvertiseCommand) {
         stop("restart")
         val gen = generation.incrementAndGet()
