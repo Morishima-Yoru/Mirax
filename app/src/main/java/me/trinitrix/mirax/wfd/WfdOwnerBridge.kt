@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object WfdOwnerBridge {
     private const val TAG = "MiraxWfdBridge"
-    private const val USER_SERVICE_VERSION = 2
+    private const val USER_SERVICE_VERSION = 3
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lastCommand = AtomicReference<WfdAdvertiseCommand?>(null)

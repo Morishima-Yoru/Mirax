@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Start with:
  * {@code adb shell "CLASSPATH=/data/local/tmp/mirax-helper.jar app_process /system/bin
  * me.trinitrix.mirax.helper.Helper"}
+ * An optional first argument is a Wi-Fi Direct name to advertise immediately.
  */
 public final class Helper {
     public static final String SOCKET_NAME = "mirax-helper";
@@ -38,6 +39,10 @@ public final class Helper {
         if (!beacon.initialize()) {
             Log.e(TAG, "WFD beacon init failed");
             return;
+        }
+        if (args != null && args.length > 0 && args[0] != null && !args[0].isEmpty()) {
+            Log.i(TAG, "advertise from argument \"" + args[0] + "\"");
+            beacon.startAdvertising(args[0]);
         }
         Thread server = new Thread(Helper::serve, "mirax-helper-socket");
         server.setDaemon(true);

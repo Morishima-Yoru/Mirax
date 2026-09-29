@@ -22,6 +22,17 @@ class SinkConnectionWireTest {
     }
 
     @Test
+    fun persistentNetworkIds_forgetsEverySavedGroup() {
+        assertThat(SavedP2pGroups.persistentNetworkIds(intArrayOf(0, 1, 2)))
+            .isEqualTo(intArrayOf(0, 1, 2))
+        assertThat(SavedP2pGroups.persistentNetworkIds(intArrayOf(-1, 0, -2)))
+            .isEqualTo(intArrayOf(0))
+        assertThat(SavedP2pGroups.persistentNetworkIds(null)).isEmpty()
+        assertThat(SavedP2pGroups.persistentNetworkIds(intArrayOf())).isEmpty()
+        assertThat(SavedP2pGroups.ALL_SOURCES_MAC).isEqualTo("ff:ff:ff:ff:ff:ff")
+    }
+
+    @Test
     fun p2pNeighbor_picksUsableIpv4OnP2pInterface() {
         val output = """
             192.168.1.1 dev wlan0 lladdr 11:22:33:44:55:66 REACHABLE

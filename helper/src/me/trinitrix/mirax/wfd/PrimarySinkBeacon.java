@@ -5,6 +5,7 @@ import android.content.Context;
 import android.net.MacAddress;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
+import android.net.wifi.p2p.WifiP2pGroup;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.WifiP2pWfdInfo;
@@ -17,8 +18,10 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -28,8 +31,11 @@ import java.util.Set;
  * Calls {@link WifiP2pManager#setWfdInfo} and {@link WifiP2pManager#startListening}
  * so stock Windows Win+K can list this phone, keeps listening while no group is
  * formed, accepts the source's P2P connection request, and exposes the formed
- * group's source address. Must run as shell (UID 2000) or root — never from the
- * Mirax app process. Does not touch Samsung SmartMirroring or SecondScreenPlayer.
+ * group's source address. A broadcast-address approver accepts a source that
+ * is not already in the peer list, and saved P2P groups are deleted so a new
+ * computer is not stuck reinvoking the original development machine. Must run
+ * as shell (UID 2000) or root — never from the Mirax app process. Does not
+ * touch Samsung SmartMirroring or SecondScreenPlayer.
  */
 public final class PrimarySinkBeacon {
     private static final String TAG = "MiraxWfdBeacon";
@@ -57,6 +63,7 @@ public final class PrimarySinkBeacon {
     private volatile String groupState = GROUP_DOWN;
     private volatile String lastName = "";
     private boolean groupFormed;
+    private boolean forgetSavedGroups;
     private long lastArmedAt;
 
     private final Runnable poll = new Runnable() {
@@ -113,6 +120,9 @@ public final class PrimarySinkBeacon {
                 groupFormed = false;
                 groupState = GROUP_DOWN;
                 removeGroupQuietly("removeGroup");
+            }
+            if (!groupFormed) {
+                forgetSavedGroups = true;
             }
             armSink();
             handler.removeCallbacks(poll);
@@ -218,6 +228,7 @@ public final class PrimarySinkBeacon {
                 Log.i(TAG, "P2P group down");
                 groupFormed = false;
                 groupState = GROUP_DOWN;
+                forgetSavedGroups = true;
                 armSink();
             }
             return;
@@ -263,24 +274,7 @@ public final class PrimarySinkBeacon {
                 if (announce) {
                     Log.i(TAG, "setWfdInfo success");
                 }
-                manager.startListening(channel, new WifiP2pManager.ActionListener() {
-                    @Override
-                    public void onSuccess() {
-                        if (!advertising) {
-                            Log.i(TAG, "startListening success; Primary Sink on port "
-                                    + RTSP_CONTROL_PORT);
-                        }
-                        advertising = true;
-                    }
-
-                    @Override
-                    public void onFailure(int reason) {
-                        if (announce) {
-                            advertising = false;
-                            Log.e(TAG, "startListening failed reason=" + reason);
-                        }
-                    }
-                });
+                admitThenListen(announce);
             }
 
             @Override
@@ -309,6 +303,177 @@ public final class PrimarySinkBeacon {
             manager.removeGroup(channel, logged(label));
         } catch (Throwable ignored) {
         }
+    }
+
+    /**
+     * Arm the all-sources approver, drop saved groups when this arm asked for
+     * it, then listen. Listening waits until the delete requests are queued so
+     * a source cannot reinvoke a group that is about to disappear.
+     */
+    private void admitThenListen(boolean announce) {
+        armAllSourcesApprover();
+        Runnable listen = () -> startListening(announce);
+        if (!forgetSavedGroups) {
+            listen.run();
+            return;
+        }
+        forgetSavedGroups = false;
+        if (!requestPersistentGroupDeletion(listen)) {
+            listen.run();
+        }
+    }
+
+    private void startListening(boolean announce) {
+        if (!wanted || manager == null || channel == null) {
+            return;
+        }
+        manager.startListening(channel, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                if (!advertising) {
+                    Log.i(TAG, "startListening success; Primary Sink on port "
+                            + RTSP_CONTROL_PORT);
+                }
+                advertising = true;
+            }
+
+            @Override
+            public void onFailure(int reason) {
+                if (announce) {
+                    advertising = false;
+                    Log.e(TAG, "startListening failed reason=" + reason);
+                }
+            }
+        });
+    }
+
+    /**
+     * Accept a connection from any source.
+     *
+     * Android delivers a new negotiation or invitation to the approver for
+     * that MAC, and falls back to {@link MacAddress#BROADCAST_ADDRESS} when
+     * none is registered. Without the fallback the system confirmation dialog
+     * is shown, and this shell process cannot press it. The framework removes
+     * the approver after the result, so {@code onDetached} arms it again.
+     */
+    private void armAllSourcesApprover() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || manager == null || channel == null || !wanted) {
+            return;
+        }
+        String mac = MacAddress.BROADCAST_ADDRESS.toString();
+        if (!approverMacs.add(mac)) {
+            return;
+        }
+        try {
+            manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, approver);
+            Log.i(TAG, "addExternalApprover " + mac);
+        } catch (Throwable err) {
+            approverMacs.remove(mac);
+            Log.w(TAG, "addExternalApprover failed for " + mac, err);
+        }
+    }
+
+    /**
+     * @return true when the list request was sent and {@code after} will run
+     *     from that callback
+     */
+    private boolean requestPersistentGroupDeletion(Runnable after) {
+        if (manager == null || channel == null) {
+            return false;
+        }
+        try {
+            Class<?> listenerClass = Class.forName(
+                    "android.net.wifi.p2p.WifiP2pManager$PersistentGroupInfoListener");
+            Object listener = Proxy.newProxyInstance(
+                    listenerClass.getClassLoader(),
+                    new Class<?>[] {listenerClass},
+                    (proxy, method, args) -> {
+                        if (method.getDeclaringClass() == Object.class) {
+                            return objectMethod(proxy, method.getName(), args);
+                        }
+                        if ("onPersistentGroupInfoAvailable".equals(method.getName())) {
+                            Object groups = args == null || args.length == 0 ? null : args[0];
+                            deletePersistentGroups(groups, after);
+                        }
+                        return null;
+                    });
+            Method request = WifiP2pManager.class.getMethod(
+                    "requestPersistentGroupInfo",
+                    WifiP2pManager.Channel.class,
+                    listenerClass);
+            request.invoke(manager, channel, listener);
+            return true;
+        } catch (Throwable err) {
+            Log.w(TAG, "requestPersistentGroupInfo unavailable", err);
+            return false;
+        }
+    }
+
+    private void deletePersistentGroups(Object groupList, Runnable after) {
+        try {
+            int[] persistent = SavedP2pGroups.persistentNetworkIds(networkIdsOf(groupList));
+            if (persistent.length == 0) {
+                Log.i(TAG, "no persistent groups");
+            } else {
+                Method delete = WifiP2pManager.class.getMethod(
+                        "deletePersistentGroup",
+                        WifiP2pManager.Channel.class,
+                        int.class,
+                        WifiP2pManager.ActionListener.class);
+                for (int netId : persistent) {
+                    Log.i(TAG, "deletePersistentGroup netId=" + netId);
+                    delete.invoke(
+                            manager,
+                            channel,
+                            netId,
+                            logged("deletePersistentGroup " + netId));
+                }
+            }
+        } catch (Throwable err) {
+            Log.w(TAG, "deletePersistentGroup failed", err);
+        }
+        if (after != null) {
+            after.run();
+        }
+    }
+
+    private static int[] networkIdsOf(Object groupList) throws Exception {
+        if (groupList == null) {
+            return new int[0];
+        }
+        Method getGroupList = groupList.getClass().getMethod("getGroupList");
+        Object raw = getGroupList.invoke(groupList);
+        if (!(raw instanceof Collection<?> groups)) {
+            return new int[0];
+        }
+        int count = 0;
+        for (Object group : groups) {
+            if (group instanceof WifiP2pGroup) {
+                count++;
+            }
+        }
+        int[] ids = new int[count];
+        int index = 0;
+        for (Object group : groups) {
+            if (group instanceof WifiP2pGroup wifiGroup) {
+                ids[index++] = wifiGroup.getNetworkId();
+            }
+        }
+        return ids;
+    }
+
+    private static Object objectMethod(Object proxy, String name, Object[] args) {
+        if ("hashCode".equals(name)) {
+            return System.identityHashCode(proxy);
+        }
+        if ("equals".equals(name)) {
+            return proxy == (args != null && args.length > 0 ? args[0] : null);
+        }
+        if ("toString".equals(name)) {
+            return "PersistentGroupInfoListener";
+        }
+        return null;
     }
 
     private void watchPeer(WifiP2pDevice device) {
@@ -350,8 +515,18 @@ public final class PrimarySinkBeacon {
 
                 @Override
                 public void onDetached(MacAddress deviceAddress, int reason) {
+                    Log.i(TAG, "approver detached " + deviceAddress + " reason=" + reason);
+                    // REPLACE means a second registration is already stored.
+                    // REMOVE is how the framework drops the approver after ACCEPT.
+                    if (reason == WifiP2pManager.ExternalApproverRequestListener
+                            .APPROVER_DETACH_REASON_REPLACE) {
+                        return;
+                    }
                     if (deviceAddress != null) {
                         approverMacs.remove(deviceAddress.toString());
+                    }
+                    if (wanted) {
+                        armAllSourcesApprover();
                     }
                 }
 

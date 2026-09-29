@@ -10,6 +10,7 @@ import android.net.Network;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
+import android.net.wifi.p2p.WifiP2pGroup;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Handler;
@@ -27,6 +28,8 @@ import java.io.FileWriter;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
@@ -34,6 +37,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 
@@ -76,10 +80,17 @@ public class MiracastReceiver {
                 @Override
                 public void onDetached(MacAddress deviceAddress, int reason) {
                     log("approver detached " + deviceAddress + " reason=" + reason);
+                    if (reason == WifiP2pManager.ExternalApproverRequestListener
+                            .APPROVER_DETACH_REASON_REPLACE) {
+                        return;
+                    }
                     if (deviceAddress != null) {
                         synchronized (approverMacs) {
                             approverMacs.remove(deviceAddress.toString());
                         }
+                    }
+                    if (broadcasting) {
+                        armAllSourcesApprover();
                     }
                 }
 
@@ -208,7 +219,12 @@ public class MiracastReceiver {
                 videoText = "";
                 if (broadcasting) {
                     link = "advertising";
-                    manager.startListening(channel, loggedAction("relisten"));
+                    admitThenListen(new Runnable() {
+                        @Override
+                        public void run() {
+                            manager.startListening(channel, loggedAction("relisten"));
+                        }
+                    });
                 }
             }
         });
@@ -316,25 +332,31 @@ public class MiracastReceiver {
             public void onSuccess() {
                 wfdState = "ok";
                 log("setWfdInfo success");
-                manager.startListening(channel, new WifiP2pManager.ActionListener() {
+                admitThenListen(new Runnable() {
                     @Override
-                    public void onSuccess() {
-                        link = "advertising";
-                        log("startListening success; phone is a Miracast sink on port " + RTSP_PORT);
-                        manager.requestDeviceInfo(channel, new WifiP2pManager.DeviceInfoListener() {
+                    public void run() {
+                        manager.startListening(channel, new WifiP2pManager.ActionListener() {
                             @Override
-                            public void onDeviceInfoAvailable(WifiP2pDevice wifiP2pDevice) {
-                                if (wifiP2pDevice != null) {
-                                    log("visible as \"" + wifiP2pDevice.deviceName + "\" " + wifiP2pDevice.deviceAddress);
-                                }
+                            public void onSuccess() {
+                                link = "advertising";
+                                log("startListening success; phone is a Miracast sink on port " + RTSP_PORT);
+                                manager.requestDeviceInfo(channel, new WifiP2pManager.DeviceInfoListener() {
+                                    @Override
+                                    public void onDeviceInfoAvailable(WifiP2pDevice wifiP2pDevice) {
+                                        if (wifiP2pDevice != null) {
+                                            log("visible as \"" + wifiP2pDevice.deviceName + "\" "
+                                                    + wifiP2pDevice.deviceAddress);
+                                        }
+                                    }
+                                });
+                            }
+
+                            @Override
+                            public void onFailure(int reason) {
+                                log("startListening failed " + reason + ", discoverPeers");
+                                manager.discoverPeers(channel, loggedAction("discoverPeers"));
                             }
                         });
-                    }
-
-                    @Override
-                    public void onFailure(int reason) {
-                        log("startListening failed " + reason + ", discoverPeers");
-                        manager.discoverPeers(channel, loggedAction("discoverPeers"));
                     }
                 });
             }
@@ -384,7 +406,12 @@ public class MiracastReceiver {
                             played = false;
                             if (broadcasting) {
                                 link = "advertising";
-                                manager.startListening(channel, loggedAction("relisten"));
+                                admitThenListen(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        manager.startListening(channel, loggedAction("relisten"));
+                                    }
+                                });
                             } else {
                                 link = "idle";
                             }
@@ -411,6 +438,136 @@ public class MiracastReceiver {
         } catch (Throwable t) {
             log("poll " + t.getMessage());
         }
+    }
+
+    /**
+     * Register the broadcast-address approver and delete every saved P2P group,
+     * then run {@code thenListen}. A source that is not already in the peer
+     * list is accepted by that approver instead of the system dialog.
+     */
+    static void admitThenListen(Runnable thenListen) {
+        armAllSourcesApprover();
+        if (!requestPersistentGroupDeletion(thenListen) && thenListen != null) {
+            thenListen.run();
+        }
+    }
+
+    static void armAllSourcesApprover() {
+        if (manager == null || channel == null) {
+            return;
+        }
+        String mac = MacAddress.BROADCAST_ADDRESS.toString();
+        synchronized (approverMacs) {
+            if (!approverMacs.add(mac)) {
+                return;
+            }
+        }
+        log("addExternalApprover " + mac);
+        try {
+            manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, approver);
+        } catch (Throwable t) {
+            synchronized (approverMacs) {
+                approverMacs.remove(mac);
+            }
+            log("addExternalApprover " + t);
+        }
+    }
+
+    static boolean requestPersistentGroupDeletion(final Runnable after) {
+        if (manager == null || channel == null) {
+            return false;
+        }
+        try {
+            final Class<?> listenerClass = Class.forName(
+                    "android.net.wifi.p2p.WifiP2pManager$PersistentGroupInfoListener");
+            Object listener = Proxy.newProxyInstance(
+                    listenerClass.getClassLoader(),
+                    new Class<?>[] {listenerClass},
+                    new java.lang.reflect.InvocationHandler() {
+                        @Override
+                        public Object invoke(Object proxy, Method method, Object[] args) {
+                            if (method.getDeclaringClass() == Object.class) {
+                                if ("hashCode".equals(method.getName())) {
+                                    return System.identityHashCode(proxy);
+                                }
+                                if ("equals".equals(method.getName())) {
+                                    return proxy == (args != null && args.length > 0 ? args[0] : null);
+                                }
+                                if ("toString".equals(method.getName())) {
+                                    return "PersistentGroupInfoListener";
+                                }
+                                return null;
+                            }
+                            if ("onPersistentGroupInfoAvailable".equals(method.getName())) {
+                                Object groups = args == null || args.length == 0 ? null : args[0];
+                                deletePersistentGroups(groups, after);
+                            }
+                            return null;
+                        }
+                    });
+            Method request = WifiP2pManager.class.getMethod(
+                    "requestPersistentGroupInfo",
+                    WifiP2pManager.Channel.class,
+                    listenerClass);
+            request.invoke(manager, channel, listener);
+            return true;
+        } catch (Throwable t) {
+            log("requestPersistentGroupInfo " + t);
+            return false;
+        }
+    }
+
+    static void deletePersistentGroups(Object groupList, Runnable after) {
+        try {
+            int[] ids = networkIdsOf(groupList);
+            if (ids.length == 0) {
+                log("no persistent groups");
+            } else {
+                Method delete = WifiP2pManager.class.getMethod(
+                        "deletePersistentGroup",
+                        WifiP2pManager.Channel.class,
+                        int.class,
+                        WifiP2pManager.ActionListener.class);
+                for (int netId : ids) {
+                    if (netId < 0) {
+                        continue;
+                    }
+                    log("deletePersistentGroup netId=" + netId);
+                    delete.invoke(manager, channel, netId, loggedAction("deletePersistentGroup " + netId));
+                }
+            }
+        } catch (Throwable t) {
+            log("deletePersistentGroup " + t);
+        }
+        if (after != null) {
+            after.run();
+        }
+    }
+
+    static int[] networkIdsOf(Object groupList) throws Exception {
+        if (groupList == null) {
+            return new int[0];
+        }
+        Method getGroupList = groupList.getClass().getMethod("getGroupList");
+        Object raw = getGroupList.invoke(groupList);
+        if (!(raw instanceof Collection<?>)) {
+            return new int[0];
+        }
+        Collection<?> groups = (Collection<?>) raw;
+        int count = 0;
+        for (Object group : groups) {
+            if (group instanceof WifiP2pGroup) {
+                count++;
+            }
+        }
+        int[] ids = new int[count];
+        int index = 0;
+        for (Object group : groups) {
+            if (group instanceof WifiP2pGroup) {
+                ids[index++] = ((WifiP2pGroup) group).getNetworkId();
+            }
+        }
+        return ids;
     }
 
     static void watchPeer(WifiP2pDevice device) {
@@ -931,7 +1088,12 @@ public class MiracastReceiver {
                 }
                 if (broadcasting) {
                     link = "advertising";
-                    manager.startListening(channel, loggedAction("relisten"));
+                    admitThenListen(new Runnable() {
+                        @Override
+                        public void run() {
+                            manager.startListening(channel, loggedAction("relisten"));
+                        }
+                    });
                 } else {
                     link = "idle";
                 }

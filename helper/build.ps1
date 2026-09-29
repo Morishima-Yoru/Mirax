@@ -19,6 +19,7 @@ if (Test-Path $classes) { Remove-Item -Recurse -Force $classes }
 New-Item -ItemType Directory -Path $classes | Out-Null
 
 $sources = @(
+    (Join-Path $root "src\me\trinitrix\mirax\wfd\SavedP2pGroups.java"),
     (Join-Path $root "src\me\trinitrix\mirax\wfd\PrimarySinkBeacon.java"),
     (Join-Path $root "src\me\trinitrix\mirax\helper\Helper.java")
 )
