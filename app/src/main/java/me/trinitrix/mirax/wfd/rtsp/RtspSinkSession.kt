@@ -8,7 +8,7 @@ import java.util.Locale
  * Wi-Fi Display RTSP sink session from M1 through PLAY.
  *
  * Host-testable protocol state machine. Does not touch frozen/tile/handle UI.
- * Does not advertise or open UIBC. Modes come only from [capabilities].
+ * Parses the source UIBC port when touch was offered. Does not open the socket.
  */
 class RtspSinkSession(
     private val capabilities: WfdCapabilityTable,
@@ -27,6 +27,13 @@ class RtspSinkSession(
         private set
     /** TCP port the source asked this sink to dial for UIBC, or -1. */
     var uibcPort: Int = -1
+        private set
+
+    /**
+     * HIDC type the source selected: 2 single touch, 3 multi touch.
+     * Meaningful only when [uibcPort] is positive.
+     */
+    var uibcHidType: Int = 3
         private set
     private var customSelected: Boolean = false
     private var activeRtpPort: Int = rtpPort
@@ -245,10 +252,10 @@ class RtspSinkSession(
                     }
                 }
                 "wfd_trigger_method" -> trigger = value.trim().uppercase(Locale.US)
-                "wfd_uibc_capability" -> {
-                    val port = portField(value)
-                    if (port > 0) {
-                        uibcPort = port
+                "wfd_uibc_capability" -> applyUibc(value)
+                "wfd_uibc_setting" -> {
+                    if (value.contains("disable", ignoreCase = true)) {
+                        uibcPort = -1
                     }
                 }
                 "microsoft_latency_management_capability",
@@ -260,6 +267,23 @@ class RtspSinkSession(
             }
         }
         return trigger
+    }
+
+    private fun applyUibc(value: String) {
+        if (value.contains("disable", ignoreCase = true)) {
+            uibcPort = -1
+            return
+        }
+        val port = portField(value)
+        if (port <= 0) {
+            return
+        }
+        uibcPort = port
+        uibcHidType = when {
+            value.contains("MultiTouch", ignoreCase = true) -> 3
+            value.contains("SingleTouch", ignoreCase = true) -> 2
+            else -> 3
+        }
     }
 
     private fun portField(value: String): Int {

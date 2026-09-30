@@ -251,10 +251,23 @@ object SinkConnectionController {
                         serveSelected = selected
                         note("source selected ${selected.width}x${selected.height}@${selected.refreshHz}")
                         postAction(SessionAction.SourceSelectedMode(selected))
+                        if (offer.touchEnabled) {
+                            UibcTouchChannel.setPictureSize(selected.width, selected.height)
+                        }
                     }
                     if (!uibcNoted && session.uibcPort > 0 && offer.touchEnabled) {
                         uibcNoted = true
-                        note("UIBC port ${session.uibcPort}")
+                        val host = (socket.remoteSocketAddress as? java.net.InetSocketAddress)
+                            ?.address
+                            ?.hostAddress
+                        note("UIBC port ${session.uibcPort} type ${session.uibcHidType}")
+                        if (host != null) {
+                            UibcTouchChannel.onStatus = { line -> note(line) }
+                            UibcTouchChannel.open(host, session.uibcPort, session.uibcHidType)
+                            session.selectedMode?.let {
+                                UibcTouchChannel.setPictureSize(it.width, it.height)
+                            }
+                        }
                     }
                     if (session.state == "PLAYING" && !reachedPlay) {
                         reachedPlay = true
@@ -276,6 +289,7 @@ object SinkConnectionController {
                 noteWarn("RTSP session ended", err)
             }
         } finally {
+            UibcTouchChannel.close()
             stopRtp()
             decoder.reset()
             activeClient.compareAndSet(socket, null)
@@ -334,6 +348,7 @@ object SinkConnectionController {
         generation.incrementAndGet()
         running.set(false)
         closeQuietly(activeClient.getAndSet(null))
+        UibcTouchChannel.close()
         stopRtp()
         decoder.reset()
         closePicture()

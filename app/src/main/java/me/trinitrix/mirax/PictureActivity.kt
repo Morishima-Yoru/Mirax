@@ -5,6 +5,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -19,15 +20,20 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import me.trinitrix.mirax.session.PicturePlacement
+import me.trinitrix.mirax.session.PictureTouchMap
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.ScreenPhase
+import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.wfd.SinkConnectionController
+import me.trinitrix.mirax.wfd.UibcContact
+import me.trinitrix.mirax.wfd.UibcPackets
+import me.trinitrix.mirax.wfd.UibcTouchChannel
 import java.lang.ref.WeakReference
 
 /**
  * Fullscreen Miracast picture. Placement follows the session [me.trinitrix.mirax.session.PictureScale]
- * via [PicturePlacement]; views only render. Picture taps and long-presses do
- * nothing (no settings).
+ * via [PicturePlacement]; views only render. Contacts on the picture are general
+ * touch when that switch is on. They do not open settings. S Pen is ignored.
  *
  * System Back and the bottom handle are decided by [me.trinitrix.mirax.session.MiraxSession];
  * this activity only renders [SessionSnapshot] outputs and forwards actions.
@@ -44,6 +50,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     /** Decoder buffer size for [SurfaceHolder.setFixedSize]; may be padded. */
     private var bufferW: Int = 0
     private var bufferH: Int = 0
+    /** Pointer id to UIBC contact slot. */
+    private val touchSlots = LinkedHashMap<Int, Int>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,11 +75,11 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 Gravity.TOP or Gravity.START,
             )
-            // Taps and long-presses must not open settings.
             isClickable = true
-            isLongClickable = true
-            setOnClickListener { /* intentionally empty */ }
-            setOnLongClickListener { true }
+            setOnTouchListener { _, event ->
+                forwardPictureTouch(event)
+                true
+            }
         }
         stage.addView(surfaceView)
         stage.setOnClickListener { /* intentionally empty */ }
@@ -311,6 +319,81 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val fixedW = if (bufferW > 0) bufferW else pictureW
         val fixedH = if (bufferH > 0) bufferH else pictureH
         surfaceView.holder.setFixedSize(fixedW, fixedH)
+    }
+
+    private fun forwardPictureTouch(event: MotionEvent) {
+        val snapshot = MiraxApp.instance.session.snapshot()
+        val mode = snapshot.selectedMode
+        if (!snapshot.touchEnabled || mode == null) {
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                touchSlots.clear()
+                UibcTouchChannel.liftAll()
+            }
+            return
+        }
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                val index = event.actionIndex
+                if (!isStylus(event, index)) {
+                    assignSlot(event.getPointerId(index))
+                }
+                submitContacts(event, mode, liftingPointerId = null)
+            }
+            MotionEvent.ACTION_MOVE -> submitContacts(event, mode, liftingPointerId = null)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                val pointerId = event.getPointerId(event.actionIndex)
+                submitContacts(event, mode, liftingPointerId = pointerId)
+                touchSlots.remove(pointerId)
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                UibcTouchChannel.liftAll()
+                touchSlots.clear()
+            }
+        }
+    }
+
+    private fun submitContacts(event: MotionEvent, mode: VideoMode, liftingPointerId: Int?) {
+        val contacts = ArrayList<UibcContact>()
+        for (index in 0 until event.pointerCount) {
+            if (isStylus(event, index)) {
+                continue
+            }
+            val pointerId = event.getPointerId(index)
+            val slot = touchSlots[pointerId] ?: continue
+            val x = PictureTouchMap.pixel(event.getX(index), surfaceView.width, mode.width) ?: continue
+            val y = PictureTouchMap.pixel(event.getY(index), surfaceView.height, mode.height) ?: continue
+            contacts.add(
+                UibcContact(
+                    id = slot,
+                    x = x,
+                    y = y,
+                    tip = pointerId != liftingPointerId,
+                ),
+            )
+        }
+        if (contacts.isNotEmpty()) {
+            UibcTouchChannel.submit(contacts)
+        }
+    }
+
+    private fun assignSlot(pointerId: Int) {
+        if (touchSlots.containsKey(pointerId)) {
+            return
+        }
+        val used = touchSlots.values.toSet()
+        for (slot in 0 until UibcPackets.MAX_CONTACTS) {
+            if (slot !in used) {
+                touchSlots[pointerId] = slot
+                return
+            }
+        }
+    }
+
+    private fun isStylus(event: MotionEvent, index: Int): Boolean {
+        val tool = event.getToolType(index)
+        return tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER
     }
 
     private fun hideSystemBars() {
