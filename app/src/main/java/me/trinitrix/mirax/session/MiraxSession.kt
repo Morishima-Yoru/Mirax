@@ -24,7 +24,7 @@ package me.trinitrix.mirax.session
  *
  * Language, display name, preferred-mode text, standard-mode checks, and the
  * floating-ball switch remain editable while the phase is frozen. Overlay
- * permission is requested on the initial screen, including while frozen. The
+ * permission is requested only when the user turns the floating ball on. The
  * session does not write the system device name. A group drop before PLAY does
  * not change the next advertisement set and does not latch extra modes.
  */
@@ -406,9 +406,6 @@ class MiraxSession(
             pendingPermissionRequest = true
         } else {
             pendingPermissionRequest = false
-        }
-        if (!overlayGranted) {
-            enqueueEffect(SessionEffect.RequestOverlayPermission)
         }
         maybeRequestProvisioningRead()
     }

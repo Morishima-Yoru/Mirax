@@ -1249,13 +1249,13 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun openApp_requestsOverlayPermissionWhenMissing_includingWhileFrozen() {
+    fun openApp_doesNotLeaveTheDashboardForOverlayPermission() {
         val session = MiraxSession()
         session.report(OverlayPermissionReport(granted = false))
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
 
         session.handle(SessionAction.OpenApp)
-        assertThat(session.snapshot().effects).contains(SessionEffect.RequestOverlayPermission)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.RequestOverlayPermission)
     }
 
     @Test
