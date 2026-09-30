@@ -35,8 +35,7 @@ object UibcTouchChannel {
                     next.socket = socket
                     status("UIBC connected to $host:$port")
                     sendDescriptor(next)
-                    next.pending?.let { writeContacts(next, it) }
-                    next.pending = null
+                    flushPending(next)
                 }
             } catch (err: Exception) {
                 Log.w(TAG, "UIBC dial $host:$port failed", err)
@@ -59,6 +58,7 @@ object UibcTouchChannel {
             current.pictureHeight = height
             current.descriptorSent = false
             sendDescriptor(current)
+            flushPending(current)
         }
     }
 
@@ -101,6 +101,15 @@ object UibcTouchChannel {
             }
             current.socket = null
         }
+    }
+
+    private fun flushPending(current: Channel) {
+        if (!current.descriptorSent) {
+            return
+        }
+        val pending = current.pending ?: return
+        writeContacts(current, pending)
+        current.pending = null
     }
 
     private fun sendDescriptor(current: Channel) {

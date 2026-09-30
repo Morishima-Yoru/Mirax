@@ -255,6 +255,11 @@ object SinkConnectionController {
                             UibcTouchChannel.setPictureSize(selected.width, selected.height)
                         }
                     }
+                    if (uibcNoted && session.uibcPort <= 0) {
+                        UibcTouchChannel.close()
+                        uibcNoted = false
+                        note("UIBC disabled by source")
+                    }
                     if (!uibcNoted && session.uibcPort > 0 && offer.touchEnabled) {
                         uibcNoted = true
                         val host = (socket.remoteSocketAddress as? java.net.InetSocketAddress)
