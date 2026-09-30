@@ -25,6 +25,9 @@ class RtspSinkSession(
         private set
     var formatChosen: Boolean = false
         private set
+    /** TCP port the source asked this sink to dial for UIBC, or -1. */
+    var uibcPort: Int = -1
+        private set
     private var customSelected: Boolean = false
     private var activeRtpPort: Int = rtpPort
 
@@ -242,6 +245,12 @@ class RtspSinkSession(
                     }
                 }
                 "wfd_trigger_method" -> trigger = value.trim().uppercase(Locale.US)
+                "wfd_uibc_capability" -> {
+                    val port = portField(value)
+                    if (port > 0) {
+                        uibcPort = port
+                    }
+                }
                 "microsoft_latency_management_capability",
                 "microsoft_audio_mute",
                 "microsoft_format_change_capability",
@@ -251,6 +260,12 @@ class RtspSinkSession(
             }
         }
         return trigger
+    }
+
+    private fun portField(value: String): Int {
+        val match = Regex("port=(\\d+)").find(value) ?: return -1
+        val port = match.groupValues[1].toIntOrNull() ?: return -1
+        return if (port in 1..65535) port else -1
     }
 
     private fun request(method: String, url: String, extraHeaders: String, body: String): String {

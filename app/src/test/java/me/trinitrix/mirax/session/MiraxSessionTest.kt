@@ -982,7 +982,7 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun connectionEvents_beforePlay_keepAdvertisingPhase_andAcceptDiscoverableProgress() {
+    fun connectionEvents_beforePlay_connectingPhase_tileStaysAdvertising() {
         val session = MiraxSession(SessionSettings(advertisingEnabled = true))
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.BecameDiscoverable)
@@ -990,7 +990,8 @@ class MiraxSessionTest {
         assertThat(session.snapshot().tileState).isEqualTo(TileState.ADVERTISING)
 
         session.handle(SessionAction.PrePlayProgress)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTING)
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.ADVERTISING)
         assertThat(session.snapshot().widgetStatus).isEqualTo(WidgetStatus.ADVERTISING)
         assertThat(session.snapshot().selectedMode).isNull()
     }
@@ -1436,6 +1437,144 @@ class MiraxSessionTest {
         session.handle(SessionAction.SetPictureScale(PictureScale.CENTER_CROP))
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
         assertThat(session.snapshot().pictureScale).isEqualTo(PictureScale.CENTER_CROP)
+    }
+
+    @Test
+    fun connecting_handshakeLogShowsOpenRun_andClearsAfterPlay() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.PrePlayProgress)
+        session.handle(SessionAction.BeginConnectionRun("192.168.49.1"))
+        session.handle(SessionAction.AppendConnectionLog("I/MiraxSink: M1 OPTIONS from source"))
+        session.handle(SessionAction.AppendConnectionLog("I/MiraxSink: M3 GET_PARAMETER"))
+
+        val connecting = session.snapshot()
+        assertThat(connecting.phase).isEqualTo(ScreenPhase.CONNECTING)
+        assertThat(connecting.handshakeLog).isEqualTo(
+            "I/MiraxSink: M1 OPTIONS from source\nI/MiraxSink: M3 GET_PARAMETER",
+        )
+
+        session.handle(SessionAction.EnteredPlay)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().handshakeLog).isEmpty()
+    }
+
+    @Test
+    fun prePlayDrop_returnsToAdvertising_andDoesNotKeepHandshakeLog() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        val before = session.snapshot().nextAdvertisementModes
+        session.handle(SessionAction.PrePlayProgress)
+        session.handle(SessionAction.BeginConnectionRun("192.168.49.1"))
+        session.handle(SessionAction.AppendConnectionLog("I/MiraxSink: P2P group up"))
+        session.handle(SessionAction.PrePlayGroupDropped)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.handshakeLog).isEmpty()
+        assertThat(snap.nextAdvertisementModes).isEqualTo(before)
+    }
+
+    @Test
+    fun autoWmSizeOnConnect_prefersCurrentVisibleSize_withoutSavingIt() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(PictureRotationReport(90))
+        session.handle(
+            SessionAction.FreezeConnectionOffer(
+                WmSizeReading(physicalWidth = 1280, physicalHeight = 720),
+            ),
+        )
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTING)
+        assertThat(snap.connectionPreferredMode).isEqualTo(VideoMode(720, 1280, 60))
+        assertThat(snap.connectionOfferModes).contains(VideoMode(720, 1280, 60))
+        assertThat(snap.preferredMode).isNull()
+        assertThat(snap.customModes).isEmpty()
+        assertThat(snap.nextAdvertisementModes).doesNotContain(VideoMode(720, 1280, 60))
+    }
+
+    @Test
+    fun autoWmSizeOff_keepsSavedCustomModeAsPreferred() {
+        val fold = VideoMode(2176, 1812, 60)
+        val session = MiraxSession(
+            SessionSettings(
+                advertisingEnabled = true,
+                autoAddWmSizeOnConnect = false,
+                customModes = listOf(fold),
+            ),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(
+            SessionAction.FreezeConnectionOffer(
+                WmSizeReading(physicalWidth = 1280, physicalHeight = 720),
+            ),
+        )
+
+        val snap = session.snapshot()
+        assertThat(snap.connectionPreferredMode).isEqualTo(fold)
+        assertThat(snap.connectionOfferModes).doesNotContain(VideoMode(720, 1280, 60))
+        assertThat(snap.connectionOfferModes).contains(fold)
+        assertThat(snap.customModes).containsExactly(fold).inOrder()
+    }
+
+    @Test
+    fun customModes_addMoveRemove_keepsOrder_andAdvertisesThem() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.AddCustomMode(2176, 1812, 60))
+        session.handle(SessionAction.AddCustomMode(1600, 1200, 60))
+        session.handle(SessionAction.AddCustomMode(2176, 1812, 60))
+        assertThat(session.snapshot().customModes).containsExactly(
+            VideoMode(2176, 1812, 60),
+            VideoMode(1600, 1200, 60),
+        ).inOrder()
+
+        session.handle(SessionAction.MoveCustomMode(1, 0))
+        assertThat(session.snapshot().customModes).containsExactly(
+            VideoMode(1600, 1200, 60),
+            VideoMode(2176, 1812, 60),
+        ).inOrder()
+        assertThat(session.snapshot().nextAdvertisementModes).contains(VideoMode(1600, 1200, 60))
+
+        session.handle(SessionAction.RemoveCustomMode(VideoMode(1600, 1200, 60)))
+        assertThat(session.snapshot().customModes).containsExactly(VideoMode(2176, 1812, 60))
+    }
+
+    @Test
+    fun broadcastName_stripsEmojiAndWindowsPathCharacters() {
+        val session = MiraxSession()
+        session.report(DeviceNameReport("Phone"))
+        session.handle(SessionAction.SetDisplayNameOverride("Fold😀/Desk:A"))
+        assertThat(session.snapshot().displayNameOverride).isEqualTo("FoldDeskA")
+        assertThat(session.snapshot().effectiveBroadcastName).isEqualTo("FoldDeskA")
+    }
+
+    @Test
+    fun finishedRun_configurationKeepsConnectionSettingsOnly() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true, touchEnabled = false))
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(DeviceNameReport("Z Fold5"))
+        session.handle(SessionAction.AddCustomMode(2176, 1812, 60))
+        session.handle(SessionAction.BeginConnectionRun("10.0.0.8"))
+        session.handle(
+            SessionAction.FinishConnectionRun(
+                succeeded = false,
+                metadata = listOf(ConnectionRunFact("selected mode", "none")),
+            ),
+        )
+
+        val run = session.snapshot().connectionRuns.single()
+        assertThat(run.configuration.map { it.label }).containsExactly(
+            "broadcast name",
+            "custom resolutions",
+            "standard modes",
+            "touch",
+        ).inOrder()
+        assertThat(run.configuration[0].value).isEqualTo("Z Fold5")
+        assertThat(run.configuration[1].value).isEqualTo("2176×1812@60")
+        assertThat(run.configuration[3].value).isEqualTo("off")
     }
 
     private fun connectedSession(): MiraxSession {

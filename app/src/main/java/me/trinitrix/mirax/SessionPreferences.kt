@@ -23,6 +23,10 @@ object SessionPreferences {
     private const val KEY_BOTTOM_HANDLE_ENABLED = "bottom_handle_enabled"
     private const val KEY_FLOATING_BALL_ENABLED = "floating_ball_enabled"
     private const val KEY_PICTURE_SCALE = "picture_scale"
+    private const val KEY_CUSTOM_MODES = "custom_modes"
+    private const val KEY_AUTO_WM_SIZE = "auto_wm_size_on_connect"
+    private const val KEY_TOUCH_ENABLED = "touch_enabled"
+    private const val KEY_DEBUG_MESSAGES = "show_debug_messages"
 
     fun load(context: Context): SessionSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -61,6 +65,13 @@ object SessionPreferences {
             bottomHandleEnabled = prefs.getBoolean(KEY_BOTTOM_HANDLE_ENABLED, true),
             floatingBallEnabled = prefs.getBoolean(KEY_FLOATING_BALL_ENABLED, true),
             pictureScale = pictureScale,
+            customModes = prefs.getString(KEY_CUSTOM_MODES, null)
+                ?.split(',')
+                ?.mapNotNull { token -> decodeMode(token) }
+                ?: emptyList(),
+            autoAddWmSizeOnConnect = prefs.getBoolean(KEY_AUTO_WM_SIZE, true),
+            touchEnabled = prefs.getBoolean(KEY_TOUCH_ENABLED, true),
+            showDebugMessages = prefs.getBoolean(KEY_DEBUG_MESSAGES, false),
         )
     }
 
@@ -115,6 +126,13 @@ object SessionPreferences {
                 putBoolean(KEY_BOTTOM_HANDLE_ENABLED, settings.bottomHandleEnabled)
                 putBoolean(KEY_FLOATING_BALL_ENABLED, settings.floatingBallEnabled)
                 putString(KEY_PICTURE_SCALE, settings.pictureScale.name)
+                putString(
+                    KEY_CUSTOM_MODES,
+                    settings.customModes.joinToString(",") { encodeMode(it) },
+                )
+                putBoolean(KEY_AUTO_WM_SIZE, settings.autoAddWmSizeOnConnect)
+                putBoolean(KEY_TOUCH_ENABLED, settings.touchEnabled)
+                putBoolean(KEY_DEBUG_MESSAGES, settings.showDebugMessages)
             }
             .apply()
     }

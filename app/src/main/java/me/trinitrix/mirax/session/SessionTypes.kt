@@ -7,6 +7,8 @@ enum class ScreenPhase {
     FROZEN,
     READY,
     ADVERTISING,
+    /** P2P group is up and RTSP has not reached PLAY. Tile stays advertising. */
+    CONNECTING,
     CONNECTED,
 }
 
@@ -170,6 +172,41 @@ data class StandardModeRow(
 )
 
 /**
+ * One labeled fact stored with a connection run. Labels and values are English.
+ *
+ * Args:
+ *     label: Short English name.
+ *     value: English value captured with the run.
+ */
+data class ConnectionRunFact(
+    val label: String,
+    val value: String,
+)
+
+/**
+ * One finished connection attempt: outcome, time, source, the settings in
+ * force when it started, and the English diagnostic log.
+ *
+ * Args:
+ *     succeeded: True when playback started.
+ *     startedAtEpochMs: Wall clock when the attempt began.
+ *     endedAtEpochMs: Wall clock when the attempt closed.
+ *     remoteHost: Source address, or blank when unknown.
+ *     metadata: Facts known at the end.
+ *     configuration: Settings snapshotted at the start.
+ *     log: English lines joined by newlines.
+ */
+data class ConnectionRun(
+    val succeeded: Boolean,
+    val startedAtEpochMs: Long,
+    val endedAtEpochMs: Long,
+    val remoteHost: String,
+    val metadata: List<ConnectionRunFact>,
+    val configuration: List<ConnectionRunFact>,
+    val log: String,
+)
+
+/**
  * Overlay ("display over other apps") observation fed by the host.
  *
  * Args:
@@ -196,6 +233,10 @@ data class OverlayPermissionReport(
  *     bottomHandleEnabled: Whether the picture bottom handle is shown while connected.
  *     floatingBallEnabled: Whether the floating ball may appear when leaving to home.
  *     pictureScale: How the picture sits on the panel (等比 / 鋪滿 / 拉伸 / 原寸).
+ *     customModes: Ordered custom resolutions. First is preferred when auto wm size is off.
+ *     autoAddWmSizeOnConnect: When true, the connection offer prefers the current wm size.
+ *     touchEnabled: When true, M3 advertises HIDC. When false, the picture is display-only.
+ *     showDebugMessages: When true, the handshake log also keeps raw RTSP lines.
  */
 data class SessionSettings(
     val advertisingEnabled: Boolean = false,
@@ -208,6 +249,10 @@ data class SessionSettings(
     val bottomHandleEnabled: Boolean = true,
     val floatingBallEnabled: Boolean = true,
     val pictureScale: PictureScale = PictureScale.PROPORTIONAL,
+    val customModes: List<VideoMode> = emptyList(),
+    val autoAddWmSizeOnConnect: Boolean = true,
+    val touchEnabled: Boolean = true,
+    val showDebugMessages: Boolean = false,
 )
 
 /**
@@ -340,6 +385,28 @@ data class SessionSnapshot(
     val showOverlayPermissionReminder: Boolean = false,
     val showFloatingBall: Boolean = false,
     val pictureScale: PictureScale = PictureScale.PROPORTIONAL,
+    /**
+     * Finished connection runs, newest first. The open run is omitted until
+     * it is closed.
+     */
+    val connectionRuns: List<ConnectionRun> = emptyList(),
+    /** Ordered custom resolutions shown on the picture page. */
+    val customModes: List<VideoMode> = emptyList(),
+    val autoAddWmSizeOnConnect: Boolean = true,
+    val touchEnabled: Boolean = true,
+    val showDebugMessages: Boolean = false,
+    /**
+     * English handshake lines for the open attempt. Empty unless the phase
+     * is [ScreenPhase.CONNECTING].
+     */
+    val handshakeLog: String = "",
+    /**
+     * Modes frozen for the current connection's M3 offer, or null before the
+     * offer is frozen. May include a wm-size mode that is not in the saved set.
+     */
+    val connectionOfferModes: Set<VideoMode>? = null,
+    /** Preferred mode for this connection's M3, or null before the offer is frozen. */
+    val connectionPreferredMode: VideoMode? = null,
 )
 
 /**
@@ -378,7 +445,10 @@ sealed interface SessionAction {
     data object BecameDiscoverable : SessionAction
 
     /**
-     * Progress toward PLAY (P2P group up, RTSP negotiating). Stays advertising.
+     * Progress toward PLAY (P2P group up, RTSP negotiating).
+     *
+     * Dashboard phase becomes [ScreenPhase.CONNECTING]. The tile and widget
+     * stay advertising because the beacon is still up.
      */
     data object PrePlayProgress : SessionAction
 
@@ -398,6 +468,34 @@ sealed interface SessionAction {
 
     /** Current connection ended. Broadcast stays on when the user left it on. */
     data object ConnectionEnded : SessionAction
+
+    /**
+     * Start one connection run and snapshot the settings in force now.
+     *
+     * Args:
+     *     remoteHost: Source address for this attempt. Blank when it is not known yet.
+     */
+    data class BeginConnectionRun(val remoteHost: String) : SessionAction
+
+    /**
+     * Append one English line to the open connection run.
+     *
+     * Args:
+     *     line: English diagnostic text. Ignored when no run is open.
+     */
+    data class AppendConnectionLog(val line: String) : SessionAction
+
+    /**
+     * Close the open connection run.
+     *
+     * Args:
+     *     succeeded: True only when playback started.
+     *     metadata: English facts known at the end, such as the selected mode.
+     */
+    data class FinishConnectionRun(
+        val succeeded: Boolean,
+        val metadata: List<ConnectionRunFact> = emptyList(),
+    ) : SessionAction
 
     /**
      * Wi-Fi Direct group dropped before PLAY. Must not change the next advertisement set
@@ -501,4 +599,36 @@ sealed interface SessionAction {
      * the next advertisement set.
      */
     data class SetPictureScale(val scale: PictureScale) : SessionAction
+
+    /** Append one corrected custom resolution. Duplicates are ignored. */
+    data class AddCustomMode(val width: Int, val height: Int, val refreshHz: Int) : SessionAction
+
+    /** Remove one custom resolution. Also clears a matching legacy preferred mode. */
+    data class RemoveCustomMode(val mode: VideoMode) : SessionAction
+
+    /**
+     * Move a custom resolution from index [from] to index [to].
+     * Out-of-range indexes are ignored.
+     */
+    data class MoveCustomMode(val from: Int, val to: Int) : SessionAction
+
+    /**
+     * When true, the next connection offer prefers the wm size read at that moment.
+     * Does not rewrite the saved custom list.
+     */
+    data class SetAutoAddWmSizeOnConnect(val enabled: Boolean) : SessionAction
+
+    /** User allowed or disallowed general touch for the next connection. */
+    data class SetTouchEnabled(val enabled: Boolean) : SessionAction
+
+    /** User asked the handshake log to keep raw RTSP lines. */
+    data class SetShowDebugMessages(val enabled: Boolean) : SessionAction
+
+    /**
+     * Freeze this connection's M3 offer.
+     *
+     * When auto-add is on and [reading] is present, the visible-picture wm size
+     * becomes the preferred mode for this connection only.
+     */
+    data class FreezeConnectionOffer(val reading: WmSizeReading?) : SessionAction
 }

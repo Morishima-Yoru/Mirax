@@ -8,6 +8,8 @@ import android.os.SystemClock
 import android.util.Log
 import me.trinitrix.mirax.PictureActivity
 import me.trinitrix.mirax.SessionHost
+import me.trinitrix.mirax.WmSizeParser
+import me.trinitrix.mirax.session.ConnectionRunFact
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
@@ -22,6 +24,8 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -51,6 +55,9 @@ object SinkConnectionController {
     private val lastCommand = AtomicReference<WfdAdvertiseCommand?>(null)
     private val activeClient = AtomicReference<Socket?>(null)
     private val endedByUser = AtomicBoolean(false)
+    private val lastTouchEnabled = AtomicBoolean(true)
+    private val connectionRunOpen = AtomicBoolean(false)
+    private var serveSelected: VideoMode? = null
     private var rtpSocket: DatagramSocket? = null
     private var appContext: Context? = null
 
@@ -119,10 +126,13 @@ object SinkConnectionController {
                         postAction(SessionAction.PrePlayProgress)
                     }
                     if (state is P2pGroupState.Up && !sessionRan && !endedByUser.get()) {
+                        beginConnectionRun(state.sourceAddress)
+                        note("P2P group up")
                         val socket = dial(state.sourceAddress, gen)
                         if (socket != null) {
                             sessionRan = true
                             val reachedPlay = serve(socket, command, gen)
+                            finishConnectionRun(reachedPlay, serveSelected)
                             if (alive(gen)) {
                                 postAction(
                                     if (reachedPlay) SessionAction.ConnectionEnded
@@ -130,6 +140,8 @@ object SinkConnectionController {
                                 )
                                 closePicture()
                             }
+                        } else {
+                            finishConnectionRun(succeeded = false, selected = null)
                         }
                     }
                 }
@@ -156,12 +168,12 @@ object SinkConnectionController {
             val socket = Socket()
             try {
                 socket.connect(InetSocketAddress(host, PrimarySinkBeacon.RTSP_CONTROL_PORT), DIAL_TIMEOUT_MS)
-                Log.i(TAG, "RTSP connected to $host:${PrimarySinkBeacon.RTSP_CONTROL_PORT} (attempt $attempt)")
+                note("RTSP connected to $host:${PrimarySinkBeacon.RTSP_CONTROL_PORT} (attempt $attempt)")
                 return socket
             } catch (err: Exception) {
                 closeQuietly(socket)
                 if (attempt == 1 || attempt % 5 == 0) {
-                    Log.w(TAG, "RTSP dial $host attempt $attempt failed: ${err.message}")
+                    noteWarn("RTSP dial $host attempt $attempt failed: ${err.message}")
                 }
             }
             if (P2pGroupState.parse(WfdOwnerBridge.groupState()) !is P2pGroupState.Up) {
@@ -182,14 +194,22 @@ object SinkConnectionController {
         activeClient.set(socket)
         var reachedPlay = false
         var lastSelected: VideoMode? = null
-        val preferred = command.modes.firstOrNull { !WfdVideoFormatCodec.isStandardMode(it) }
-        val session = RtspSinkSession(WfdCapabilityTable(command.modes, preferred, command.broadcastName))
+        val offer = connectionOffer(command)
+        val session = RtspSinkSession(
+            WfdCapabilityTable(
+                offer.modes,
+                offer.preferred,
+                offer.broadcastName,
+                offer.touchEnabled,
+            ),
+        )
         val demux = MpegTsDepacketizer()
         val buffer = RtspMessageBuffer()
         val chunk = ByteArray(8192)
         val connectedAt = SystemClock.elapsedRealtime()
         var sawData = false
         var poked = false
+        var uibcNoted = false
         try {
             socket.tcpNoDelay = true
             socket.soTimeout = READ_TIMEOUT_MS
@@ -203,36 +223,42 @@ object SinkConnectionController {
                         poked = true
                         output.write(OPTIONS_POKE.toByteArray(StandardCharsets.US_ASCII))
                         output.flush()
-                        Log.i(TAG, "RTSP poke OPTIONS")
+                        note("RTSP poke OPTIONS")
                     }
                     if (P2pGroupState.parse(WfdOwnerBridge.groupState()) !is P2pGroupState.Up) {
-                        Log.i(TAG, "P2P group gone during RTSP")
+                        note("P2P group gone during RTSP")
                         break@loop
                     }
                     continue@loop
                 }
                 if (n < 0) {
-                    Log.i(TAG, "RTSP closed by source")
+                    note("RTSP closed by source")
                     break
                 }
                 sawData = true
                 buffer.append(chunk, n)
                 while (true) {
                     val message = buffer.next() ?: break
-                    Log.i(TAG, "RTSP << " + oneLine(message))
+                    noteExchange(incoming = true, message, offer.debug, offer.preferred)
                     for (reply in session.handle(message)) {
-                        Log.i(TAG, "RTSP >> " + oneLine(reply))
+                        noteExchange(incoming = false, reply, offer.debug, offer.preferred)
                         output.write(reply.toByteArray(StandardCharsets.US_ASCII))
                     }
                     output.flush()
                     val selected = session.selectedMode
                     if (selected != null && selected != lastSelected) {
                         lastSelected = selected
-                        Log.i(TAG, "source selected ${selected.width}x${selected.height}@${selected.refreshHz}")
+                        serveSelected = selected
+                        note("source selected ${selected.width}x${selected.height}@${selected.refreshHz}")
                         postAction(SessionAction.SourceSelectedMode(selected))
+                    }
+                    if (!uibcNoted && session.uibcPort > 0 && offer.touchEnabled) {
+                        uibcNoted = true
+                        note("UIBC port ${session.uibcPort}")
                     }
                     if (session.state == "PLAYING" && !reachedPlay) {
                         reachedPlay = true
+                        note("playback started")
                         val mode = session.selectedMode ?: VideoMode(1920, 1080, 60)
                         decoder.setFormat(mode.width, mode.height, mode.refreshHz)
                         startRtp(session.rtpPort(), demux, gen)
@@ -240,14 +266,14 @@ object SinkConnectionController {
                         openPicture()
                     }
                     if (session.state == "TEARDOWN" || session.state == "ERROR") {
-                        Log.i(TAG, "RTSP session ${session.state}")
+                        note("RTSP session ${session.state}")
                         break@loop
                     }
                 }
             }
         } catch (err: Exception) {
             if (alive(gen)) {
-                Log.w(TAG, "RTSP session ended", err)
+                noteWarn("RTSP session ended", err)
             }
         } finally {
             stopRtp()
@@ -267,7 +293,7 @@ object SinkConnectionController {
                 bind(InetSocketAddress(port))
             }
             rtpSocket = socket
-            Log.i(TAG, "RTP listening on $port")
+            note("RTP listening on $port")
             Thread({
                 val buf = ByteArray(64 * 1024)
                 var packets = 0L
@@ -276,7 +302,7 @@ object SinkConnectionController {
                         val packet = DatagramPacket(buf, buf.size)
                         socket.receive(packet)
                         if (++packets == 1L) {
-                            Log.i(TAG, "first RTP packet from ${packet.address}")
+                            note("first RTP packet from ${packet.address}")
                         }
                         demux.pushRtp(packet.data, packet.length)
                         while (true) {
@@ -294,7 +320,7 @@ object SinkConnectionController {
                 it.start()
             }
         } catch (err: Exception) {
-            Log.e(TAG, "RTP bind failed on $port", err)
+            noteWarn("RTP bind failed on $port", err)
         }
     }
 
@@ -333,6 +359,119 @@ object SinkConnectionController {
         val ctx = appContext ?: return
         mainHandler.post {
             SessionHost.dispatchConnectionEvent(ctx, action)
+        }
+    }
+
+    private data class ConnectionOffer(
+        val modes: Set<VideoMode>,
+        val preferred: VideoMode?,
+        val broadcastName: String,
+        val touchEnabled: Boolean,
+        val debug: Boolean,
+    )
+
+    /**
+     * Read wm size and freeze the M3 offer on the main thread before RTSP.
+     * Falls back to the listen-time command if the session does not answer.
+     */
+    private fun connectionOffer(fallback: WfdAdvertiseCommand): ConnectionOffer {
+        val reading = WfdOwnerBridge.wmSize(null)?.let { WmSizeParser.parse(it) }
+        val latch = CountDownLatch(1)
+        val box = AtomicReference<ConnectionOffer>()
+        val ctx = appContext
+        mainHandler.post {
+            try {
+                if (ctx != null) {
+                    val snap = SessionHost.freezeConnectionOffer(ctx, reading)
+                    val modes = snap.connectionOfferModes ?: fallback.modes
+                    lastTouchEnabled.set(snap.touchEnabled)
+                    box.set(
+                        ConnectionOffer(
+                            modes = modes,
+                            preferred = snap.connectionPreferredMode,
+                            broadcastName = snap.effectiveBroadcastName.ifEmpty { fallback.broadcastName },
+                            touchEnabled = snap.touchEnabled,
+                            debug = snap.showDebugMessages,
+                        ),
+                    )
+                }
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (!latch.await(2, TimeUnit.SECONDS) || box.get() == null) {
+            val preferred = fallback.modes.firstOrNull { !WfdVideoFormatCodec.isStandardMode(it) }
+            return ConnectionOffer(
+                modes = fallback.modes,
+                preferred = preferred,
+                broadcastName = fallback.broadcastName,
+                touchEnabled = true,
+                debug = false,
+            )
+        }
+        return box.get()
+    }
+
+    private fun beginConnectionRun(host: String) {
+        postAction(SessionAction.BeginConnectionRun(host))
+    }
+
+    private fun finishConnectionRun(succeeded: Boolean, selected: VideoMode?) {
+        val touch = lastTouchEnabled.get()
+        postAction(
+            SessionAction.FinishConnectionRun(
+                succeeded = succeeded,
+                metadata = listOf(
+                    ConnectionRunFact("selected mode", selected?.format() ?: "none"),
+                    ConnectionRunFact("touch", if (touch) "touch" else "display only"),
+                ),
+            ),
+        )
+    }
+
+    private fun note(line: String) {
+        Log.i(TAG, line)
+        postAction(SessionAction.AppendConnectionLog("I/MiraxSink: $line"))
+    }
+
+    private fun noteWarn(line: String, err: Exception? = null) {
+        if (err != null) {
+            Log.w(TAG, line, err)
+        } else {
+            Log.w(TAG, line)
+        }
+        val detail = err?.message?.let { "$line: $it" } ?: line
+        postAction(SessionAction.AppendConnectionLog("W/MiraxSink: $detail"))
+    }
+
+    private fun noteExchange(
+        incoming: Boolean,
+        message: String,
+        debug: Boolean,
+        preferred: VideoMode?,
+    ) {
+        val start = message.lineSequence().firstOrNull().orEmpty().trim()
+        val method = start.substringBefore(' ')
+        when {
+            incoming && method == "OPTIONS" -> note("M1 OPTIONS from source")
+            !incoming && method == "OPTIONS" -> note("M2 OPTIONS to source")
+            incoming && method == "GET_PARAMETER" -> {
+                val asked = message.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.startsWith("wfd_") || it.startsWith("microsoft_") }
+                    .take(8)
+                    .joinToString(" ")
+                note("M3 GET_PARAMETER $asked".trim())
+            }
+            !incoming && start.startsWith("RTSP/1.0") && message.contains("wfd_video_formats") -> {
+                val label = preferred?.let { "${it.width}x${it.height}@${it.refreshHz}" } ?: "none"
+                note("M3 reply preferred $label")
+            }
+            incoming && method == "SET_PARAMETER" -> note("M4 SET_PARAMETER")
+        }
+        if (debug) {
+            val arrow = if (incoming) "RTSP << " else "RTSP >> "
+            note(arrow + oneLine(message))
         }
     }
 

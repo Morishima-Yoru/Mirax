@@ -6,12 +6,13 @@ import me.trinitrix.mirax.session.VideoMode
  * Capability answers for one RTSP connection. Built from the advertisement set
  * for that connection — never latches extra 720p/1080p after a pre-PLAY drop.
  *
- * Does not advertise or open UIBC.
+ * Advertises UIBC HIDC only when [touchEnabled] is true. Does not open the UIBC socket.
  */
 class WfdCapabilityTable(
     private val modes: Set<VideoMode>,
     private val preferred: VideoMode?,
     private val friendlyName: String,
+    private val touchEnabled: Boolean = false,
 ) {
     fun valueFor(name: String): String {
         return when (name) {
@@ -30,6 +31,7 @@ class WfdCapabilityTable(
                 WfdEdid.parameterValue(edidMode, friendlyName.take(13).ifEmpty { "Mirax" })
             }
             "wfd_connector_type" -> "07"
+            "wfd_uibc_capability" -> if (touchEnabled) UIBC_HIDC else "none"
             "wfd_idr_request_capability" -> "1"
             "microsoft_format_change_capability",
             "microsoft_latency_management_capability",
@@ -42,8 +44,6 @@ class WfdCapabilityTable(
             "intel_sink_model_name" -> "Mirax"
             "intel_sink_device_URL" -> "none"
             "intel_sink_version" -> "product_ID=Mirax hw_version=1 sw_version=1"
-            // No UIBC in this version — keep the capability at none.
-            "wfd_uibc_capability",
             "wfd_coupled_sink",
             "wfd_content_protection",
             "wfd_3d_video_formats",
@@ -57,5 +57,11 @@ class WfdCapabilityTable(
             -> "none"
             else -> "none"
         }
+    }
+
+    private companion object {
+        const val UIBC_HIDC: String =
+            "input_category_list=HIDC; generic_cap_list=none; " +
+                "hidc_cap_list=SingleTouch/USB, MultiTouch/USB; port=none"
     }
 }

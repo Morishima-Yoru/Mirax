@@ -5,233 +5,96 @@
     android:layout_height="match_parent"
     android:background="@color/mirax_background">
 
-    <FrameLayout
-        android:id="@+id/mainRegion"
+    <LinearLayout
+        android:id="@+id/split"
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
 
-        <ScrollView
-            android:id="@+id/waitingScroll"
-            android:layout_width="match_parent"
+        <LinearLayout
+            android:id="@+id/paneStart"
+            android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:fillViewport="true"
-            android:visibility="gone">
+            android:layout_weight="1"
+            android:orientation="vertical">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="24dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/waitingTitle"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/waiting_title"
-                        android:textColor="@color/mirax_on_surface"
-                        android:textSize="22sp"
-                        android:textStyle="bold" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/openSidebarButtonWaiting"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/sidebar_open"
-                        android:visibility="gone" />
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/waitingBody"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/waiting_body"
-                    android:textColor="@color/mirax_muted"
-                    android:textSize="15sp" />
-
-                <TextView
-                    android:id="@+id/waitingAdbLabel"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
-                    android:text="@string/waiting_adb_label"
-                    android:textColor="@color/mirax_on_surface"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/waitingAdbCommand"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:fontFamily="monospace"
-                    android:textColor="@color/mirax_accent"
-                    android:textIsSelectable="true"
-                    android:textSize="13sp" />
+                android:gravity="center_vertical"
+                android:minHeight="72dp"
+                android:orientation="horizontal"
+                android:paddingStart="8dp"
+                android:paddingEnd="16dp">
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/waitingRetry"
+                    android:id="@+id/menuButton"
+                    style="@style/Widget.Material3.Button.TextButton"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
-                    android:text="@string/waiting_retry" />
-            </LinearLayout>
-        </ScrollView>
+                    android:text="@string/nav_menu" />
 
-        <ScrollView
-            android:id="@+id/dashboardScroll"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:fillViewport="true"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="24dp">
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/startBack"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/nav_back"
+                    android:visibility="gone" />
 
                 <TextView
-                    android:layout_width="match_parent"
+                    android:id="@+id/startTitle"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/app_name"
                     android:textColor="@color/mirax_on_surface"
-                    android:textSize="28sp"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
-
-                <LinearLayout
-                    android:id="@+id/overlayReminder"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:background="@color/mirax_surface"
-                    android:orientation="vertical"
-                    android:padding="16dp"
-                    android:visibility="gone">
-
-                    <TextView
-                        android:id="@+id/overlayReminderText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/overlay_reminder_body"
-                        android:textColor="@color/mirax_on_surface"
-                        android:textSize="14sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/overlayReminderButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:text="@string/overlay_reminder_button" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:id="@+id/displayCard"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
-                    android:background="@color/mirax_surface"
-                    android:orientation="vertical"
-                    android:padding="20dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:id="@+id/displayCardTitle"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/display_card_title"
-                            android:textColor="@color/mirax_on_surface"
-                            android:textSize="20sp"
-                            android:textStyle="bold" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/openSidebarButton"
-                            style="@style/Widget.Material3.Button.TextButton"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/sidebar_open"
-                            android:visibility="gone" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/displayCardNameLabel"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:text="@string/display_card_name_label"
-                        android:textColor="@color/mirax_muted"
-                        android:textSize="13sp" />
-
-                    <TextView
-                        android:id="@+id/displayCardName"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:textColor="@color/mirax_on_surface"
-                        android:textSize="16sp" />
-
-                    <TextView
-                        android:id="@+id/displayCardStatus"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:textColor="@color/mirax_accent"
-                        android:textSize="15sp" />
-
-                    <TextView
-                        android:id="@+id/displayCardResolutionLabel"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:text="@string/display_card_resolution_label"
-                        android:textColor="@color/mirax_muted"
-                        android:textSize="13sp" />
-
-                    <TextView
-                        android:id="@+id/displayCardResolution"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:textColor="@color/mirax_on_surface"
-                        android:textSize="16sp" />
-
-                    <TextView
-                        android:id="@+id/displayCardHint"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:text="@string/display_card_hint"
-                        android:textColor="@color/mirax_muted"
-                        android:textSize="14sp" />
-
-                    <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/advertisingSwitch"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="16dp"
-                        android:text="@string/advertising_switch"
-                        android:textColor="@color/mirax_on_surface" />
-                </LinearLayout>
             </LinearLayout>
-        </ScrollView>
-    </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/pageStart"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/paneEnd"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@color/mirax_surface"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/endBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:minHeight="72dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="16dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/endBack"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/nav_back" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:id="@+id/pageEnd"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+    </LinearLayout>
 
     <View
-        android:id="@+id/settingsScrim"
+        android:id="@+id/drawerScrim"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="#99000000"
@@ -240,282 +103,19 @@
         android:visibility="gone" />
 
     <ScrollView
-        android:id="@+id/settingsScroll"
-        android:layout_width="@dimen/sidebar_width"
+        android:id="@+id/drawer"
+        android:layout_width="300dp"
         android:layout_height="match_parent"
-        android:layout_gravity="end"
         android:background="@color/mirax_surface"
-        android:clickable="true"
-        android:elevation="8dp"
-        android:fillViewport="false">
+        android:elevation="12dp"
+        android:fillViewport="true"
+        android:visibility="gone">
 
         <LinearLayout
-            android:id="@+id/settingsPanel"
+            android:id="@+id/drawerBody"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="20dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/sidebarTitle"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/sidebar_title"
-                    android:textColor="@color/mirax_on_surface"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/closeSidebarButton"
-                    style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/sidebar_close"
-                    android:visibility="gone" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/settingsScaleTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="@string/settings_scale_title"
-                android:textColor="@color/mirax_on_surface"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <RadioGroup
-                android:id="@+id/scaleGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical">
-
-                <RadioButton
-                    android:id="@+id/scaleProportional"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/scale_proportional"
-                    android:textColor="@color/mirax_on_surface" />
-
-                <RadioButton
-                    android:id="@+id/scaleCenterCrop"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/scale_center_crop"
-                    android:textColor="@color/mirax_on_surface" />
-
-                <RadioButton
-                    android:id="@+id/scaleMatchEdges"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/scale_match_edges"
-                    android:textColor="@color/mirax_on_surface" />
-
-                <RadioButton
-                    android:id="@+id/scaleActual"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/scale_actual"
-                    android:textColor="@color/mirax_on_surface" />
-            </RadioGroup>
-
-            <TextView
-                android:id="@+id/settingsResolutionTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:text="@string/settings_resolution_title"
-                android:textColor="@color/mirax_on_surface"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/preferredModeLayout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:hint="@string/preferred_mode_hint">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/preferredModeInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:imeOptions="actionDone"
-                    android:inputType="text"
-                    android:maxLines="1"
-                    android:textColor="@color/mirax_on_surface"
-                    android:textColorHint="@color/mirax_muted" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/useThisScreenButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/use_this_screen" />
-
-            <TextView
-                android:id="@+id/standardModesLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="@string/standard_modes_label"
-                android:textColor="@color/mirax_muted"
-                android:textSize="14sp" />
-
-            <LinearLayout
-                android:id="@+id/standardModesList"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical" />
-
-            <TextView
-                android:id="@+id/settingsLanguageTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:text="@string/settings_language_title"
-                android:textColor="@color/mirax_on_surface"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <RadioGroup
-                android:id="@+id/languageGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical">
-
-                <RadioButton
-                    android:id="@+id/languageFollowSystem"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/language_follow_system"
-                    android:textColor="@color/mirax_on_surface" />
-
-                <RadioButton
-                    android:id="@+id/languageTraditionalChinese"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/language_traditional_chinese"
-                    android:textColor="@color/mirax_on_surface" />
-
-                <RadioButton
-                    android:id="@+id/languageEnglish"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/language_english"
-                    android:textColor="@color/mirax_on_surface" />
-            </RadioGroup>
-
-            <TextView
-                android:id="@+id/settingsFloatingBallTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:text="@string/settings_floating_ball_title"
-                android:textColor="@color/mirax_on_surface"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <com.google.android.material.materialswitch.MaterialSwitch
-                android:id="@+id/floatingBallSwitch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/settings_floating_ball_switch"
-                android:textColor="@color/mirax_on_surface" />
-
-            <TextView
-                android:id="@+id/settingsBottomHandleTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:text="@string/settings_bottom_handle_title"
-                android:textColor="@color/mirax_on_surface"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <com.google.android.material.materialswitch.MaterialSwitch
-                android:id="@+id/bottomHandleSwitch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/settings_bottom_handle_switch"
-                android:textColor="@color/mirax_on_surface" />
-
-            <TextView
-                android:id="@+id/advancedAdbTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:text="@string/advanced_adb_title"
-                android:textColor="@color/mirax_on_surface"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/advancedAdbLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/waiting_adb_label"
-                android:textColor="@color/mirax_muted"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/advancedAdbCommand"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:fontFamily="monospace"
-                android:textColor="@color/mirax_accent"
-                android:textIsSelectable="true"
-                android:textSize="13sp" />
-
-            <TextView
-                android:id="@+id/settingsDisplayNameTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:text="@string/settings_display_name_title"
-                android:textColor="@color/mirax_on_surface"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/displayNameLayout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:hint="@string/settings_display_name_title">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/displayNameInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:imeOptions="actionDone"
-                    android:inputType="text"
-                    android:maxLines="1"
-                    android:textColor="@color/mirax_on_surface"
-                    android:textColorHint="@color/mirax_muted" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/displayNameSave"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/display_name_save" />
-        </LinearLayout>
+            android:padding="20dp" />
     </ScrollView>
 </FrameLayout>

@@ -146,6 +146,22 @@ class WfdProtocolTest {
     }
 
     @Test
+    fun touchEnabled_advertisesHidcAndReadsSourcePort() {
+        val caps = WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true)
+        assertThat(caps.valueFor("wfd_uibc_capability")).isEqualTo(
+            "input_category_list=HIDC; generic_cap_list=none; " +
+                "hidc_cap_list=SingleTouch/USB, MultiTouch/USB; port=none",
+        )
+        val session = RtspSinkSession(caps)
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n" +
+                "Content-Type: text/parameters\r\nContent-Length: 80\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; port=50123\r\n",
+        )
+        assertThat(session.uibcPort).isEqualTo(50123)
+    }
+
+    @Test
     fun edidPreferredTimingMatchesMode() {
         val edid = WfdEdid.block(foldPreferred)
         assertThat(edid).hasLength(128)

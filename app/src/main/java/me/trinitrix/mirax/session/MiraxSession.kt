@@ -43,6 +43,16 @@ class MiraxSession(
     private var bottomHandleEnabled: Boolean = initialSettings.bottomHandleEnabled
     private var floatingBallEnabled: Boolean = initialSettings.floatingBallEnabled
     private var pictureScale: PictureScale = initialSettings.pictureScale
+    private var customModes: List<VideoMode> = distinctModes(
+        if (initialSettings.customModes.isNotEmpty()) {
+            initialSettings.customModes
+        } else {
+            listOfNotNull(initialSettings.preferredMode)
+        },
+    )
+    private var autoAddWmSizeOnConnect: Boolean = initialSettings.autoAddWmSizeOnConnect
+    private var touchEnabled: Boolean = initialSettings.touchEnabled
+    private var showDebugMessages: Boolean = initialSettings.showDebugMessages
     private var privilege: PrivilegeReport = PrivilegeReport()
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
@@ -55,6 +65,12 @@ class MiraxSession(
     private var selectedMode: VideoMode? = null
     /** Modes frozen for the current connection's RTSP advertisement. */
     private var connectionAdvertisedModes: Set<VideoMode>? = null
+    /** True after [SessionAction.FreezeConnectionOffer] for this attempt. */
+    private var connectionOfferFrozen: Boolean = false
+    /** Preferred mode for the frozen offer. Not written back to saved settings. */
+    private var connectionPreferredMode: VideoMode? = null
+    /** True from P2P group-up until PLAY or the attempt ends. */
+    private var negotiating: Boolean = false
     /**
      * After the first system Back while connected, the next Back ends this
      * connection. Cleared only by the next Back or when this connection ends.
@@ -70,6 +86,8 @@ class MiraxSession(
     private var pendingPermissionRequest: Boolean = false
     private var pendingEffects: List<SessionEffect> = emptyList()
     private var provisioningReadRequested: Boolean = false
+    private var openConnectionRun: OpenConnectionRun? = null
+    private val connectionRuns: ArrayDeque<ConnectionRun> = ArrayDeque()
 
     /**
      * Feed the latest privilege-path observation from the environment.
@@ -181,6 +199,7 @@ class MiraxSession(
                 freezeConnectionAdvertisedModes()
             }
             SessionAction.PrePlayProgress -> {
+                negotiating = true
                 freezeConnectionAdvertisedModes()
             }
             is SessionAction.SourceSelectedMode -> {
@@ -192,6 +211,12 @@ class MiraxSession(
             SessionAction.ConnectionEnded -> {
                 endConnectionState(emitDrop = false)
             }
+            is SessionAction.BeginConnectionRun -> {
+                negotiating = true
+                beginConnectionRun(action.remoteHost)
+            }
+            is SessionAction.AppendConnectionLog -> appendConnectionLog(action.line)
+            is SessionAction.FinishConnectionRun -> finishConnectionRun(action.succeeded, action.metadata)
             SessionAction.PrePlayGroupDropped -> {
                 // Intentionally no-op for the advertisement set: a pre-PLAY drop
                 // must not latch extra modes or rewrite the saved set.
@@ -254,6 +279,19 @@ class MiraxSession(
             is SessionAction.SetPictureScale -> {
                 pictureScale = action.scale
             }
+            is SessionAction.AddCustomMode -> addCustomMode(action.width, action.height, action.refreshHz)
+            is SessionAction.RemoveCustomMode -> removeCustomMode(action.mode)
+            is SessionAction.MoveCustomMode -> moveCustomMode(action.from, action.to)
+            is SessionAction.SetAutoAddWmSizeOnConnect -> {
+                autoAddWmSizeOnConnect = action.enabled
+            }
+            is SessionAction.SetTouchEnabled -> {
+                touchEnabled = action.enabled
+            }
+            is SessionAction.SetShowDebugMessages -> {
+                showDebugMessages = action.enabled
+            }
+            is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
         }
     }
 
@@ -321,6 +359,18 @@ class MiraxSession(
             showOverlayPermissionReminder = !overlayGranted,
             showFloatingBall = showBall,
             pictureScale = pictureScale,
+            connectionRuns = connectionRuns.toList(),
+            customModes = customModes,
+            autoAddWmSizeOnConnect = autoAddWmSizeOnConnect,
+            touchEnabled = touchEnabled,
+            showDebugMessages = showDebugMessages,
+            handshakeLog = if (phase == ScreenPhase.CONNECTING) {
+                openConnectionRun?.lines?.joinToString("\n").orEmpty()
+            } else {
+                ""
+            },
+            connectionOfferModes = connectionAdvertisedModes,
+            connectionPreferredMode = if (connectionOfferFrozen) connectionPreferredMode else null,
         )
     }
 
@@ -339,6 +389,10 @@ class MiraxSession(
             bottomHandleEnabled = bottomHandleEnabled,
             floatingBallEnabled = floatingBallEnabled,
             pictureScale = pictureScale,
+            customModes = customModes,
+            autoAddWmSizeOnConnect = autoAddWmSizeOnConnect,
+            touchEnabled = touchEnabled,
+            showDebugMessages = showDebugMessages,
         )
     }
 
@@ -463,6 +517,63 @@ class MiraxSession(
         }
     }
 
+    /**
+     * Freeze the M3 offer for this attempt. A later call in the same attempt
+     * does not change the offer, so a drop cannot latch extra modes.
+     */
+    private fun freezeConnectionOffer(reading: WmSizeReading?) {
+        if (resolveOwner(privilege) == WfdOwner.NONE || !advertisingEnabled || connected) {
+            return
+        }
+        negotiating = true
+        if (connectionOfferFrozen) {
+            return
+        }
+        val base = resolveNextAdvertisementModes()
+        val injected = if (autoAddWmSizeOnConnect) modeFromWmSize(reading) else null
+        val savedPreferred = customModes.firstOrNull() ?: preferredMode?.takeIf { it in base }
+        connectionPreferredMode = injected ?: savedPreferred
+        connectionAdvertisedModes = if (injected != null) base + injected else base
+        connectionOfferFrozen = true
+    }
+
+    private fun modeFromWmSize(reading: WmSizeReading?): VideoMode? {
+        if (reading == null) {
+            return null
+        }
+        val (width, height) = visiblePictureAxes(
+            reading.chosenWidth,
+            reading.chosenHeight,
+            pictureRotationDegrees,
+        )
+        return PreferredModeCorrection.correct(width, height, 60)
+    }
+
+    private fun addCustomMode(width: Int, height: Int, refreshHz: Int) {
+        val mode = PreferredModeCorrection.correct(width, height, refreshHz) ?: return
+        if (mode in customModes) {
+            return
+        }
+        customModes = customModes + mode
+    }
+
+    private fun removeCustomMode(mode: VideoMode) {
+        customModes = customModes.filter { it != mode }
+        if (preferredMode == mode) {
+            preferredMode = null
+        }
+    }
+
+    private fun moveCustomMode(from: Int, to: Int) {
+        if (from !in customModes.indices || to !in customModes.indices || from == to) {
+            return
+        }
+        val next = customModes.toMutableList()
+        val moved = next.removeAt(from)
+        next.add(to, moved)
+        customModes = next
+    }
+
     private fun onSourceSelectedMode(mode: VideoMode) {
         freezeConnectionAdvertisedModes()
         val allowed = connectionAdvertisedModes ?: resolveNextAdvertisementModes()
@@ -481,6 +592,9 @@ class MiraxSession(
     private fun clearConnectionEphemerals() {
         selectedMode = null
         connectionAdvertisedModes = null
+        connectionOfferFrozen = false
+        connectionPreferredMode = null
+        negotiating = false
         backEndsConnectionPending = false
         bottomHandleExpanded = false
         awayOnHomeScreen = false
@@ -617,12 +731,7 @@ class MiraxSession(
         val checked = checkedStandardModes.intersect(
             StandardVideoModes.catalog(maxVideoBitrateBps).toSet(),
         )
-        val preferred = preferredMode
-        return if (preferred == null) {
-            checked
-        } else {
-            checked + preferred
-        }
+        return checked + customModes.toSet() + listOfNotNull(preferredMode).toSet()
     }
 
     private fun resolveWfdAdvertise(
@@ -670,6 +779,9 @@ class MiraxSession(
         if (connected) {
             return ScreenPhase.CONNECTED
         }
+        if (advertisingEnabled && negotiating) {
+            return ScreenPhase.CONNECTING
+        }
         return if (advertisingEnabled) {
             ScreenPhase.ADVERTISING
         } else {
@@ -681,7 +793,7 @@ class MiraxSession(
         return when {
             owner == WfdOwner.NONE -> TileState.GRAY
             phase == ScreenPhase.CONNECTED -> TileState.CONNECTED
-            phase == ScreenPhase.ADVERTISING -> TileState.ADVERTISING
+            phase == ScreenPhase.ADVERTISING || phase == ScreenPhase.CONNECTING -> TileState.ADVERTISING
             else -> TileState.OFF
         }
     }
@@ -690,10 +802,77 @@ class MiraxSession(
         return when {
             owner == WfdOwner.NONE -> WidgetStatus.UNAVAILABLE
             phase == ScreenPhase.CONNECTED -> WidgetStatus.CONNECTED
-            phase == ScreenPhase.ADVERTISING -> WidgetStatus.ADVERTISING
+            phase == ScreenPhase.ADVERTISING || phase == ScreenPhase.CONNECTING -> WidgetStatus.ADVERTISING
             else -> WidgetStatus.OFF
         }
     }
+
+    private fun beginConnectionRun(remoteHost: String) {
+        if (openConnectionRun != null) {
+            finishConnectionRun(
+                succeeded = false,
+                metadata = listOf(ConnectionRunFact("outcome", "closed by a newer attempt")),
+            )
+        }
+        openConnectionRun = OpenConnectionRun(
+            remoteHost = remoteHost,
+            startedAtEpochMs = System.currentTimeMillis(),
+            configuration = configurationBackup(),
+        )
+    }
+
+    private fun appendConnectionLog(line: String) {
+        val run = openConnectionRun ?: return
+        val text = line.trim()
+        if (text.isEmpty()) return
+        if (run.lines.size >= MAX_CONNECTION_LOG_LINES) {
+            run.lines.removeAt(0)
+        }
+        run.lines.add(text)
+    }
+
+    private fun finishConnectionRun(succeeded: Boolean, metadata: List<ConnectionRunFact>) {
+        val run = openConnectionRun ?: return
+        openConnectionRun = null
+        connectionRuns.addFirst(
+            ConnectionRun(
+                succeeded = succeeded,
+                startedAtEpochMs = run.startedAtEpochMs,
+                endedAtEpochMs = System.currentTimeMillis(),
+                remoteHost = run.remoteHost,
+                metadata = metadata,
+                configuration = run.configuration,
+                log = run.lines.joinToString("\n"),
+            ),
+        )
+        while (connectionRuns.size > MAX_CONNECTION_RUNS) {
+            connectionRuns.removeLast()
+        }
+    }
+
+    private fun configurationBackup(): List<ConnectionRunFact> {
+        val name = if (displayNameOverride == null) deviceName else displayNameOverride.orEmpty()
+        val standards = checkedStandardModes
+            .sortedWith(compareBy({ it.width * it.height }, { it.refreshHz }))
+            .joinToString(", ") { it.format() }
+            .ifEmpty { "none" }
+        val customs = distinctModes(customModes + listOfNotNull(preferredMode))
+            .joinToString(", ") { it.format() }
+            .ifEmpty { "none" }
+        return listOf(
+            ConnectionRunFact("broadcast name", name.ifEmpty { "none" }),
+            ConnectionRunFact("custom resolutions", customs),
+            ConnectionRunFact("standard modes", standards),
+            ConnectionRunFact("touch", if (touchEnabled) "on" else "off"),
+        )
+    }
+
+    private class OpenConnectionRun(
+        val remoteHost: String,
+        val startedAtEpochMs: Long,
+        val configuration: List<ConnectionRunFact>,
+        val lines: MutableList<String> = mutableListOf(),
+    )
 
     companion object {
         /**
@@ -704,12 +883,26 @@ class MiraxSession(
             "adb shell \"CLASSPATH=/data/local/tmp/mirax-helper.jar " +
                 "app_process /system/bin me.trinitrix.mirax.helper.Helper\""
 
+        private const val MAX_CONNECTION_RUNS: Int = 32
+        private const val MAX_CONNECTION_LOG_LINES: Int = 200
+
         private fun normalizeOverride(value: String?): String? {
             if (value == null) {
                 return null
             }
-            val trimmed = value.trim()
-            return trimmed.ifEmpty { null }
+            val sanitized = BroadcastNameRules.sanitize(value).trim()
+            return sanitized.ifEmpty { null }
+        }
+
+        private fun distinctModes(modes: List<VideoMode>): List<VideoMode> {
+            val seen = LinkedHashSet<VideoMode>()
+            val ordered = ArrayList<VideoMode>(modes.size)
+            for (mode in modes) {
+                if (seen.add(mode)) {
+                    ordered.add(mode)
+                }
+            }
+            return ordered
         }
     }
 }

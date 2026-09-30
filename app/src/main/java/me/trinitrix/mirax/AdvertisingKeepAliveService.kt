@@ -51,6 +51,7 @@ class AdvertisingKeepAliveService : Service() {
         val statusText = when (snapshot.phase) {
             ScreenPhase.CONNECTED -> getString(R.string.keepalive_status_connected)
             ScreenPhase.ADVERTISING -> getString(R.string.keepalive_status_advertising)
+            ScreenPhase.CONNECTING -> getString(R.string.keepalive_status_connecting)
             ScreenPhase.READY, ScreenPhase.FROZEN -> getString(R.string.keepalive_status_waiting)
         }
         val launch = PendingIntent.getActivity(

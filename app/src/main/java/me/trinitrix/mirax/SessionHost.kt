@@ -7,6 +7,7 @@ import android.view.Display
 import android.view.Surface
 import android.widget.Toast
 import me.trinitrix.mirax.session.PictureRotationReport
+import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionEffect
@@ -114,7 +115,24 @@ object SessionHost {
     fun dispatchConnectionEvent(context: Context, action: SessionAction): SessionSnapshot {
         val session = MiraxApp.instance.session
         session.handle(action)
-        return commit(context)
+        val snapshot = commit(context)
+        MainActivity.refreshIfShowing()
+        return snapshot
+    }
+
+    /**
+     * Freeze the M3 offer for the connection that is about to speak RTSP.
+     *
+     * Does not re-apply the listen beacon. The wm-size preference is for this
+     * connection's capability answer only.
+     */
+    fun freezeConnectionOffer(context: Context, reading: WmSizeReading?): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.report(PictureRotationReport(pictureRotationDegrees(context, null)))
+        session.handle(SessionAction.FreezeConnectionOffer(reading))
+        val snapshot = session.snapshot()
+        MainActivity.refreshIfShowing()
+        return snapshot
     }
 
     /**
