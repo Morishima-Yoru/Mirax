@@ -271,7 +271,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun pageSignature(target: Page, snapshot: SessionSnapshot): String {
         return when (target) {
-            Page.DASHBOARD -> "${snapshot.phase}|${snapshot.advertisingEnabled}|${snapshot.handshakeLog}|${snapshot.connectionRuns.size}"
+            Page.DASHBOARD -> "${snapshot.phase}|${snapshot.advertisingEnabled}|${snapshot.connectionRuns.size}"
             Page.PICTURE -> "${customSummary(snapshot)}|${modesSummary(snapshot)}|${scaleLabel(snapshot.pictureScale)}|${snapshot.touchEnabled}"
             Page.CUSTOM -> "${snapshot.autoAddWmSizeOnConnect}|${snapshot.customModes.joinToString { it.format() }}"
             Page.GENERAL -> "${snapshot.displayNameOverride}|${ballOn(snapshot)}|${snapshot.languagePreference}"
@@ -393,6 +393,10 @@ class MainActivity : AppCompatActivity() {
         }
         column.findViewWithTag<TextView>("log-label")?.visibility =
             if (connecting) View.VISIBLE else View.GONE
+        if (connecting) {
+            val scroll = root as? ScrollView ?: column.parent as? ScrollView
+            scroll?.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        }
         column.findViewWithTag<MaterialButton>("broadcast")?.text = broadcastLabel(snapshot)
     }
 
