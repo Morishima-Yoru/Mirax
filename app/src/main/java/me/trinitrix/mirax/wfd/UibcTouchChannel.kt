@@ -15,6 +15,8 @@ object UibcTouchChannel {
     private const val TAG = "MiraxUibc"
     private val state = AtomicReference(Channel())
 
+    var context: android.content.Context? = null
+
     /** Optional English status line, for the connection log. */
     var onStatus: ((String) -> Unit)? = null
 
@@ -25,6 +27,8 @@ object UibcTouchChannel {
         Thread({
             val socket = Socket()
             try {
+                socket.bind(null)
+                P2pNetworkBinder.bind(context, socket)
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(host, port), 3_000)
                 synchronized(next) {

@@ -152,6 +152,38 @@ object WfdOwnerBridge {
     }
 
     /**
+     * Forget all paired devices by deleting all persistent groups.
+     * The next connection will require WPS pairing again.
+     */
+    fun forgetAllPairings() {
+        when (activeOwner.get()) {
+            WfdOwner.SHIZUKU -> try {
+                shellService.get()?.forgetAllPairings()
+            } catch (err: Exception) {
+                Log.w(TAG, "forgetAllPairings via Shizuku failed", err)
+            }
+            WfdOwner.HELPER -> sendHelperQuietly("FORGET_PAIRINGS")
+            WfdOwner.NONE -> Unit
+        }
+    }
+
+    /**
+     * Get current pairing state: UNPAIRED, PAIRING, or PAIRED.
+     */
+    fun pairingState(): String {
+        return when (activeOwner.get()) {
+            WfdOwner.SHIZUKU -> try {
+                shellService.get()?.pairingState ?: "UNPAIRED"
+            } catch (err: Exception) {
+                Log.d(TAG, "pairingState via Shizuku failed", err)
+                "UNPAIRED"
+            }
+            WfdOwner.HELPER -> "UNPAIRED"
+            WfdOwner.NONE -> "UNPAIRED"
+        }
+    }
+
+    /**
      * Run `wm size` inside the owner process.
      *
      * Args:

@@ -70,6 +70,7 @@ object SinkConnectionController {
      */
     fun sync(context: Context, command: WfdAdvertiseCommand?) {
         appContext = context.applicationContext
+        UibcTouchChannel.context = appContext
         if (command == null) {
             if (lastCommand.getAndSet(null) != null || running.get()) {
                 stop("advertise off")
@@ -167,6 +168,8 @@ object SinkConnectionController {
             attempt++
             val socket = Socket()
             try {
+                socket.bind(null)
+                P2pNetworkBinder.bind(appContext, socket)
                 socket.connect(InetSocketAddress(host, PrimarySinkBeacon.RTSP_CONTROL_PORT), DIAL_TIMEOUT_MS)
                 note("RTSP connected to $host:${PrimarySinkBeacon.RTSP_CONTROL_PORT} (attempt $attempt)")
                 return socket
@@ -311,6 +314,7 @@ object SinkConnectionController {
                 receiveBufferSize = 2 * 1024 * 1024
                 bind(InetSocketAddress(port))
             }
+            P2pNetworkBinder.bind(appContext, socket)
             rtpSocket = socket
             note("RTP listening on $port")
             Thread({

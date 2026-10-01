@@ -38,6 +38,7 @@ receiver/out/
 receiver/classes/
 receiver/player-classes/
 receiver/player-dex/
+helper/classes/me/trinitrix/mirax/*/*.class
 *.jar
 *.idsig
 !gradle/wrapper/gradle-wrapper.jar

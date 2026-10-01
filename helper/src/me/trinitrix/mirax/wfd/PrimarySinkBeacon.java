@@ -31,11 +31,11 @@ import java.util.Set;
  * Calls {@link WifiP2pManager#setWfdInfo} and {@link WifiP2pManager#startListening}
  * so stock Windows Win+K can list this phone, keeps listening while no group is
  * formed, accepts the source's P2P connection request, and exposes the formed
- * group's source address. A broadcast-address approver accepts a source that
- * is not already in the peer list, and saved P2P groups are deleted so a new
- * computer is not stuck reinvoking the original development machine. Must run
- * as shell (UID 2000) or root — never from the Mirax app process. Does not
- * touch Samsung SmartMirroring or SecondScreenPlayer.
+ * group's source address. Implements WPS Push Button Configuration for trust
+ * pairing with Windows. Persistent groups are preserved across sessions so
+ * reinvocation works without re-pairing. Must run as shell (UID 2000) or root
+ * — never from the Mirax app process. Does not touch Samsung SmartMirroring
+ * or SecondScreenPlayer.
  */
 public final class PrimarySinkBeacon {
     private static final String TAG = "MiraxWfdBeacon";
@@ -45,6 +45,8 @@ public final class PrimarySinkBeacon {
     private static final long POLL_INTERVAL_MS = 1000;
     /** Android shuts an idle P2P interface down after 150 s; re-arm well before that. */
     private static final long RELISTEN_INTERVAL_MS = 30_000;
+    /** WPS pairing timeout. */
+    private static final long WPS_TIMEOUT_MS = 120_000;
 
     /** No P2P group is formed. */
     public static final String GROUP_DOWN = "DOWN";
@@ -52,6 +54,13 @@ public final class PrimarySinkBeacon {
     public static final String GROUP_PENDING = "PENDING";
     /** Prefix of the group state once the source address is known: {@code UP <ipv4>}. */
     public static final String GROUP_UP_PREFIX = "UP ";
+
+    /** Pairing state for trust management. */
+    public enum PairingState {
+        UNPAIRED,      // No persistent group, first connection will trigger WPS
+        PAIRING,       // WPS in progress
+        PAIRED         // Persistent group exists, reinvocation allowed
+    }
 
     private final Handler handler;
     private final Set<String> approverMacs = new HashSet<>();
@@ -65,6 +74,9 @@ public final class PrimarySinkBeacon {
     private boolean groupFormed;
     private boolean forgetSavedGroups;
     private long lastArmedAt;
+    private volatile PairingState pairingState = PairingState.UNPAIRED;
+    private String pendingPairingMac = null;
+    private Runnable wpsTimeoutRunnable = null;
 
     private final Runnable poll = new Runnable() {
         @Override
@@ -121,9 +133,10 @@ public final class PrimarySinkBeacon {
                 groupState = GROUP_DOWN;
                 removeGroupQuietly("removeGroup");
             }
-            if (!groupFormed) {
-                forgetSavedGroups = true;
-            }
+            // Clear any leftover approvers from previous runs
+            removeApprovers();
+            // Do NOT delete persistent groups here - preserve them for reinvocation.
+            // forgetSavedGroups is only set to true by forgetAllPairings() (user action).
             armSink();
             handler.removeCallbacks(poll);
             handler.postDelayed(poll, POLL_INTERVAL_MS);
@@ -156,6 +169,34 @@ public final class PrimarySinkBeacon {
     /** End the current connection's P2P group; advertising resumes once the group is down. */
     public void endSession() {
         handler.post(() -> removeGroupQuietly("endSession"));
+    }
+
+    /**
+     * Forget all paired devices by deleting all persistent groups.
+     * The next connection will require WPS pairing again.
+     */
+    public void forgetAllPairings() {
+        handler.post(() -> {
+            Log.i(TAG, "User requested forget all pairings");
+            forgetSavedGroups = true;
+            pairingState = PairingState.UNPAIRED;
+            if (manager != null && channel != null) {
+                requestPersistentGroupDeletion(() -> {
+                    Log.i(TAG, "All persistent groups deleted, trust reset");
+                    // Re-arm sink to update WFD IE and approver
+                    if (wanted) {
+                        armSink();
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Get current pairing state.
+     */
+    public PairingState getPairingState() {
+        return pairingState;
     }
 
     public boolean isAdvertising() {
@@ -228,7 +269,8 @@ public final class PrimarySinkBeacon {
                 Log.i(TAG, "P2P group down");
                 groupFormed = false;
                 groupState = GROUP_DOWN;
-                forgetSavedGroups = true;
+                // Do NOT forget saved groups here - preserve persistent group for reinvocation
+                // forgetSavedGroups is only set to true when user explicitly calls forgetAllPairings()
                 armSink();
             }
             return;
@@ -238,6 +280,25 @@ public final class PrimarySinkBeacon {
             groupState = GROUP_PENDING;
             Log.i(TAG, "P2P group up phoneIsOwner=" + info.isGroupOwner
                     + " owner=" + info.groupOwnerAddress);
+            // If we were pairing, trigger WPS PBC now that group is formed
+            if (pairingState == PairingState.UNPAIRED) {
+                Log.i(TAG, "Group formed for UNPAIRED device, starting WPS PBC");
+                pairingState = PairingState.PAIRING;
+                String sourceAddr = info.isGroupOwner ? p2pNeighbor() : hostOf(info.groupOwnerAddress);
+                if (sourceAddr != null) {
+                    startWpsPbc(sourceAddr);
+                } else {
+                    Log.w(TAG, "Cannot start WPS PBC: source address unknown");
+                    pairingState = PairingState.UNPAIRED;
+                }
+            } else if (pairingState == PairingState.PAIRING) {
+                pairingState = PairingState.PAIRED;
+                if (wpsTimeoutRunnable != null) {
+                    handler.removeCallbacks(wpsTimeoutRunnable);
+                    wpsTimeoutRunnable = null;
+                }
+                Log.i(TAG, "Pairing successful! Device is now PAIRED");
+            }
         }
         if (groupState.startsWith(GROUP_UP_PREFIX)) {
             return;
@@ -264,9 +325,11 @@ public final class PrimarySinkBeacon {
             wfd.setContentProtectionSupported(false);
         } catch (Throwable ignored) {
         }
+        // Advertise WPS Push Button Configuration support for Windows pairing
+        setWpsConfigMethods(wfd);
         final boolean announce = !advertising;
         if (announce) {
-            Log.i(TAG, "WFD info " + wfd + " name=\"" + lastName + "\"");
+            Log.i(TAG, "WFD info " + wfd + " name=\"" + lastName + "\" pairing=" + pairingState);
         }
         manager.setWfdInfo(channel, wfd, new WifiP2pManager.ActionListener() {
             @Override
@@ -283,6 +346,24 @@ public final class PrimarySinkBeacon {
                 Log.e(TAG, "setWfdInfo FAILED reason=" + reason);
             }
         });
+    }
+
+    /**
+     * Set WPS config methods in WFD IE to advertise PBC support.
+     * Windows requires this to initiate pairing.
+     */
+    private void setWpsConfigMethods(WifiP2pWfdInfo wfd) {
+        try {
+            // WPS_CONFIG_PUSH_BUTTON = 0x0080, WPS_CONFIG_KEYPAD = 0x0008
+            Method setWps = WifiP2pWfdInfo.class.getMethod("setWpsConfigMethodsSupported", int.class);
+            setWps.invoke(wfd, 0x0080 | 0x0008); // PBC + Keypad
+            Log.d(TAG, "WPS config methods set: PBC + Keypad");
+        } catch (NoSuchMethodException e) {
+            // API < 29 doesn't have this method, ignore
+            Log.d(TAG, "setWpsConfigMethodsSupported not available on this API level");
+        } catch (Throwable err) {
+            Log.w(TAG, "setWpsConfigMethodsSupported failed", err);
+        }
     }
 
     private void clearWfdInfo() {
@@ -306,19 +387,72 @@ public final class PrimarySinkBeacon {
     }
 
     /**
-     * Arm the all-sources approver, drop saved groups when this arm asked for
-     * it, then listen. Listening waits until the delete requests are queued so
-     * a source cannot reinvoke a group that is about to disappear.
+     * Check for existing persistent groups to determine pairing state.
+     * If persistent groups exist, we're PAIRED and can reinvoke.
+     * If no persistent groups, we're UNPAIRED and need WPS for first connection.
      */
-    private void admitThenListen(boolean announce) {
-        armAllSourcesApprover();
-        Runnable listen = () -> startListening(announce);
-        if (!forgetSavedGroups) {
-            listen.run();
+    private void checkPersistentGroups() {
+        if (manager == null || channel == null) {
             return;
         }
-        forgetSavedGroups = false;
-        if (!requestPersistentGroupDeletion(listen)) {
+        try {
+            Class<?> listenerClass = Class.forName(
+                    "android.net.wifi.p2p.WifiP2pManager$PersistentGroupInfoListener");
+            Object listener = Proxy.newProxyInstance(
+                    listenerClass.getClassLoader(),
+                    new Class<?>[] {listenerClass},
+                    (proxy, method, args) -> {
+                        if (method.getDeclaringClass() == Object.class) {
+                            return objectMethod(proxy, method.getName(), args);
+                        }
+                        if ("onPersistentGroupInfoAvailable".equals(method.getName())) {
+                            Object groups = args == null || args.length == 0 ? null : args[0];
+                            int[] persistent = SavedP2pGroups.persistentNetworkIds(networkIdsOf(groups));
+                            if (persistent.length > 0) {
+                                pairingState = PairingState.PAIRED;
+                                Log.i(TAG, "Found " + persistent.length + " persistent group(s), state=PAIRED");
+                            } else {
+                                pairingState = PairingState.UNPAIRED;
+                                Log.i(TAG, "No persistent groups, state=UNPAIRED");
+                            }
+                        }
+                        return null;
+                    });
+            Method request = WifiP2pManager.class.getMethod(
+                    "requestPersistentGroupInfo",
+                    WifiP2pManager.Channel.class,
+                    listenerClass);
+            request.invoke(manager, channel, listener);
+        } catch (Throwable err) {
+            Log.w(TAG, "requestPersistentGroupInfo unavailable", err);
+            pairingState = PairingState.UNPAIRED;
+        }
+    }
+
+    /**
+     * Arm the approver based on pairing state, then listen.
+     * - UNPAIRED: Do NOT register approver. Let system dialog + WPS PBC handle pairing.
+     * - PAIRED: Register broadcast approver for reinvocation via persistent group.
+     */
+    private void admitThenListen(boolean announce) {
+        if (pairingState == PairingState.PAIRED) {
+            // For paired state, register broadcast approver for reinvocation
+            armApproverForPairedDevices();
+        } else {
+            // UNPAIRED: Do NOT register broadcast approver.
+            // Let Android show system confirmation dialog, then trigger WPS PBC.
+            // Windows DAF requires WPS PBC completion to populate WifiDirectDisplay
+            // dynamic target and allow inbound RTSP 7236.
+            Log.i(TAG, "UNPAIRED state: allowing system dialog + WPS PBC for Windows trust pairing");
+        }
+        Runnable listen = () -> startListening(announce);
+        // Only delete persistent groups if explicitly requested (forgetAllPairings)
+        if (forgetSavedGroups) {
+            forgetSavedGroups = false;
+            if (!requestPersistentGroupDeletion(listen)) {
+                listen.run();
+            }
+        } else {
             listen.run();
         }
     }
@@ -348,17 +482,20 @@ public final class PrimarySinkBeacon {
     }
 
     /**
-     * Accept a connection from any source.
-     *
-     * Android delivers a new negotiation or invitation to the approver for
-     * that MAC, and falls back to {@link MacAddress#BROADCAST_ADDRESS} when
-     * none is registered. Without the fallback the system confirmation dialog
-     * is shown, and this shell process cannot press it. The framework removes
-     * the approver after the result, so {@code onDetached} arms it again.
+     * Register external approver ONLY for PAIRED devices (reinvocation).
+     * For UNPAIRED state, we do NOT register broadcast approver - this allows
+     * the system dialog to show for proper WPS PBC pairing with Windows.
+     * Windows requires WPS PBC completion to populate WifiDirectDisplay
+     * dynamic target and allow inbound RTSP on port 7236.
      */
-    private void armAllSourcesApprover() {
+    private void armApproverForPairedDevices() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || manager == null || channel == null || !wanted) {
+            return;
+        }
+        // Only register broadcast approver for PAIRED state (reinvocation)
+        if (pairingState != PairingState.PAIRED) {
+            Log.d(TAG, "Not PAIRED, skipping broadcast approver to allow WPS PBC flow");
             return;
         }
         String mac = MacAddress.BROADCAST_ADDRESS.toString();
@@ -367,10 +504,102 @@ public final class PrimarySinkBeacon {
         }
         try {
             manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, approver);
-            Log.i(TAG, "addExternalApprover " + mac);
+            Log.i(TAG, "addExternalApprover for reinvocation " + mac);
         } catch (Throwable err) {
             approverMacs.remove(mac);
             Log.w(TAG, "addExternalApprover failed for " + mac, err);
+        }
+    }
+
+    /**
+     * Start WPS Push Button Configuration flow for Windows trust pairing.
+     * This must be called when a new (unpaired) source connects.
+     * Completing WPS PBC creates a persistent group and triggers Windows
+     * to populate WifiDirectDisplay dynamic target, allowing inbound RTSP 7236.
+     */
+    private void startWpsPbc(String deviceAddress) {
+        if (manager == null || channel == null) {
+            return;
+        }
+        try {
+            // Cancel any existing timeout
+            if (wpsTimeoutRunnable != null) {
+                handler.removeCallbacks(wpsTimeoutRunnable);
+            }
+            
+            pairingState = PairingState.PAIRING;
+            pendingPairingMac = deviceAddress;
+            
+            // Set timeout for WPS pairing (120s)
+            wpsTimeoutRunnable = () -> {
+                Log.w(TAG, "WPS pairing timed out for " + pendingPairingMac);
+                pairingState = PairingState.UNPAIRED;
+                pendingPairingMac = null;
+            };
+            handler.postDelayed(wpsTimeoutRunnable, WPS_TIMEOUT_MS);
+
+            // Use reflection for startWps with WPS_PBC
+            Class<?> wpsInfoClass = Class.forName("android.net.wifi.WpsInfo");
+            Object wpsConfig = wpsInfoClass.getDeclaredConstructor().newInstance();
+            Field setupField = wpsInfoClass.getField("setup");
+            setupField.setInt(wpsConfig, 0); // 0 = WPS_PBC
+
+            // WpsCallback is an interface, try multiple possible class names
+            Class<?> wpsCallbackClass = null;
+            String[] callbackClassNames = {
+                    "android.net.wifi.p2p.WifiP2pManager$WpsCallback",
+                    "android.net.wifi.p2p.WifiP2pManager.WpsCallback",
+                    "android.net.wifi.p2p.WpsCallback"
+            };
+            for (String name : callbackClassNames) {
+                try {
+                    wpsCallbackClass = Class.forName(name);
+                    break;
+                } catch (ClassNotFoundException ignored) {}
+            }
+            if (wpsCallbackClass == null) {
+                throw new ClassNotFoundException("WpsCallback class not found");
+            }
+
+            Method startWps = WifiP2pManager.class.getMethod(
+                    "startWps",
+                    WifiP2pManager.Channel.class,
+                    wpsInfoClass,
+                    wpsCallbackClass);
+
+            Object wpsCallback = Proxy.newProxyInstance(
+                    wpsCallbackClass.getClassLoader(),
+                    new Class<?>[] {wpsCallbackClass},
+                    (proxy, method, args) -> {
+                        if ("onWpsCompleted".equals(method.getName())) {
+                            Log.i(TAG, "WPS PBC completed for " + pendingPairingMac);
+                            handler.removeCallbacks(wpsTimeoutRunnable);
+                            pairingState = PairingState.PAIRED;
+                            pendingPairingMac = null;
+                            // WPS success - persistent group now created by framework
+                        } else if ("onWpsFailed".equals(method.getName())) {
+                            int reason = args != null && args.length > 0 ? (int) args[0] : -1;
+                            Log.w(TAG, "WPS PBC failed reason=" + reason + " for " + pendingPairingMac);
+                            handler.removeCallbacks(wpsTimeoutRunnable);
+                            pairingState = PairingState.UNPAIRED;
+                            pendingPairingMac = null;
+                            // WPS failed - reject connection
+                            if (pendingPairingMac != null) {
+                                setConnectionResult(pendingPairingMac, WifiP2pManager.CONNECTION_REQUEST_REJECT);
+                            }
+                        }
+                        return null;
+                    });
+
+            startWps.invoke(manager, channel, wpsConfig, wpsCallback);
+            Log.i(TAG, "WPS PBC initiated for " + deviceAddress);
+        } catch (Throwable err) {
+            Log.w(TAG, "startWps failed", err);
+            if (wpsTimeoutRunnable != null) {
+                handler.removeCallbacks(wpsTimeoutRunnable);
+            }
+            pairingState = PairingState.UNPAIRED;
+            pendingPairingMac = null;
         }
     }
 
@@ -481,6 +710,11 @@ public final class PrimarySinkBeacon {
                 || device == null || device.deviceAddress == null) {
             return;
         }
+        // Only add external approver for devices in persistent groups (reinvocation).
+        // For new connections, let system dialog handle user confirmation.
+        if (!isPeerInPersistentGroup(device.deviceAddress)) {
+            return;
+        }
         if (!approverMacs.add(device.deviceAddress)) {
             return;
         }
@@ -491,6 +725,16 @@ public final class PrimarySinkBeacon {
             Log.w(TAG, "addExternalApprover failed for " + device.deviceAddress, err);
         }
     }
+
+    /**
+     * Check if a peer MAC address is in one of our persistent groups.
+     * Since we delete persistent groups on startup, this will typically be false.
+     */
+    private boolean isPeerInPersistentGroup(String macAddress) {
+        return persistentGroupMacs.contains(macAddress);
+    }
+
+    private final Set<String> persistentGroupMacs = new HashSet<>();
 
     private void removeApprovers() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
@@ -526,7 +770,7 @@ public final class PrimarySinkBeacon {
                         approverMacs.remove(deviceAddress.toString());
                     }
                     if (wanted) {
-                        armAllSourcesApprover();
+                        armApproverForPairedDevices();
                     }
                 }
 
@@ -538,17 +782,24 @@ public final class PrimarySinkBeacon {
                     if (address == null) {
                         return;
                     }
-                    int result = wanted
-                            ? WifiP2pManager.CONNECTION_REQUEST_ACCEPT
-                            : WifiP2pManager.CONNECTION_REQUEST_REJECT;
                     Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
                             + (device != null ? " \"" + device.deviceName + "\"" : "")
-                            + (wanted ? " accepted" : " rejected"));
-                    try {
-                        manager.setConnectionRequestResult(
-                                channel, MacAddress.fromString(address), result, logged("connection request result"));
-                    } catch (Throwable err) {
-                        Log.w(TAG, "setConnectionRequestResult failed", err);
+                            + " pairingState=" + pairingState);
+
+                    if (!wanted) {
+                        setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_REJECT);
+                        return;
+                    }
+
+                    // For first-time pairing (UNPAIRED state), accept connection AND start WPS PBC
+                    if (pairingState == PairingState.UNPAIRED) {
+                        Log.i(TAG, "First-time connection: accepting + starting WPS PBC for " + address);
+                        setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
+                        startWpsPbc(address);
+                    } else {
+                        // Already paired or reinvoking: accept directly
+                        Log.i(TAG, "Reinvoking or paired connection: accepting directly");
+                        setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
                     }
                 }
 
@@ -557,6 +808,15 @@ public final class PrimarySinkBeacon {
                     Log.i(TAG, "WPS PIN generated for " + deviceAddress);
                 }
             };
+
+    private void setConnectionResult(String address, int result) {
+        try {
+            manager.setConnectionRequestResult(
+                    channel, MacAddress.fromString(address), result, logged("connection request result"));
+        } catch (Throwable err) {
+            Log.w(TAG, "setConnectionRequestResult failed", err);
+        }
+    }
 
     private void applyDeviceName(String name) {
         if (manager == null || channel == null || name == null || name.isEmpty()) {

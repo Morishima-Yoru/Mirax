@@ -40,6 +40,13 @@ class MiraxShellUserService : IMiraxShellService.Stub() {
 
     override fun wmSize(displayId: Int): String = Helper.wmSize(displayId)
 
+    override fun forgetAllPairings() {
+        Log.i(TAG, "forgetAllPairings")
+        beacon.forgetAllPairings()
+    }
+
+    override fun getPairingState(): String = beacon.getPairingState().name
+
     override fun destroy() {
         Log.i(TAG, "destroy")
         beacon.stopAdvertising()

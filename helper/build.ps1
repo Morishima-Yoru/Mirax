@@ -2,8 +2,18 @@
 # Requires Android SDK platform android-36 and build-tools 36.0.0.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$jdk = "C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot\bin"
-$javac = Join-Path $jdk "javac.exe"
+if ([string]::IsNullOrWhiteSpace($env:JAVA_HOME)) {
+    throw "JAVA_HOME is not set. Set it to a complete JDK 17 installation."
+}
+$jdkBin = Join-Path $env:JAVA_HOME "bin"
+$javaTools = @("javac.exe", "java.exe", "jar.exe", "keytool.exe")
+$missingJavaTools = @($javaTools | Where-Object {
+    -not (Test-Path -LiteralPath (Join-Path $jdkBin $_) -PathType Leaf)
+})
+if ($missingJavaTools.Count -gt 0) {
+    throw "Missing required Java tool(s) under '$jdkBin': $($missingJavaTools -join ', '). Set JAVA_HOME to a complete JDK 17 installation."
+}
+$javac = Join-Path $jdkBin "javac.exe"
 $sdk = "$env:LOCALAPPDATA\Android\Sdk"
 $androidJar = Join-Path $sdk "platforms\android-36\android.jar"
 $bt = Join-Path $sdk "build-tools\36.0.0"
