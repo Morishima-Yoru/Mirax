@@ -34,12 +34,8 @@ google-services.json
 # Android Profiling
 *.hprof
 
-# Receiver build output
-receiver/out/
-receiver/classes/
-receiver/player-classes/
-receiver/player-dex/
+# Helper build output
 helper/classes/me/trinitrix/mirax/*/*.class
 *.jar
-*.idsig
 !gradle/wrapper/gradle-wrapper.jar
+/scripts/after-click.png

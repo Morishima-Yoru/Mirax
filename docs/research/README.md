@@ -1,6 +1,6 @@
 # 研究紀錄
 
-這些是轉進 Mirax 時仍有用的結論。裝置 dump、Samsung native library、keystore，以及會啟動 Samsung 播放器的舊 daemon，留在本機實驗目錄。目前的接收端程式在 repo 的 `receiver/`。
+這些是轉進 Mirax 時仍有用的結論。裝置 dump、Samsung native library、keystore，以及會啟動 Samsung 播放器的舊 daemon，留在本機實驗目錄。目前的 Android 接收端程式在 `app/`，shell helper 在 `helper/`。
 
 更早的直向 `1201×2176` 診斷、以及對 Samsung library 做 hook 的步驟，已被後來的橫向量測和 [ADR 0001](../adr/0001-standalone-sink.md) 取代，所以沒有收進來。
 

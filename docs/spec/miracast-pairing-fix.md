@@ -127,7 +127,7 @@ Make Mirax compliant with Wi-Fi Display specification for trust pairing by:
 - PIN-based pairing (PBC is primary for Miracast)
 - Multiple simultaneous paired sources (single Primary Sink)
 - Cross-user pairing (Android work profile / multi-user)
-- Legacy Miracast Receiver (`receiver/` module) - only Shizuku path
+- Removed standalone Miracast Receiver prototype; its Shizuku-only path is historical and out of scope
 
 ## Further Notes
 

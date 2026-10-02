@@ -45,7 +45,7 @@ adb shell dumpsys wifip2p
 
 目標是：找得到 beacon 的新電腦，也能被手機自動接受，而不是只有開發機靠舊的 Wi-Fi Direct 群組重連。
 
-`PrimarySinkBeacon`（手機上實際在跑的）和 `MiracastReceiver`（舊的 shell receiver，同一種寫法）都改了：
+`PrimarySinkBeacon`（手機上實際在跑的）和 `MiracastReceiver`（已移除的舊 shell receiver，同一種寫法）都改了：
 
 1. 在 `startListening()` 之前，用 `MacAddress.BROADCAST_ADDRESS`（`ff:ff:ff:ff:ff:ff`）註冊 external approver。Android 13 之後，沒有單一 MAC approver 的新 GO negotiation / invitation 會改彈系統確認對話框；shell 程序不會去按。Framework 在找不到該 MAC 時會改用這個廣播位址。見 AOSP `WifiP2pServiceImpl.notifyInvitationReceived`。
 2. Framework 在 `CONNECTION_REQUEST_ACCEPT` 之後會拆掉 approver（`detachExternalApproverFromPeer`）。`onDetached` 在 reason 不是 `APPROVER_DETACH_REASON_REPLACE` 時會再掛上廣播 approver。`REPLACE` 不能再掛，否則會和剛換上的註冊互相取代。
@@ -58,7 +58,7 @@ adb shell dumpsys wifip2p
 - `helper/src/me/trinitrix/mirax/wfd/SavedP2pGroups.java`
 - `helper/src/me/trinitrix/mirax/helper/Helper.java`（可選的第一個參數會立刻 `startAdvertising`）
 - `helper/build.ps1`（編譯清單加上 `SavedP2pGroups.java`）
-- `receiver/src/com/secondscreen/receiver/MiracastReceiver.java`
+- 歷史來源路徑（receiver 模組已移除）：`receiver/src/com/secondscreen/receiver/MiracastReceiver.java`
 - `app/src/main/java/me/trinitrix/mirax/wfd/WfdOwnerBridge.kt`（`USER_SERVICE_VERSION = 3`）
 - `app/src/test/java/me/trinitrix/mirax/wfd/SinkConnectionWireTest.kt`
 

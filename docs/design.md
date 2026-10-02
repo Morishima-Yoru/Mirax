@@ -2,7 +2,7 @@
 
 手機作為 Windows 的第二螢幕。Windows 保持原廠：Win+K、原生 Miracast、延伸桌面。手機自己完成發現、協商、解碼與顯示。
 
-決定見 [ADR 0001](adr/0001-standalone-sink.md)。詞彙以 [CONTEXT.md](../CONTEXT.md) 為準。
+決定見 [ADR 0001](adr/0001-standalone-sink.md)。詞彙以 [CONTEXT.md](CONTEXT.md) 為準。
 
 ## 已定
 
