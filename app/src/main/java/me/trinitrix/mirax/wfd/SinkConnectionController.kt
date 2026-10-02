@@ -43,6 +43,7 @@ object SinkConnectionController {
     private const val GROUP_POLL_MS = 500L
     private const val DIAL_TIMEOUT_MS = 3_000
     private const val DIAL_WINDOW_MS = 20_000L
+    private const val PAIRING_WAIT_MS = 20_000L
     private const val READ_TIMEOUT_MS = 1_000
     private const val POKE_AFTER_MS = 2_000L
     private const val LOG_LIMIT = 700
@@ -127,6 +128,10 @@ object SinkConnectionController {
                         postAction(SessionAction.PrePlayProgress)
                     }
                     if (state is P2pGroupState.Up && !sessionRan && !endedByUser.get()) {
+                        if (!awaitPairingCompletion(gen)) {
+                            finishConnectionRun(succeeded = false, selected = null)
+                            continue
+                        }
                         beginConnectionRun(state.sourceAddress)
                         note("P2P group up")
                         val socket = dial(state.sourceAddress, gen)
@@ -161,6 +166,33 @@ object SinkConnectionController {
         }
     }
 
+    private fun awaitPairingCompletion(gen: Int): Boolean {
+        val initialState = WfdOwnerBridge.pairingState()
+        if (initialState != "PAIRING") {
+            return true
+        }
+        val deadline = SystemClock.elapsedRealtime() + PAIRING_WAIT_MS
+        Log.i(TAG, "Waiting for WPS pairing before RTSP dial")
+        while (alive(gen) && SystemClock.elapsedRealtime() < deadline) {
+            if (P2pGroupState.parse(WfdOwnerBridge.groupState()) !is P2pGroupState.Up) {
+                return false
+            }
+            when (WfdOwnerBridge.pairingState()) {
+                "PAIRED" -> {
+                    Log.i(TAG, "WPS pairing ready; starting RTSP dial")
+                    return true
+                }
+                "UNPAIRED" -> {
+                    Log.w(TAG, "WPS pairing did not complete; skipping RTSP dial")
+                    return false
+                }
+            }
+            SystemClock.sleep(GROUP_POLL_MS)
+        }
+        Log.w(TAG, "Timed out waiting for WPS pairing; skipping RTSP dial")
+        return false
+    }
+
     private fun dial(host: String, gen: Int): Socket? {
         val deadline = SystemClock.elapsedRealtime() + DIAL_WINDOW_MS
         var attempt = 0
@@ -169,7 +201,21 @@ object SinkConnectionController {
             val socket = Socket()
             try {
                 socket.bind(null)
-                P2pNetworkBinder.bind(appContext, socket)
+                if (!P2pNetworkBinder.bind(appContext, socket)) {
+                    closeQuietly(socket)
+                    if (!alive(gen)) {
+                        return null
+                    }
+                    if (P2pGroupState.parse(WfdOwnerBridge.groupState()) !is P2pGroupState.Up) {
+                        noteWarn("P2P group ended before the interface became ready")
+                        return null
+                    }
+                    if (attempt == 1 || attempt % 10 == 0) {
+                        note("Waiting for P2P interface before RTSP dial (attempt $attempt)")
+                    }
+                    SystemClock.sleep(GROUP_POLL_MS)
+                    continue
+                }
                 socket.connect(InetSocketAddress(host, PrimarySinkBeacon.RTSP_CONTROL_PORT), DIAL_TIMEOUT_MS)
                 note("RTSP connected to $host:${PrimarySinkBeacon.RTSP_CONTROL_PORT} (attempt $attempt)")
                 return socket
@@ -183,6 +229,9 @@ object SinkConnectionController {
                 return null
             }
             SystemClock.sleep(GROUP_POLL_MS)
+        }
+        if (alive(gen)) {
+            noteWarn("RTSP dial window expired before connection")
         }
         return null
     }

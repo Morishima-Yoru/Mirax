@@ -280,24 +280,15 @@ public final class PrimarySinkBeacon {
             groupState = GROUP_PENDING;
             Log.i(TAG, "P2P group up phoneIsOwner=" + info.isGroupOwner
                     + " owner=" + info.groupOwnerAddress);
-            // If we were pairing, trigger WPS PBC now that group is formed
-            if (pairingState == PairingState.UNPAIRED) {
-                Log.i(TAG, "Group formed for UNPAIRED device, starting WPS PBC");
-                pairingState = PairingState.PAIRING;
-                String sourceAddr = info.isGroupOwner ? p2pNeighbor() : hostOf(info.groupOwnerAddress);
-                if (sourceAddr != null) {
-                    startWpsPbc(sourceAddr);
-                } else {
-                    Log.w(TAG, "Cannot start WPS PBC: source address unknown");
-                    pairingState = PairingState.UNPAIRED;
-                }
-            } else if (pairingState == PairingState.PAIRING) {
+            if (pairingState != PairingState.PAIRED) {
+                PairingState previousPairingState = pairingState;
                 pairingState = PairingState.PAIRED;
                 if (wpsTimeoutRunnable != null) {
                     handler.removeCallbacks(wpsTimeoutRunnable);
                     wpsTimeoutRunnable = null;
                 }
-                Log.i(TAG, "Pairing successful! Device is now PAIRED");
+                pendingPairingMac = null;
+                Log.i(TAG, "P2P group formed; pairing state " + previousPairingState + " -> PAIRED");
             }
         }
         if (groupState.startsWith(GROUP_UP_PREFIX)) {
@@ -512,15 +503,14 @@ public final class PrimarySinkBeacon {
     }
 
     /**
-     * Start WPS Push Button Configuration flow for Windows trust pairing.
-     * This must be called when a new (unpaired) source connects.
-     * Completing WPS PBC creates a persistent group and triggers Windows
-     * to populate WifiDirectDisplay dynamic target, allowing inbound RTSP 7236.
+        * Issue WPS Push Button Configuration before group formation for an
+        * external-approver flow. Pairing state changes only after the group forms.
      */
     private void startWpsPbc(String deviceAddress) {
         if (manager == null || channel == null) {
             return;
         }
+        final String pairingMac = deviceAddress;
         try {
             // Cancel any existing timeout
             if (wpsTimeoutRunnable != null) {
@@ -528,11 +518,11 @@ public final class PrimarySinkBeacon {
             }
             
             pairingState = PairingState.PAIRING;
-            pendingPairingMac = deviceAddress;
+            pendingPairingMac = pairingMac;
             
             // Set timeout for WPS pairing (120s)
             wpsTimeoutRunnable = () -> {
-                Log.w(TAG, "WPS pairing timed out for " + pendingPairingMac);
+                Log.w(TAG, "WPS pairing timed out for " + pairingMac);
                 pairingState = PairingState.UNPAIRED;
                 pendingPairingMac = null;
             };
@@ -544,54 +534,32 @@ public final class PrimarySinkBeacon {
             Field setupField = wpsInfoClass.getField("setup");
             setupField.setInt(wpsConfig, 0); // 0 = WPS_PBC
 
-            // WpsCallback is an interface, try multiple possible class names
-            Class<?> wpsCallbackClass = null;
-            String[] callbackClassNames = {
-                    "android.net.wifi.p2p.WifiP2pManager$WpsCallback",
-                    "android.net.wifi.p2p.WifiP2pManager.WpsCallback",
-                    "android.net.wifi.p2p.WpsCallback"
-            };
-            for (String name : callbackClassNames) {
-                try {
-                    wpsCallbackClass = Class.forName(name);
-                    break;
-                } catch (ClassNotFoundException ignored) {}
-            }
-            if (wpsCallbackClass == null) {
-                throw new ClassNotFoundException("WpsCallback class not found");
-            }
-
             Method startWps = WifiP2pManager.class.getMethod(
                     "startWps",
                     WifiP2pManager.Channel.class,
                     wpsInfoClass,
-                    wpsCallbackClass);
+                    WifiP2pManager.ActionListener.class);
 
-            Object wpsCallback = Proxy.newProxyInstance(
-                    wpsCallbackClass.getClassLoader(),
-                    new Class<?>[] {wpsCallbackClass},
-                    (proxy, method, args) -> {
-                        if ("onWpsCompleted".equals(method.getName())) {
-                            Log.i(TAG, "WPS PBC completed for " + pendingPairingMac);
-                            handler.removeCallbacks(wpsTimeoutRunnable);
-                            pairingState = PairingState.PAIRED;
-                            pendingPairingMac = null;
-                            // WPS success - persistent group now created by framework
-                        } else if ("onWpsFailed".equals(method.getName())) {
-                            int reason = args != null && args.length > 0 ? (int) args[0] : -1;
-                            Log.w(TAG, "WPS PBC failed reason=" + reason + " for " + pendingPairingMac);
-                            handler.removeCallbacks(wpsTimeoutRunnable);
-                            pairingState = PairingState.UNPAIRED;
-                            pendingPairingMac = null;
-                            // WPS failed - reject connection
-                            if (pendingPairingMac != null) {
-                                setConnectionResult(pendingPairingMac, WifiP2pManager.CONNECTION_REQUEST_REJECT);
-                            }
-                        }
-                        return null;
-                    });
+            WifiP2pManager.ActionListener wpsListener = new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    Log.i(TAG, "WPS PBC request accepted for " + pairingMac);
+                }
 
-            startWps.invoke(manager, channel, wpsConfig, wpsCallback);
+                @Override
+                public void onFailure(int reason) {
+                    Log.w(TAG, "WPS PBC failed reason=" + reason + " for " + pairingMac);
+                    if (wpsTimeoutRunnable != null) {
+                        handler.removeCallbacks(wpsTimeoutRunnable);
+                        wpsTimeoutRunnable = null;
+                    }
+                    pairingState = PairingState.UNPAIRED;
+                    pendingPairingMac = null;
+                    setConnectionResult(pairingMac, WifiP2pManager.CONNECTION_REQUEST_REJECT);
+                }
+            };
+
+            startWps.invoke(manager, channel, wpsConfig, wpsListener);
             Log.i(TAG, "WPS PBC initiated for " + deviceAddress);
         } catch (Throwable err) {
             Log.w(TAG, "startWps failed", err);

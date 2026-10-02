@@ -200,7 +200,7 @@ function Find-FoldInShot($path) {
     $result = Await-WinRT ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
     foreach ($line in $result.Lines) {
         Write-Host "ocr line: $($line.Text)"
-        if ($line.Text -notmatch "Fold|Renathan") { continue }
+        if ($line.Text -notmatch "Renathan.*Z\s*Fold\s*5") { continue }
         $x1 = [double]::MaxValue
         $y1 = [double]::MaxValue
         $x2 = 0.0
@@ -216,6 +216,9 @@ function Find-FoldInShot($path) {
             if (($wx + $ww) -gt $x2) { $x2 = $wx + $ww }
             if (($wy + $wh) -gt $y2) { $y2 = $wy + $wh }
         }
+        $rowTop = [double]$bitmap.PixelHeight * 0.62
+        $rowBottom = [double]$bitmap.PixelHeight * 0.80
+        if ($y1 -lt $rowTop -or $y1 -gt $rowBottom) { continue }
         $hits += [pscustomobject]@{
             Text = $line.Text
             X = [int]$x1
@@ -296,7 +299,7 @@ if (-not $target) {
 $cx = [int]($target.X + ($target.W / 2))
 $cy = [int]($target.Y + ($target.H / 2))
 Write-Host "click '$($target.Name)' at $cx,$cy"
-adb shell "echo '--- click ---' >> /data/local/tmp/miracast.log" | Out-Null
+    adb shell "echo '--- click ---' > /data/local/tmp/miracast.log" | Out-Null
 [CastClick]::Click($cx, $cy)
 Start-Sleep -Seconds 1
 # Refresh the picture after the click so a miss is visible.
