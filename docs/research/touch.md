@@ -2,7 +2,7 @@
 
 結論：可以。未安裝驅動的 Windows 10/11 Miracast source 會把 Sink 送來的接觸收成自己的指標輸入。前提是使用者在 Win+K 允許來自該裝置的輸入，而且 Sink 用 HIDC / USB 送按下、移動、放開。規格裡的 Generic 座標是另一條封包。Microsoft 寫明 Generic 只涵蓋 ASCII 按鍵；Windows 要的是 HID Commands。
 
-詞彙以 [CONTEXT.md](../CONTEXT.md) 為準。S Pen 與一般觸控是兩種輸入，S Pen  不在這次範圍。
+詞彙以 [CONTEXT.md](../CONTEXT.md) 為準。S Pen 與一般觸控是兩種輸入，S Pen 不在這次範圍。
 
 本機實驗裡的接收端當時把 `wfd_uibc_capability` 回成 `none`，不解析 source 給的 TCP port，畫面也沒有把接觸送出去。下面是要補上的路徑，不是已在這台 Windows 上定案的封包。
 
