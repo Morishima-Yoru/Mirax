@@ -6,6 +6,7 @@
 
 | 文件 | 保留的判斷 |
 |------|------------|
+| [miracast-connectivity.md](miracast-connectivity.md) | 一次首次連線到 RTSP/PLAY/RTP；WPS 完成、firewall 因果與重複性仍待驗證 |
 | [custom-format.md](custom-format.md) | `2176×1812` 怎麼寫進 Microsoft 自訂格式，Windows 要先查詢才選得到 |
 | [samsung-receiver.md](samsung-receiver.md) | 舊組合裡誰負責 beacon、誰負責 RTSP；那次 M4 是 `2560×1440@60` |
 | [native-second-screen.md](native-second-screen.md) | Samsung 公開支援是 Tab；這次 Fold 實驗不是原廠流程 |
