@@ -29,7 +29,6 @@ Miracast sink advertising calls `WifiP2pManager.setWfdInfo()`, which requires `C
 | Target | How Mirax gets the privilege |
 |--------|------------------------------|
 | **Samsung (many models)** | Install Shizuku and authorize Mirax. Shell UID 2000 can call `setWfdInfo` on builds that still grant that permission to `com.android.shell`. |
-| **AOSP / test-keys GSI** | Install the `platform` build type (signed with the public AOSP platform test key). See [`signing/README.md`](signing/README.md). |
 | **Rooted** | Magisk / KernelSU / `su`. Mirax starts the helper entry as UID 0 so the sink beacon runs with full WFD permission. |
 
 Stock OEM phones that grant `CONFIGURE_WIFI_DISPLAY` neither to shell nor to a sideloaded APK (and are not rooted) are **out of scope**. The in-app Compatibility page explains that case when broadcast cannot start.
@@ -40,8 +39,7 @@ Stock OEM phones that grant `CONFIGURE_WIFI_DISPLAY` neither to shell nor to a s
 .\gradlew.bat :app:assembleRelease
 ```
 
-Output: `app/build/outputs/apk/release/`.  
-For AOSP test-keys devices: `.\gradlew.bat :app:assemblePlatform`.
+Output: `app/build/outputs/apk/release/`.
 
 ## Code layout
 
