@@ -162,24 +162,71 @@ class H264SurfaceDecoder {
     }
 
     private fun ensureCodec() {
-        if (codec != null || surface == null) {
+        val output = surface
+        if (codec != null || output == null) {
             return
         }
-        try {
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, videoW, videoH)
-            format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 6_000_000)
-            format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-            format.setInteger(MediaFormat.KEY_OPERATING_RATE, videoFps)
-            format.setInteger(MediaFormat.KEY_FRAME_RATE, videoFps)
-            val created = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            created.configure(format, surface, null, 0)
-            created.start()
-            codec = created
-            frames = 0
-            Log.i(TAG, "decoder started ${videoW}x${videoH}@$videoFps")
-        } catch (err: Exception) {
-            Log.e(TAG, "decoder configure failed", err)
-            stopCodec()
+        var phase = H264LowLatencyConfigurePolicy.Phase.WITH_LOW_LATENCY
+        while (true) {
+            var created: MediaCodec? = null
+            try {
+                val format = MediaFormat.createVideoFormat(
+                    MediaFormat.MIMETYPE_VIDEO_AVC,
+                    videoW,
+                    videoH,
+                )
+                format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 6_000_000)
+                if (H264LowLatencyConfigurePolicy.usesLowLatency(phase)) {
+                    format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+                }
+                format.setInteger(MediaFormat.KEY_OPERATING_RATE, videoFps)
+                format.setInteger(MediaFormat.KEY_FRAME_RATE, videoFps)
+                created = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                created.configure(format, output, null, 0)
+                created.start()
+                codec = created
+                frames = 0
+                val lowLatencyLabel =
+                    if (H264LowLatencyConfigurePolicy.usesLowLatency(phase)) {
+                        "true"
+                    } else {
+                        "omitted"
+                    }
+                Log.i(
+                    TAG,
+                    "decoder started ${created.name} ${videoW}x${videoH}@$videoFps " +
+                        "lowLatency=$lowLatencyLabel",
+                )
+                return
+            } catch (err: Exception) {
+                try {
+                    created?.stop()
+                } catch (_: Exception) {
+                }
+                try {
+                    created?.release()
+                } catch (_: Exception) {
+                }
+                val codecErr = err as? MediaCodec.CodecException
+                val next = H264LowLatencyConfigurePolicy.nextPhaseAfterFailure(
+                    phase = phase,
+                    isCodecException = codecErr != null,
+                    errorCode = codecErr?.errorCode,
+                )
+                if (next != null) {
+                    Log.w(
+                        TAG,
+                        "decoder configure with low-latency failed; " +
+                            "retrying without KEY_LOW_LATENCY",
+                        err,
+                    )
+                    phase = next
+                    continue
+                }
+                Log.e(TAG, "decoder configure failed", err)
+                stopCodec()
+                return
+            }
         }
     }
 

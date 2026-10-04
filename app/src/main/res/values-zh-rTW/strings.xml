@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="waiting_title">等待特權路徑</string>
-    <string name="waiting_body">廣播需要受支援的特權路徑：多數三星機用 Shizuku、AOSP test-keys 用 platform 簽名版，或已 root。詳見「相容性」。</string>
+    <string name="waiting_body">廣播需要受支援的特權路徑：多數三星機用 Shizuku，或已 root。詳見「相容性」。</string>
     <string name="waiting_retry">重試</string>
     <string name="waiting_open_compatibility">相容性</string>
     <string name="nav_compatibility">相容性</string>
     <string name="compatibility_title">相容性</string>
     <string name="compatibility_intro">Mirax 要能廣播 Miracast Sink，裝置上必須有身分可呼叫 setWfdInfo（CONFIGURE_WIFI_DISPLAY）。這不是一般安裝即可取得的權限。</string>
     <string name="compatibility_supported_title">支援</string>
-    <string name="compatibility_supported_body">• 三星（多數機種）：安裝 Shizuku、授權 Mirax，再按重試。\n• AOSP／test-keys GSI：安裝 Mirax 的 platform 建置。\n• 已 root：允許提權後，Mirax 會以 UID 0 啟動 sink helper。</string>
+    <string name="compatibility_supported_body">• 三星（多數機種）：安裝 Shizuku、授權 Mirax，再按重試。\n• 已 root：允許提權後，Mirax 會以 UID 0 啟動 sink helper。</string>
     <string name="compatibility_unsupported_title">不支援</string>
     <string name="compatibility_unsupported_body">原廠系統若既不把 CONFIGURE_WIFI_DISPLAY 給 shell、也不給第三方 APK，且未 root，就無法廣播。若 OEM 已對 UID 2000 拒絕該權限，只開 Shizuku 仍不夠。</string>
     <string name="compatibility_denied_banner">無法開始廣播：特權路徑沒有進入 Wi‑Fi Direct listening。這台手機可能不在支援範圍。</string>
@@ -156,7 +156,7 @@
     <string name="max_video_bitrate_hint">1000–40000，重新連線後生效。</string>
     <string name="about_app_label">應用程式</string>
     <string name="about_version">版本</string>
-    <string name="about_body">在受支援的 Android 裝置上作為 Miracast 第二螢幕。請在 Windows 用 Win+K 連線。目標：多數三星（Shizuku）、AOSP test-keys（platform 建置）、以及已 root 裝置。</string>
+    <string name="about_body">在受支援的 Android 裝置上作為 Miracast 第二螢幕。請在 Windows 用 Win+K 連線。目標：多數三星（Shizuku）以及已 root 裝置。</string>
     <string name="overlay_request_title">顯示在其他應用程式上層</string>
     <string name="overlay_request_body">浮動球需要顯示在其他應用程式上層。系統會顯示權限提示。</string>
     <string name="overlay_deny">不允許</string>

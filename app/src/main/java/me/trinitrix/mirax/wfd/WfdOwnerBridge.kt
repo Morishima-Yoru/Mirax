@@ -29,8 +29,6 @@ import java.util.concurrent.atomic.AtomicReference
  * Host adapter between the app process and the privileged WFD owner.
  *
  * Owners, in priority order used by the session:
- * - [WfdOwner.PLATFORM]: in-process [PrimarySinkBeacon] when the app UID holds
- *   `CONFIGURE_WIFI_DISPLAY` (AOSP platform test-key / OEM platform signature).
  * - [WfdOwner.HELPER]: local-socket helper (rooted `su` `app_process`).
  * - [WfdOwner.SHIZUKU]: shell-UID user-service binder (Samsung path).
  *
@@ -48,7 +46,6 @@ object WfdOwnerBridge {
     private val lastCommand = AtomicReference<WfdAdvertiseCommand?>(null)
     private val shellService = AtomicReference<IMiraxShellService?>(null)
     private val activeOwner = AtomicReference(WfdOwner.NONE)
-    private val platformBeacon = AtomicReference<PrimarySinkBeacon?>(null)
     private val armWatchGeneration = AtomicInteger(0)
     private var boundArgs: Shizuku.UserServiceArgs? = null
     private var pendingShizukuCommand: WfdAdvertiseCommand? = null
@@ -99,9 +96,6 @@ object WfdOwnerBridge {
     fun syncOwner(context: Context, owner: WfdOwner) {
         appContext = context.applicationContext
         val previous = activeOwner.getAndSet(owner)
-        if (owner == WfdOwner.PLATFORM) {
-            ensurePlatformBeacon(context.applicationContext)
-        }
         if (owner == WfdOwner.SHIZUKU) {
             ensureShizukuBound(context.applicationContext)
         } else if (previous == WfdOwner.SHIZUKU || boundArgs != null) {
@@ -132,10 +126,6 @@ object WfdOwnerBridge {
             return true
         }
         val applied = when (command.owner) {
-            WfdOwner.PLATFORM -> {
-                sendHelperQuietly("STOP_ADVERTISE")
-                advertiseViaPlatform(context.applicationContext, command)
-            }
             WfdOwner.HELPER -> sendHelperAdvertise(command)
             WfdOwner.SHIZUKU -> {
                 sendHelperQuietly("STOP_ADVERTISE")
@@ -162,7 +152,6 @@ object WfdOwnerBridge {
      */
     fun groupState(): String? {
         return when (activeOwner.get()) {
-            WfdOwner.PLATFORM -> platformBeacon.get()?.groupState()
             WfdOwner.SHIZUKU -> try {
                 shellService.get()?.groupState()
             } catch (err: Exception) {
@@ -177,7 +166,6 @@ object WfdOwnerBridge {
     /** End the current connection's P2P group; the owner keeps advertising. */
     fun endSession() {
         when (activeOwner.get()) {
-            WfdOwner.PLATFORM -> platformBeacon.get()?.endSession()
             WfdOwner.SHIZUKU -> try {
                 shellService.get()?.endSession()
             } catch (err: Exception) {
@@ -194,7 +182,6 @@ object WfdOwnerBridge {
      */
     fun forgetAllPairings() {
         when (activeOwner.get()) {
-            WfdOwner.PLATFORM -> platformBeacon.get()?.forgetAllPairings()
             WfdOwner.SHIZUKU -> try {
                 shellService.get()?.forgetAllPairings()
             } catch (err: Exception) {
@@ -210,7 +197,6 @@ object WfdOwnerBridge {
      */
     fun pairingState(): String {
         return when (activeOwner.get()) {
-            WfdOwner.PLATFORM -> platformBeacon.get()?.pairingState?.name ?: "UNPAIRED"
             WfdOwner.SHIZUKU -> try {
                 shellService.get()?.pairingState ?: "UNPAIRED"
             } catch (err: Exception) {
@@ -234,12 +220,6 @@ object WfdOwnerBridge {
     fun wmSize(displayId: Int?): String? {
         val id = displayId ?: -1
         return when (activeOwner.get()) {
-            WfdOwner.PLATFORM -> try {
-                Helper.wmSize(id)
-            } catch (err: Exception) {
-                Log.d(TAG, "wm size via platform path failed", err)
-                null
-            }
             WfdOwner.SHIZUKU -> try {
                 shellService.get()?.wmSize(id)
             } catch (err: Exception) {
@@ -255,87 +235,15 @@ object WfdOwnerBridge {
         pendingShizukuCommand = null
         sendHelperQuietly("STOP_ADVERTISE")
         try {
-            platformBeacon.get()?.setArmCallback(null)
-            platformBeacon.get()?.stopAdvertising()
-        } catch (err: Exception) {
-            Log.w(TAG, "platform stopAdvertise failed", err)
-        }
-        try {
             shellService.get()?.stopAdvertise()
         } catch (err: Exception) {
             Log.w(TAG, "Shizuku stopAdvertise failed", err)
         }
     }
 
-    private fun advertiseViaPlatform(context: Context, command: WfdAdvertiseCommand): Boolean {
-        val beacon = ensurePlatformBeacon(context) ?: return false
-        val generation = armWatchGeneration.incrementAndGet()
-        beacon.setArmCallback(
-            object : PrimarySinkBeacon.ArmCallback {
-                override fun onListening() {
-                    if (armWatchGeneration.get() != generation) {
-                        return
-                    }
-                    reportArmResult(listening = true)
-                }
-
-                override fun onFailed(detail: String) {
-                    if (armWatchGeneration.get() != generation) {
-                        return
-                    }
-                    Log.e(TAG, "platform arm failed: $detail")
-                    reportArmResult(listening = false)
-                }
-            },
-        )
-        beacon.startAdvertising(command.broadcastName)
-        // Keep a timeout even with the callback: some API paths never answer.
-        scheduleArmTimeout(generation, WfdOwner.PLATFORM)
-        return true
-    }
-
-    private fun ensurePlatformBeacon(context: Context): PrimarySinkBeacon? {
-        platformBeacon.get()?.let { return it }
-        return try {
-            val beacon = PrimarySinkBeacon(Looper.getMainLooper())
-            if (!beacon.initialize(context.applicationContext)) {
-                Log.e(TAG, "platform PrimarySinkBeacon initialize failed")
-                null
-            } else {
-                platformBeacon.set(beacon)
-                Log.i(TAG, "platform PrimarySinkBeacon ready")
-                beacon
-            }
-        } catch (err: Exception) {
-            Log.e(TAG, "platform PrimarySinkBeacon create failed", err)
-            null
-        }
-    }
-
     private fun watchArm(owner: WfdOwner) {
-        if (owner == WfdOwner.PLATFORM) {
-            // Platform path already installed ArmCallback + timeout in advertiseViaPlatform.
-            return
-        }
         val generation = armWatchGeneration.incrementAndGet()
         pollArm(generation, owner, System.currentTimeMillis() + ARM_TIMEOUT_MS)
-    }
-
-    private fun scheduleArmTimeout(generation: Int, owner: WfdOwner) {
-        mainHandler.postDelayed(
-            {
-                if (armWatchGeneration.get() != generation) {
-                    return@postDelayed
-                }
-                if (ownerListening(owner)) {
-                    reportArmResult(listening = true)
-                } else {
-                    Log.e(TAG, "arm timed out for $owner")
-                    reportArmResult(listening = false)
-                }
-            },
-            ARM_TIMEOUT_MS,
-        )
     }
 
     private fun pollArm(generation: Int, owner: WfdOwner, deadlineMs: Long) {
@@ -361,7 +269,6 @@ object WfdOwnerBridge {
 
     private fun ownerListening(owner: WfdOwner): Boolean {
         return when (owner) {
-            WfdOwner.PLATFORM -> platformBeacon.get()?.isListening == true
             WfdOwner.SHIZUKU -> try {
                 shellService.get()?.isListening == true
             } catch (err: Exception) {
@@ -375,7 +282,6 @@ object WfdOwnerBridge {
 
     private fun cancelArmWatch() {
         armWatchGeneration.incrementAndGet()
-        platformBeacon.get()?.setArmCallback(null)
     }
 
     private fun reportArmResult(listening: Boolean) {

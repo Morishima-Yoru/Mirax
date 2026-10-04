@@ -61,7 +61,6 @@ import me.trinitrix.mirax.session.StandardModeGroups
 import me.trinitrix.mirax.session.StandardVideoModes
 import me.trinitrix.mirax.session.SystemLocaleReport
 import me.trinitrix.mirax.session.VideoMode
-import me.trinitrix.mirax.session.WfdOwner
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -318,9 +317,6 @@ class MainActivity : AppCompatActivity() {
     private fun maybeRequestShizuku(snapshot: SessionSnapshot) {
         if (snapshot.shouldRequestShizukuPermission) {
             PrivilegeProbe.requestShizukuPermission(this)
-        }
-        if (snapshot.wfdOwner == WfdOwner.PLATFORM) {
-            PrivilegeProbe.requestLocationForPlatformWfd(this)
         }
     }
 
