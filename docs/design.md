@@ -8,7 +8,7 @@
 
 - 目標畫面是內螢幕橫向，名義尺寸 `2176×1812`，約 6:5。完整保留、不裁切、不拉伸、同時鋪滿，要求 Windows 實際送出同比例的畫面。只改手機排版無法讓 Windows 改送 6:5。
 - 更新率先以 60 Hz 為目標。30 Hz 要先確認可接受，才算支援行為。
-- 支援的特權路徑：多數三星上的 Shizuku（shell UID）、AOSP test-keys 的 platform 簽名 APK、以及 root 下以 `su` 啟動的 helper。一般安裝的 APK、Device Owner、未授權 shell 的 OEM 都不當前提。
+- 支援的特權路徑：多數三星上的 Shizuku（shell UID）、以及 root 下以 `su` 啟動的 helper。一般安裝的 APK、Device Owner、未授權 shell 的 OEM 都不當前提。
 - `WifiP2pManager.setWfdInfo()` 需要 `CONFIGURE_WIFI_DISPLAY`。這是 signature / known-signer 權限。一般安裝的 APK 過不了這道檢查。
 - P2P beacon 只宣告裝置是 Primary Sink、session、控制埠與吞吐。寬高不在 `WifiP2pWfdInfo` 裡。解析度在後續 RTSP 協商。
 - 標準 CEA / VESA / HH 模式表沒有 `2176×1812`。能寫出這個尺寸的是 Microsoft 的 `microsoft_custom_video_formats`：寬、高、更新率三個十六進位欄位。Fold 橫向 60 Hz 寫成 `0880 0714 003C`。Windows 11 24H2 / 25H2 對這個參數的支援帶有 KB 條件；這台 25H2 是否已裝對應更新尚未確認。Windows 10 不在該支援表上。

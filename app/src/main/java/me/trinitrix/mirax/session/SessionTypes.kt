@@ -27,8 +27,6 @@ enum class ScreenPhase {
  */
 enum class WfdOwner {
     NONE,
-    /** App UID holds CONFIGURE_WIFI_DISPLAY (platform-signed on test-keys). */
-    PLATFORM,
     /**
      * Privileged helper socket (rooted `su` `app_process`, or any process that
      * already listens on the helper socket).
@@ -99,7 +97,6 @@ enum class AppLanguage {
  * Privilege path report fed into the session by the environment.
  *
  * Args:
- *     configureWifiDisplay: App UID was granted CONFIGURE_WIFI_DISPLAY.
  *     shizukuServiceRunning: Whether the Shizuku service process is up.
  *     shizukuAuthorized: Whether Mirax is authorized for Shizuku.
  *     helperRunning: Whether the privileged helper socket is up (root-started
@@ -107,7 +104,6 @@ enum class AppLanguage {
  *     rootAvailable: Whether `su` can run as UID 0.
  */
 data class PrivilegeReport(
-    val configureWifiDisplay: Boolean = false,
     val shizukuServiceRunning: Boolean = false,
     val shizukuAuthorized: Boolean = false,
     val helperRunning: Boolean = false,
@@ -363,7 +359,7 @@ sealed interface SessionEffect {
  *
  * Null on [SessionSnapshot.wfdAdvertise] means the phone must not be a
  * connectable sink. The app process never applies this; the owner
- * ([WfdOwner.PLATFORM], [WfdOwner.SHIZUKU], or [WfdOwner.HELPER]) does.
+ * ([WfdOwner.SHIZUKU] or [WfdOwner.HELPER]) does.
  *
  * [modes] is the same set as [SessionSnapshot.nextAdvertisementModes] for
  * later RTSP; the listen beacon itself only needs Primary Sink identity.

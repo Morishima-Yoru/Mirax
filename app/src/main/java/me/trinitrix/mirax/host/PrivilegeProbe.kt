@@ -1,13 +1,10 @@
 package me.trinitrix.mirax.host
 
-import android.Manifest
-import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.util.Log
-import androidx.core.app.ActivityCompat
 import me.trinitrix.mirax.helper.Helper
 import me.trinitrix.mirax.session.PrivilegeReport
 import rikka.shizuku.Shizuku
@@ -22,7 +19,6 @@ import java.io.IOException
 object PrivilegeProbe {
     private const val TAG = "MiraxPrivilege"
     private const val REQUEST_CODE = 0x4D58
-    private const val LOCATION_REQUEST_CODE = 0x4D59
 
     /**
      * Observe current privilege paths.
@@ -30,10 +26,10 @@ object PrivilegeProbe {
      * @param context Application or activity context used for permission checks.
      * @return Privilege report for the Mirax session.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun probe(context: Context): PrivilegeReport {
         val shizuku = probeShizuku()
         return PrivilegeReport(
-            configureWifiDisplay = hasConfigureWifiDisplay(context),
             shizukuServiceRunning = shizuku.serviceRunning,
             shizukuAuthorized = shizuku.authorized,
             helperRunning = isHelperRunning(),
@@ -43,35 +39,6 @@ object PrivilegeProbe {
 
     /** Whether the privileged helper socket is accepting connections. */
     fun isHelperRunning(): Boolean = probeHelper()
-
-    private fun hasConfigureWifiDisplay(context: Context): Boolean {
-        return context.checkSelfPermission(Manifest.permission.CONFIGURE_WIFI_DISPLAY) ==
-            PackageManager.PERMISSION_GRANTED
-    }
-
-    /**
-     * Ask for location when the platform-signed path owns WFD.
-     *
-     * API 30 Wi-Fi P2P listen on this GSI still checks location for the app UID.
-     */
-    fun requestLocationForPlatformWfd(activity: Activity) {
-        if (!hasConfigureWifiDisplay(activity)) {
-            return
-        }
-        if (activity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        ActivityCompat.requestPermissions(
-            activity,
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-            ),
-            LOCATION_REQUEST_CODE,
-        )
-    }
 
     /**
      * Ask Shizuku for permission when the session says this stay should request once.

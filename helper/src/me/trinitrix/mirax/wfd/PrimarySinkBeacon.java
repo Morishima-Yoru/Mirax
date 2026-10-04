@@ -129,8 +129,7 @@ public final class PrimarySinkBeacon {
     /**
      * Initialise Wi-Fi P2P.
      *
-     * @param appContext when non-null, use this application context (platform-signed
-     *     app UID that already holds {@code CONFIGURE_WIFI_DISPLAY}). When null,
+     * @param appContext when non-null, use this application context. When null,
      *     build a shell attribution context for adb/Shizuku.
      * @return true when the P2P channel is ready
      */

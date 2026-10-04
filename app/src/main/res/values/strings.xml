@@ -2,14 +2,14 @@
 <resources>
     <string name="app_name" translatable="false">Mirax</string>
     <string name="waiting_title">Waiting for a privilege path</string>
-    <string name="waiting_body">Broadcast needs a supported privilege path: Shizuku on many Samsung phones, the platform build on AOSP test-keys, or root. See Compatibility for details.</string>
+    <string name="waiting_body">Broadcast needs a supported privilege path: Shizuku on many Samsung phones, or root. See Compatibility for details.</string>
     <string name="waiting_retry">Retry</string>
     <string name="waiting_open_compatibility">Compatibility</string>
     <string name="nav_compatibility">Compatibility</string>
     <string name="compatibility_title">Compatibility</string>
     <string name="compatibility_intro">Mirax can only advertise a Miracast sink when something on the phone may call setWfdInfo (CONFIGURE_WIFI_DISPLAY). That is not a normal install permission.</string>
     <string name="compatibility_supported_title">Supported</string>
-    <string name="compatibility_supported_body">• Samsung (many models): install Shizuku, authorize Mirax, then Retry.\n• AOSP / test-keys GSI: install the Mirax platform build.\n• Rooted: grant root when prompted; Mirax starts the sink helper as UID 0.</string>
+    <string name="compatibility_supported_body">• Samsung (many models): install Shizuku, authorize Mirax, then Retry.\n• Rooted: grant root when prompted; Mirax starts the sink helper as UID 0.</string>
     <string name="compatibility_unsupported_title">Not supported</string>
     <string name="compatibility_unsupported_body">Stock OEM phones that give CONFIGURE_WIFI_DISPLAY neither to shell nor to a sideloaded app, and that are not rooted, cannot broadcast. Opening Shizuku alone is not enough if the OEM denied the permission to UID 2000.</string>
     <string name="compatibility_denied_banner">Broadcast could not start: the privilege path did not reach Wi‑Fi Direct listening. This phone may be unsupported.</string>
@@ -157,7 +157,7 @@
     <string name="max_video_bitrate_hint">1000–40000. Reconnect to apply.</string>
     <string name="about_app_label">App</string>
     <string name="about_version">Version</string>
-    <string name="about_body">Use a supported Android device as a Miracast second screen. Connect from Windows with Win+K. Targets: many Samsung phones (Shizuku), AOSP test-keys (platform build), and rooted devices.</string>
+    <string name="about_body">Use a supported Android device as a Miracast second screen. Connect from Windows with Win+K. Targets: many Samsung phones (Shizuku) and rooted devices.</string>
     <string name="overlay_request_title">Display over other apps</string>
     <string name="overlay_request_body">The floating ball needs permission to display over other apps. Android will show the permission prompt.</string>
     <string name="overlay_deny">Don\'t allow</string>

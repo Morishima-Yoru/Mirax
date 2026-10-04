@@ -108,15 +108,7 @@ class MiraxSession(
      *     report: Current Shizuku and helper availability.
      */
     fun report(report: PrivilegeReport) {
-        val previousOwner = resolveOwner(privilege)
         val nextOwner = resolveOwner(report)
-        if (
-            (nextOwner == WfdOwner.SHIZUKU || nextOwner == WfdOwner.PLATFORM) &&
-            report.helperRunning &&
-            previousOwner != nextOwner
-        ) {
-            pendingEffects = pendingEffects + SessionEffect.StopHelper
-        }
         privilege = report
         if (nextOwner == WfdOwner.NONE) {
             connected = false
@@ -453,10 +445,8 @@ class MiraxSession(
     }
 
     private fun onOpenApp() {
-        // Platform-signed builds already own WFD; do not interrupt with Shizuku.
         val shouldAsk =
-            !privilege.configureWifiDisplay &&
-                privilege.shizukuServiceRunning &&
+            privilege.shizukuServiceRunning &&
                 !privilege.shizukuAuthorized &&
                 !permissionRequestedThisStay
         if (shouldAsk) {
@@ -880,7 +870,6 @@ class MiraxSession(
     private fun resolveOwner(report: PrivilegeReport): WfdOwner {
         val shizukuReady = report.shizukuServiceRunning && report.shizukuAuthorized
         return when {
-            report.configureWifiDisplay -> WfdOwner.PLATFORM
             // Root-started helper (UID 0) before Shizuku: works on OEMs that
             // deny CONFIGURE_WIFI_DISPLAY to shell but allow root.
             report.helperRunning -> WfdOwner.HELPER

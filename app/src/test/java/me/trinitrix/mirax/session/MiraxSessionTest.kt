@@ -82,21 +82,6 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun openApp_configureWifiDisplay_skipsShizukuPermissionRequest() {
-        val session = MiraxSession()
-        session.report(
-            PrivilegeReport(
-                configureWifiDisplay = true,
-                shizukuServiceRunning = true,
-                shizukuAuthorized = false,
-            ),
-        )
-        session.handle(SessionAction.OpenApp)
-        assertThat(session.snapshot().shouldRequestShizukuPermission).isFalse()
-        assertThat(session.snapshot().wfdOwner).isEqualTo(WfdOwner.PLATFORM)
-    }
-
-    @Test
     fun newStay_canRequestPermissionAgain() {
         val first = MiraxSession()
         first.report(
@@ -154,24 +139,6 @@ class MiraxSessionTest {
         assertThat(snap.advertisingEnabled).isTrue()
         assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
         assertThat(snap.effects).doesNotContain(SessionEffect.StopHelper)
-    }
-
-    @Test
-    fun configureWifiDisplay_takesPriorityOverShizukuAndHelper() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
-        session.report(
-            PrivilegeReport(
-                configureWifiDisplay = true,
-                shizukuServiceRunning = true,
-                shizukuAuthorized = true,
-                helperRunning = true,
-            ),
-        )
-        val snap = session.snapshot()
-        assertThat(snap.wfdOwner).isEqualTo(WfdOwner.PLATFORM)
-        assertThat(snap.phase).isEqualTo(ScreenPhase.ARMING)
-        assertThat(snap.effects).contains(SessionEffect.StopHelper)
-        assertThat(snap.wfdAdvertise!!.owner).isEqualTo(WfdOwner.PLATFORM)
     }
 
     @Test

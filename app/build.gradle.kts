@@ -16,15 +16,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    signingConfigs {
-        create("aospPlatform") {
-            storeFile = rootProject.file("signing/aosp-platform.jks")
-            storePassword = "android"
-            keyAlias = "platform"
-            keyPassword = "android"
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -34,13 +25,6 @@ android {
             )
             // Sideload / GitHub Release only; not a Play Store key.
             signingConfig = signingConfigs.getByName("debug")
-        }
-        // test-keys GSIs only: same applicationId, AOSP platform signature so
-        // CONFIGURE_WIFI_DISPLAY is granted to the app UID.
-        create("platform") {
-            initWith(getByName("debug"))
-            matchingFallbacks += listOf("debug")
-            signingConfig = signingConfigs.getByName("aospPlatform")
         }
     }
 
