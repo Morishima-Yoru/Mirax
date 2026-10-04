@@ -1,0 +1,47 @@
+# Gradle / Kotlin
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+output-metadata.json
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Logs & profiling
+*.log
+*.hprof
+
+# Keystores (keep the public AOSP platform test key)
+*.jks
+*.keystore
+!signing/aosp-platform.jks
+
+# Secrets / cloud
+google-services.json
+
+# Scratch & local experiments
+.scratch*
+receiver/
+
+# Compiled leftovers
+*.class
+*.dex
+helper/classes/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Ad-hoc script captures
+/scripts/after-click.png

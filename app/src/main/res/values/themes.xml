@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Mirax" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/mirax_accent</item>
+        <item name="colorOnPrimary">@color/mirax_on_accent</item>
+        <item name="colorSurface">@color/mirax_surface</item>
+        <item name="colorOnSurface">@color/mirax_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/mirax_hint</item>
+        <item name="android:colorBackground">@color/mirax_background</item>
+        <item name="android:statusBarColor">@color/mirax_background</item>
+        <item name="android:navigationBarColor">@color/mirax_background</item>
+        <item name="android:windowBackground">@color/mirax_background</item>
+        <item name="android:textColorPrimary">@color/mirax_on_surface</item>
+        <item name="android:textColorSecondary">@color/mirax_hint</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.Mirax.Picture" parent="Theme.Mirax">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

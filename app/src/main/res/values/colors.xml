@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mirax_background">#FF121418</color>
+    <color name="mirax_surface">#FF1C1F26</color>
+    <color name="mirax_pane">#FF161920</color>
+    <color name="mirax_on_surface">#FFE8EAED</color>
+    <color name="mirax_muted">#FF9AA0A6</color>
+    <color name="mirax_hint">#FFB7BCC3</color>
+    <color name="mirax_accent">#FF5B9FD4</color>
+    <color name="mirax_on_accent">#FF081018</color>
+    <color name="mirax_link">#FF8EC5EF</color>
+    <color name="mirax_chip_text">#FFD7ECFA</color>
+    <color name="mirax_log">#FFC5D7E6</color>
+    <color name="mirax_bad">#FFE7A0A0</color>
+    <color name="mirax_stop">#FF2A3140</color>
+    <color name="mirax_chip">#0DFFFFFF</color>
+    <color name="mirax_chip_on">#385B9FD4</color>
+    <color name="mirax_frame">#08FFFFFF</color>
+    <color name="mirax_stroke">#1FE8EAED</color>
+    <color name="mirax_field_line">#47E8EAED</color>
+</resources>
