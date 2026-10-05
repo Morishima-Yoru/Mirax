@@ -40,6 +40,23 @@ object PrivilegeProbe {
     /** Whether the privileged helper socket is accepting connections. */
     fun isHelperRunning(): Boolean = probeHelper()
 
+    /** UID reported by the process currently bound to the helper socket. */
+    fun helperUid(): Int? {
+        return try {
+            LocalSocket().use { socket ->
+                socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
+                socket.outputStream.write("UID\n".toByteArray(Charsets.UTF_8))
+                socket.outputStream.flush()
+                socket.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    reader.readLine()?.toIntOrNull()
+                }
+            }
+        } catch (err: IOException) {
+            Log.d(TAG, "Helper UID query failed", err)
+            null
+        }
+    }
+
     /**
      * Ask Shizuku for permission when the session says this stay should request once.
      *
@@ -64,11 +81,7 @@ object PrivilegeProbe {
         }
     }
 
-    /**
-     * Ask a running helper to stop after Shizuku takes exclusive WFD ownership.
-     *
-     * Does not start a replacement helper if the socket is already gone.
-     */
+    /** Stop the currently listening helper process. */
     fun requestStopHelper() {
         try {
             LocalSocket().use { socket ->

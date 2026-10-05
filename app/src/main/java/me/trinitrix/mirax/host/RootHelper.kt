@@ -60,31 +60,51 @@ object RootHelper {
         Thread({
             val rooted = available()
             val previous = rootCached.getAndSet(rooted)
-            var started = false
-            if (rooted && !PrivilegeProbe.isHelperRunning()) {
-                started = ensureStartedBlocking(appContext)
+            var helperChanged = false
+            if (rooted) {
+                helperChanged = ensureStartedBlocking(appContext)
             }
-            if (previous != rooted || started) {
+            if (previous != rooted || helperChanged) {
                 mainHandler.post(onChanged)
             }
         }, "mirax-root").start()
     }
 
     /**
-     * Start [Helper.main] via `su` when the helper socket is not already up.
+     * Ensure the helper socket belongs to a root process when `su` is available.
      * Blocking; intended for the root worker thread.
      */
     private fun ensureStartedBlocking(context: Context): Boolean {
-        if (PrivilegeProbe.isHelperRunning()) {
-            return true
-        }
         if (!availableCached() && !available()) {
             return false
         }
         if (!starting.compareAndSet(false, true)) {
-            return PrivilegeProbe.isHelperRunning()
+            return false
         }
+        var helperChanged = false
         return try {
+            if (PrivilegeProbe.helperUid() == 0) {
+                return false
+            }
+            if (PrivilegeProbe.isHelperRunning()) {
+                Log.i(TAG, "replacing non-root helper with root helper")
+                PrivilegeProbe.requestStopHelper()
+                helperChanged = true
+                var stopped = false
+                repeat(10) {
+                    if (!stopped) {
+                        if (!PrivilegeProbe.isHelperRunning()) {
+                            stopped = true
+                        } else {
+                            Thread.sleep(200)
+                        }
+                    }
+                }
+                if (!stopped) {
+                    Log.w(TAG, "helper socket remained up after stop request")
+                    return helperChanged
+                }
+            }
             val apk = context.applicationInfo.sourceDir
             val log = File(context.cacheDir, "mirax-helper-root.log").absolutePath
             val remote =
@@ -94,22 +114,25 @@ object RootHelper {
             val process = ProcessBuilder("su", "-c", remote)
                 .redirectErrorStream(true)
                 .start()
+            helperChanged = true
             process.waitFor(3, TimeUnit.SECONDS)
             var ready = false
             repeat(10) {
-                if (PrivilegeProbe.isHelperRunning()) {
-                    ready = true
-                    return@repeat
+                if (!ready) {
+                    if (PrivilegeProbe.helperUid() == 0) {
+                        ready = true
+                    } else {
+                        Thread.sleep(200)
+                    }
                 }
-                Thread.sleep(200)
             }
             if (!ready) {
-                Log.w(TAG, "helper socket not up after su start; log=$log")
+                Log.w(TAG, "root helper did not report UID 0; log=$log")
             }
-            ready
+            helperChanged
         } catch (err: Exception) {
             Log.w(TAG, "su helper start failed", err)
-            false
+            helperChanged
         } finally {
             starting.set(false)
         }
