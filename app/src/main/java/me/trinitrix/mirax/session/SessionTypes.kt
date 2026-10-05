@@ -293,8 +293,6 @@ data class SessionSettings(
  * One-shot effects the host must perform; the session never starts Shizuku or the helper.
  */
 sealed interface SessionEffect {
-    data object StopHelper : SessionEffect
-
     /**
      * Show the shared "Shizuku is not open" toast after a gray tile probe failed.
      * Host must not open the authorization dialog for this effect.
@@ -513,7 +511,7 @@ sealed interface SessionAction {
      */
     data object TileTap : SessionAction
 
-    /** Host consumed one-shot effects (e.g. StopHelper). */
+    /** Host consumed one-shot effects. */
     data object AcknowledgeEffects : SessionAction
 
     /**
