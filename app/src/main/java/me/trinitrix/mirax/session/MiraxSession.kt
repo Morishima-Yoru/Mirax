@@ -870,10 +870,10 @@ class MiraxSession(
     private fun resolveOwner(report: PrivilegeReport): WfdOwner {
         val shizukuReady = report.shizukuServiceRunning && report.shizukuAuthorized
         return when {
-            // Root-started helper (UID 0) before Shizuku: works on OEMs that
-            // deny CONFIGURE_WIFI_DISPLAY to shell but allow root.
-            report.helperRunning -> WfdOwner.HELPER
             shizukuReady -> WfdOwner.SHIZUKU
+            // RootHelper promotes a reachable ADB-shell helper to UID 0 when
+            // root is available; otherwise the manual ADB helper is fallback.
+            report.helperRunning -> WfdOwner.HELPER
             else -> WfdOwner.NONE
         }
     }

@@ -123,22 +123,21 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun helperRunning_takesPriorityOverShizuku() {
-        val session = sessionWithBroadcast()
-        assertThat(session.snapshot().wfdOwner).isEqualTo(WfdOwner.HELPER)
-
+    fun shizukuReady_takesPriorityOverHelper() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
         session.report(
             PrivilegeReport(
                 shizukuServiceRunning = true,
                 shizukuAuthorized = true,
                 helperRunning = true,
+                rootAvailable = true,
             ),
         )
         val snap = session.snapshot()
-        assertThat(snap.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(snap.wfdOwner).isEqualTo(WfdOwner.SHIZUKU)
+        assertThat(snap.wfdAdvertise?.owner).isEqualTo(WfdOwner.SHIZUKU)
         assertThat(snap.advertisingEnabled).isTrue()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
-        assertThat(snap.effects).doesNotContain(SessionEffect.StopHelper)
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ARMING)
     }
 
     @Test
