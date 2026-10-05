@@ -2,6 +2,7 @@ package me.trinitrix.mirax.wfd
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
@@ -11,6 +12,9 @@ import java.util.ArrayDeque
 /**
  * Decodes H.264 access units onto an attached [Surface].
  * Picture placement is owned by the picture activity via [me.trinitrix.mirax.session.PicturePlacement].
+ *
+ * Output is drained on a dedicated thread so sparse RTP (static desktop) cannot
+ * leave decoded frames stuck undequeued for seconds.
  */
 class H264SurfaceDecoder {
     private val pending = ArrayDeque<ByteArray>()
@@ -21,10 +25,43 @@ class H264SurfaceDecoder {
     private var videoFps: Int = 60
     private var awaitingKeyframe: Boolean = true
     private var frames: Long = 0
+    private var submitted: Long = 0
     private var lastKeyframeRequestMs: Long = 0
+    private var lastStatsMs: Long = 0
+    private var lastTouchLagLogMs: Long = 0
+    private var lastSubmitLagLogMs: Long = 0
+    private var drainThread: Thread? = null
+    private val submitTimesMs = ArrayDeque<Long>()
+
+    @Volatile
+    private var drainAlive: Boolean = false
+
+    /**
+     * ElapsedRealtime ms of the latest UIBC touch write. Decoder logs
+     * touch-to-frame lag once after the next output release.
+     */
+    @Volatile
+    var lastTouchElapsedRealtimeMs: Long = 0L
+
+    /** ElapsedRealtime ms of the latest released output frame, or 0. */
+    @Volatile
+    var lastFrameElapsedRealtimeMs: Long = 0L
+        private set
+
+    /** ElapsedRealtime ms when the sink last sent wfd_idr_request, or 0. */
+    @Volatile
+    private var lastIdrRequestElapsedMs: Long = 0L
 
     @Volatile
     var onFormat: ((width: Int, height: Int, fps: Int) -> Unit)? = null
+
+    /** Record that an RTSP IDR request was flushed toward the source. */
+    fun markIdrRequested() {
+        // Keep the earliest outstanding request so RTT is not reset by retries.
+        if (lastIdrRequestElapsedMs == 0L) {
+            lastIdrRequestElapsedMs = SystemClock.elapsedRealtime()
+        }
+    }
 
     /**
      * Fired when a new decoder cannot start until the source sends an IDR.
@@ -93,32 +130,45 @@ class H264SurfaceDecoder {
             if (awaitingKeyframe && !isIdr) {
                 // Need an IDR before any later P/B frame is decodable.
                 requestKeyframeSoon()
+                maybeLogStats("await-idr")
                 return
             }
             if (isIdr) {
                 // IDR is a clean catch-up point: drop backlog without a freeze-wait.
                 pending.clear()
+                submitTimesMs.clear()
                 awaitingKeyframe = false
-                Log.i(TAG, "keyframe queued ${au.size}")
+                val idrAt = lastIdrRequestElapsedMs
+                if (idrAt > 0L) {
+                    val rtt = SystemClock.elapsedRealtime() - idrAt
+                    lastIdrRequestElapsedMs = 0L
+                    Log.i(TAG, "keyframe queued ${au.size} idr_to_keyframe_ms=$rtt")
+                } else {
+                    Log.i(TAG, "keyframe queued ${au.size}")
+                }
                 pending.addLast(au)
                 drainPending()
                 return
             }
-            // Soft backlog: ask Windows for an IDR soon, but keep decoding so the
-            // picture does not hitch. Hard backlog: only then freeze for resync.
+            // Soft backlog: ask Windows for an IDR soon, but keep decoding.
+            // Hard backlog: freeze for resync. Do NOT treat sparse Miracast
+            // (static desktop often <5 fps) as an output stall — that path was
+            // flooding wfd_idr_request every ~1s and inflating encode lag.
             if (pending.size >= HARD_PENDING_FRAMES) {
                 pending.clear()
+                submitTimesMs.clear()
                 awaitingKeyframe = true
                 Log.w(TAG, "hard backlog; wait for IDR")
                 requestKeyframeSoon()
                 drainPending()
                 return
             }
-            if (pending.size >= SOFT_PENDING_FRAMES) {
-                requestKeyframeSoon()
-            }
+            // Soft backlog alone must not request IDR: at 60 fps a brief spike
+            // to SOFT_PENDING_FRAMES is normal and was flooding Windows every
+            // KEYFRAME_REQUEST_MIN_MS. Soft-stall covers true output freezes.
             pending.addLast(au)
             drainPending()
+            maybeLogStats("submit")
         }
     }
 
@@ -130,6 +180,8 @@ class H264SurfaceDecoder {
             videoH = 0
             awaitingKeyframe = true
             frames = 0
+            submitted = 0
+            submitTimesMs.clear()
         }
     }
 
@@ -175,27 +227,35 @@ class H264SurfaceDecoder {
                     videoW,
                     videoH,
                 )
-                format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 6_000_000)
-                if (H264LowLatencyConfigurePolicy.usesLowLatency(phase)) {
+                // Cap near the MTK default; 6_000_000 is rejected and logged as unused.
+                format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 2_000_000)
+                if (H264LowLatencyConfigurePolicy.usesAndroidLowLatency(phase)) {
                     format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
                 }
-                format.setInteger(MediaFormat.KEY_OPERATING_RATE, videoFps)
+                if (H264LowLatencyConfigurePolicy.usesVendorLowLatency(phase)) {
+                    format.setInteger(H264LowLatencyConfigurePolicy.VENDOR_LOW_LATENCY_KEY, 1)
+                }
+                // Realtime priority (Moonlight). OPERATING_RATE is unsupported on this MTK.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    format.setInteger(MediaFormat.KEY_PRIORITY, 0)
+                }
                 format.setInteger(MediaFormat.KEY_FRAME_RATE, videoFps)
-                created = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                created = try {
+                    MediaCodec.createByCodecName(PREFERRED_MTK_AVC)
+                } catch (_: Exception) {
+                    MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                }
                 created.configure(format, output, null, 0)
                 created.start()
                 codec = created
                 frames = 0
-                val lowLatencyLabel =
-                    if (H264LowLatencyConfigurePolicy.usesLowLatency(phase)) {
-                        "true"
-                    } else {
-                        "omitted"
-                    }
+                submitted = 0
+                startDrainThread()
                 Log.i(
                     TAG,
                     "decoder started ${created.name} ${videoW}x${videoH}@$videoFps " +
-                        "lowLatency=$lowLatencyLabel",
+                        "lowLatency=${H264LowLatencyConfigurePolicy.lowLatencyLabel(phase)} " +
+                        "priority=realtime",
                 )
                 return
             } catch (err: Exception) {
@@ -213,13 +273,9 @@ class H264SurfaceDecoder {
                     isCodecException = codecErr != null,
                     errorCode = codecErr?.errorCode,
                 )
-                if (next != null) {
-                    Log.w(
-                        TAG,
-                        "decoder configure with low-latency failed; " +
-                            "retrying without KEY_LOW_LATENCY",
-                        err,
-                    )
+                val reason = H264LowLatencyConfigurePolicy.retryReason(phase)
+                if (next != null && reason != null) {
+                    Log.w(TAG, reason, err)
                     phase = next
                     continue
                 }
@@ -238,11 +294,8 @@ class H264SurfaceDecoder {
             var index = codec.dequeueInputBuffer(0)
             if (index < 0) {
                 releaseOutput(codec)
-                index = codec.dequeueInputBuffer(5_000)
-            }
-            if (index < 0) {
-                releaseOutput(codec)
-                index = codec.dequeueInputBuffer(5_000)
+                // Brief wait only; a long block stalls RTP and grows socket latency.
+                index = codec.dequeueInputBuffer(2_000)
             }
             if (index < 0) {
                 return false
@@ -251,8 +304,15 @@ class H264SurfaceDecoder {
             buffer.clear()
             buffer.put(au)
             val flags = if (isKeyframe(au)) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-            val ptsUs = frames * (1_000_000L / videoFps.coerceAtLeast(1))
+            // Tight PTS spacing (1 ms/frame). Wall-clock PTS and PTS=0 both
+            // correlated with MTK WAIT-timeout stalls on this device.
+            val ptsUs = frames * 1_000L
             codec.queueInputBuffer(index, 0, au.size, ptsUs, flags)
+            submitted++
+            submitTimesMs.addLast(SystemClock.elapsedRealtime())
+            while (submitTimesMs.size > 120) {
+                submitTimesMs.removeFirst()
+            }
             return true
         } catch (err: Exception) {
             Log.e(TAG, "queue failed", err)
@@ -284,16 +344,150 @@ class H264SurfaceDecoder {
             val show = surface != null && surface!!.isValid
             codec.releaseOutputBuffer(index, show)
             frames++
+            val nowElapsed = SystemClock.elapsedRealtime()
+            lastFrameElapsedRealtimeMs = nowElapsed
+            maybeLogSubmitToFrameLag()
+            maybeLogTouchToFrameLag()
         }
     }
 
-    /** Ask the source for an IDR, but not more than twice a second. */
+    private fun maybeLogSubmitToFrameLag() {
+        val submittedAt = submitTimesMs.pollFirst() ?: return
+        val lagMs = SystemClock.elapsedRealtime() - submittedAt
+        val now = SystemClock.uptimeMillis()
+        if (now - lastSubmitLagLogMs < SUBMIT_LAG_LOG_INTERVAL_MS) {
+            return
+        }
+        lastSubmitLagLogMs = now
+        Log.i(TAG, "submit_to_frame_ms=$lagMs")
+    }
+
+    private fun maybeLogTouchToFrameLag() {
+        val touchAt = lastTouchElapsedRealtimeMs
+        if (touchAt <= 0L) {
+            return
+        }
+        val lagMs = SystemClock.elapsedRealtime() - touchAt
+        // Stale stamps from gaps between gestures (adb / finger lift) are not
+        // interaction latency. Keep the stamp so a fresher touch can overwrite.
+        if (lagMs < 0L || lagMs > 250L) {
+            if (lagMs > 1_000L) {
+                lastTouchElapsedRealtimeMs = 0L
+            }
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        if (now - lastTouchLagLogMs < TOUCH_LAG_LOG_INTERVAL_MS) {
+            return
+        }
+        lastTouchLagLogMs = now
+        lastTouchElapsedRealtimeMs = 0L
+        Log.i(TAG, "touch_to_frame_ms=$lagMs")
+    }
+
+    private fun startDrainThread() {
+        if (drainAlive) {
+            return
+        }
+        drainAlive = true
+        drainThread = Thread({
+            while (drainAlive) {
+                synchronized(this@H264SurfaceDecoder) {
+                    val active = codec
+                    if (active != null) {
+                        releaseOutput(active)
+                        // Sparse Windows encode can leave AUs parked in pending while
+                        // input buffers are full; keep trying to feed after each drain.
+                        drainPending()
+                        maybeNudgeStalledPipeline()
+                        maybeLogStats("drain")
+                    }
+                }
+                try {
+                    Thread.sleep(DRAIN_SLEEP_MS)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }, "mirax-h264-out").also {
+            it.isDaemon = true
+            it.start()
+        }
+    }
+
+    private fun stopDrainThread() {
+        // Never join here: callers hold the decoder monitor and the drain thread
+        // needs that same monitor to finish its current releaseOutput pass.
+        drainAlive = false
+        drainThread?.interrupt()
+        drainThread = null
+    }
+
+    private fun maybeLogStats(where: String) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastStatsMs < STATS_INTERVAL_MS) {
+            return
+        }
+        lastStatsMs = now
+        Log.i(
+            TAG,
+            "stats where=$where out=$frames in=$submitted pending=${pending.size} " +
+                "awaitIdr=$awaitingKeyframe",
+        )
+    }
+
+    /**
+     * Soft stall nudge: if outputs freeze while work is queued, ask for an IDR
+     * without dropping the GOP. Distinct from the old hard output-stall freeze
+     * that flooded Windows with keyframe requests on static desktops.
+     */
+    private fun maybeNudgeStalledPipeline() {
+        if (videoW <= 0 || awaitingKeyframe) {
+            return
+        }
+        val lastFrame = lastFrameElapsedRealtimeMs
+        if (lastFrame <= 0L) {
+            return
+        }
+        val idleMs = SystemClock.elapsedRealtime() - lastFrame
+        if (idleMs < OUTPUT_SOFT_STALL_MS) {
+            return
+        }
+        // One in-flight AU is normal; only nudge when the pipeline is actually
+        // backed up (pending queue or several unreleased outputs).
+        val inFlight = submitted - frames
+        val workQueued = pending.isNotEmpty() || inFlight >= 3
+        if (!workQueued) {
+            return
+        }
+        if (idleMs >= OUTPUT_HARD_STALL_MS) {
+            // MTK can park several AUs forever while Windows also goes quiet;
+            // drop the wedged GOP and wait for a fresh IDR.
+            pending.clear()
+            submitTimesMs.clear()
+            awaitingKeyframe = true
+            Log.w(
+                TAG,
+                "hard stall ${idleMs}ms pending=${pending.size} inFlight=$inFlight; wait for IDR",
+            )
+            requestKeyframeSoon()
+            return
+        }
+        Log.w(
+            TAG,
+            "soft stall ${idleMs}ms pending=${pending.size} inFlight=$inFlight " +
+                "in=$submitted out=$frames",
+        )
+        requestKeyframeSoon()
+    }
+
+    /** Ask the source for an IDR, rate-limited so encode spikes stay rare. */
     private fun requestKeyframeSoon() {
         if (videoW <= 0) {
             return
         }
         val now = SystemClock.uptimeMillis()
-        if (now - lastKeyframeRequestMs < 500) {
+        if (now - lastKeyframeRequestMs < KEYFRAME_REQUEST_MIN_MS) {
             return
         }
         lastKeyframeRequestMs = now
@@ -301,6 +495,7 @@ class H264SurfaceDecoder {
     }
 
     private fun stopCodec() {
+        stopDrainThread()
         try {
             codec?.stop()
         } catch (_: Exception) {
@@ -314,14 +509,26 @@ class H264SurfaceDecoder {
 
     companion object {
         private const val TAG = "MiraxH264"
-        /** Ask the source for an IDR while still decoding (~200 ms at 60 fps). */
+        /** Soft catch-up nudge (~200 ms at 60 fps) without freezing decode. */
         private const val SOFT_PENDING_FRAMES = 12
 
         /**
-         * Only freeze for IDR when the backlog is severe (~500 ms at 60 fps).
+         * Freeze for IDR when backlog is ~400 ms at 60 fps.
          * Dropping mid-GOP tears the picture; a hard cut waits for the next keyframe.
          */
-        private const val HARD_PENDING_FRAMES = 30
+        private const val HARD_PENDING_FRAMES = 24
+
+        /** Minimum gap between wfd_idr_request SET_PARAMETERs. */
+        private const val KEYFRAME_REQUEST_MIN_MS = 4_000L
+        /** Soft IDR nudge when decode/output freezes while work is queued. */
+        private const val OUTPUT_SOFT_STALL_MS = 700L
+        /** Drop wedged in-flight AUs and await IDR after this freeze. */
+        private const val OUTPUT_HARD_STALL_MS = 2_000L
+        private const val DRAIN_SLEEP_MS = 2L
+        private const val STATS_INTERVAL_MS = 1_000L
+        private const val TOUCH_LAG_LOG_INTERVAL_MS = 500L
+        private const val SUBMIT_LAG_LOG_INTERVAL_MS = 500L
+        private const val PREFERRED_MTK_AVC = "OMX.MTK.VIDEO.DECODER.AVC"
 
         private fun isKeyframe(au: ByteArray): Boolean = hasNal(au, 5) || hasNal(au, 7)
 

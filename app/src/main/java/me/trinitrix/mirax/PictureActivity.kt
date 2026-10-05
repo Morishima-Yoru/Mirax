@@ -1,6 +1,7 @@
 package me.trinitrix.mirax
 
 import android.util.Log
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -10,8 +11,10 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.roundToInt
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -26,11 +29,13 @@ import me.trinitrix.mirax.session.PictureTouchMap
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.VideoMode
+import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import me.trinitrix.mirax.wfd.UibcContact
 import me.trinitrix.mirax.wfd.UibcPackets
 import me.trinitrix.mirax.wfd.UibcPenContact
 import me.trinitrix.mirax.wfd.UibcTouchChannel
+import me.trinitrix.mirax.wfd.rtsp.WfdCapabilityTable
 import java.lang.ref.WeakReference
 
 /**
@@ -44,6 +49,7 @@ import java.lang.ref.WeakReference
 class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var stage: FrameLayout
     private lateinit var surfaceView: SurfaceView
+    private lateinit var cursorView: ImageView
     private lateinit var handleRoot: FrameLayout
     private lateinit var handleScrim: View
     private lateinit var handlePanel: LinearLayout
@@ -58,6 +64,12 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private var currentFixedH: Int = 0
     /** Pointer id to UIBC contact slot. */
     private val touchSlots = LinkedHashMap<Int, Int>()
+    private var cursorPictureX: Int = 0
+    private var cursorPictureY: Int = 0
+    private var cursorHotspotX: Int = 0
+    private var cursorHotspotY: Int = 0
+    private var cursorBitmapW: Int = 0
+    private var cursorBitmapH: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,6 +104,15 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         }
         stage.addView(surfaceView)
+        cursorView = ImageView(this).apply {
+            visibility = View.GONE
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            scaleType = ImageView.ScaleType.FIT_XY
+            layoutParams = FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START)
+        }
+        stage.addView(cursorView)
         stage.setOnClickListener { /* intentionally empty */ }
         stage.setOnLongClickListener { true }
 
@@ -117,6 +138,16 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 bufferW = w
                 bufferH = h
                 layoutPicture()
+            }
+        }
+        if (WfdCapabilityTable.ADVERTISE_HARDWARE_CURSOR) {
+            MicrosoftCursorChannel.onPosition = { x, y ->
+                cursorPictureX = x
+                cursorPictureY = y
+                layoutCursor()
+            }
+            MicrosoftCursorChannel.onBitmap = { bitmap, hotspotX, hotspotY ->
+                applyCursorBitmap(bitmap, hotspotX, hotspotY)
             }
         }
 
@@ -180,6 +211,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         endConnectionDialog = null
         if (showing?.get() === this) {
             showing = null
+        }
+        if (WfdCapabilityTable.ADVERTISE_HARDWARE_CURSOR) {
+            MicrosoftCursorChannel.onPosition = null
+            MicrosoftCursorChannel.onBitmap = null
         }
         SinkConnectionController.decoder.attachSurface(null)
         SinkConnectionController.decoder.onFormat = null
@@ -392,6 +427,67 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             currentFixedW = fixedW
             currentFixedH = fixedH
             surfaceView.holder.setFixedSize(fixedW, fixedH)
+        }
+        layoutCursor()
+    }
+
+    private fun applyCursorBitmap(bitmap: Bitmap?, hotspotX: Int, hotspotY: Int) {
+        if (bitmap == null) {
+            cursorBitmapW = 0
+            cursorBitmapH = 0
+            cursorView.setImageDrawable(null)
+            cursorView.visibility = View.GONE
+            return
+        }
+        cursorHotspotX = hotspotX
+        cursorHotspotY = hotspotY
+        cursorBitmapW = bitmap.width
+        cursorBitmapH = bitmap.height
+        cursorView.setImageBitmap(bitmap)
+        cursorView.visibility = View.VISIBLE
+        layoutCursor()
+    }
+
+    /**
+     * Place the hardware-cursor overlay in panel space from picture-pixel coords.
+     * Pointer motion arrives on UDP and must not wait for the next H.264 frame.
+     */
+    private fun layoutCursor() {
+        if (!WfdCapabilityTable.ADVERTISE_HARDWARE_CURSOR) {
+            return
+        }
+        if (cursorView.visibility != View.VISIBLE || cursorBitmapW <= 0 || cursorBitmapH <= 0) {
+            return
+        }
+        val mode = MiraxApp.instance.session.snapshot().selectedMode ?: return
+        val pictureW = mode.width
+        val pictureH = mode.height
+        val surfaceW = surfaceView.width
+        val surfaceH = surfaceView.height
+        if (pictureW <= 0 || pictureH <= 0 || surfaceW <= 0 || surfaceH <= 0) {
+            return
+        }
+        val scaleX = surfaceW.toFloat() / pictureW.toFloat()
+        val scaleY = surfaceH.toFloat() / pictureH.toFloat()
+        val width = maxOf(1, (cursorBitmapW * scaleX).roundToInt())
+        val height = maxOf(1, (cursorBitmapH * scaleY).roundToInt())
+        val left = surfaceView.left +
+            (cursorPictureX * scaleX - cursorHotspotX * scaleX).roundToInt()
+        val top = surfaceView.top +
+            (cursorPictureY * scaleY - cursorHotspotY * scaleY).roundToInt()
+        val params = cursorView.layoutParams as? FrameLayout.LayoutParams
+            ?: FrameLayout.LayoutParams(width, height, Gravity.TOP or Gravity.START)
+        if (params.width != width ||
+            params.height != height ||
+            params.leftMargin != left ||
+            params.topMargin != top
+        ) {
+            params.width = width
+            params.height = height
+            params.leftMargin = left
+            params.topMargin = top
+            params.gravity = Gravity.TOP or Gravity.START
+            cursorView.layoutParams = params
         }
     }
 

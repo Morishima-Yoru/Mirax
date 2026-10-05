@@ -667,9 +667,13 @@ class MiraxSession(
 
     private fun onSourceSelectedMode(mode: VideoMode) {
         freezeConnectionAdvertisedModes()
-        val allowed = connectionAdvertisedModes ?: resolveNextAdvertisementModes()
-        if (mode in allowed) {
-            selectedMode = mode
+        // Always accept the mode Windows negotiated. The sink may advertise a
+        // lean interactive subset (e.g. 720p) that is not in the user's saved
+        // checklist; rejecting it left selectedMode null and broke UIBC mapping.
+        selectedMode = mode
+        val allowed = connectionAdvertisedModes
+        if (allowed != null && mode !in allowed) {
+            connectionAdvertisedModes = allowed + mode
         }
     }
 

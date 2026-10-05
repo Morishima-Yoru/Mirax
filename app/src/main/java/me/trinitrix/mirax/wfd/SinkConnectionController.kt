@@ -19,6 +19,7 @@ import me.trinitrix.mirax.wfd.rtsp.RtspMessageBuffer
 import me.trinitrix.mirax.wfd.rtsp.RtspSinkSession
 import me.trinitrix.mirax.wfd.rtsp.WfdCapabilityTable
 import me.trinitrix.mirax.wfd.rtsp.WfdVideoFormatCodec
+import java.io.OutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
@@ -46,8 +47,30 @@ object SinkConnectionController {
     private const val DIAL_TIMEOUT_MS = 3_000
     private const val DIAL_WINDOW_MS = 20_000L
     private const val PAIRING_WAIT_MS = 20_000L
-    private const val READ_TIMEOUT_MS = 1_000
+    // Short so RTSP keepalives / IDR flushes are not stuck behind a full second.
+    private const val READ_TIMEOUT_MS = 50
     private const val POKE_AFTER_MS = 2_000L
+    /**
+     * Interactive sessions need enough microsoft_max_bitrate that Windows keeps
+     * encoding during motion. A user floor of 1 Mbps made the source go sparse
+     * (few frames/sec) even when UIBC was active.
+     */
+    private const val INTERACTIVE_BITRATE_FLOOR_BPS = 8_000_000L
+    private const val INTERACTIVE_BITRATE_CAP_BPS = 16_000_000L
+    /**
+     * Cap advertised modes while touch is on so Windows encodes a lighter
+     * stream without the blurry 480p/540p interactive caps that hurt feel.
+     */
+    private const val INTERACTIVE_MAX_WIDTH = 1280
+    private const val INTERACTIVE_MAX_HEIGHT = 720
+    /**
+     * Gap since the previous UIBC input before a touch may request one IDR.
+     * Idle-only: mid-gesture IDR was ~500ms Windows RTT and caused cursor drift
+     * while UIBC reports piled up behind each keyframe.
+     */
+    private const val TOUCH_IDLE_IDR_INPUT_GAP_MS = 1_500L
+    /** Idle-resume IDR rate limit. */
+    private const val TOUCH_IDLE_IDR_MIN_INTERVAL_MS = 4_000
     private const val LOG_LIMIT = 700
 
     val decoder: H264SurfaceDecoder = H264SurfaceDecoder()
@@ -61,12 +84,56 @@ object SinkConnectionController {
     private val lastTouchEnabled = AtomicBoolean(true)
     private val connectionRunOpen = AtomicBoolean(false)
     private val idrNeeded = AtomicBoolean(false)
+    private val latencyLowNeeded = AtomicBoolean(false)
+    private val lastTouchIdleIdrMs = AtomicInteger(0)
+    private val lastUibcActivityMs = AtomicInteger(0)
+    private val rtspIdrLock = Any()
+    private val playSession = AtomicReference<RtspSinkSession?>(null)
+    private val playOutput = AtomicReference<OutputStream?>(null)
+    @Volatile
+    private var lastLatencyModeSeen: String = ""
     private var serveSelected: VideoMode? = null
     private var rtpSocket: DatagramSocket? = null
     private var appContext: Context? = null
 
     init {
         decoder.onNeedKeyframe = { idrNeeded.set(true) }
+    }
+
+    /**
+     * Interactive UIBC catch-up: keep microsoft latency `low`, and after a real
+     * input idle gap request a single IDR so the first touch after pause is not
+     * waiting on a frozen desktop encode.
+     *
+     * Continuous motion must NOT request IDR — Windows IDR RTT (~500ms) plus a
+     * backed-up UIBC write queue is what felt like lag then cursor drift.
+     */
+    fun requestIdrForTouch() {
+        val now = SystemClock.elapsedRealtime()
+        val nowInt = now.toInt()
+        val previousActivity = lastUibcActivityMs.getAndSet(nowInt)
+        val inputGapMs = if (previousActivity == 0) {
+            TOUCH_IDLE_IDR_INPUT_GAP_MS
+        } else {
+            (nowInt - previousActivity).toLong()
+        }
+
+        if (lastLatencyModeSeen != "low") {
+            latencyLowNeeded.set(true)
+            flushLatencyLowNow()
+        }
+        if (inputGapMs < TOUCH_IDLE_IDR_INPUT_GAP_MS) {
+            return
+        }
+        val previousIdr = lastTouchIdleIdrMs.get()
+        if (nowInt - previousIdr < TOUCH_IDLE_IDR_MIN_INTERVAL_MS) {
+            return
+        }
+        if (!lastTouchIdleIdrMs.compareAndSet(previousIdr, nowInt)) {
+            return
+        }
+        idrNeeded.set(true)
+        flushIdrNow()
     }
 
     /**
@@ -259,14 +326,37 @@ object SinkConnectionController {
         activeClient.set(socket)
         var reachedPlay = false
         var lastSelected: VideoMode? = null
+        var lastLatencyMode = ""
         val offer = connectionOffer(command)
+        val advertiseBitrate = if (offer.touchEnabled) {
+            maxOf(offer.maxVideoBitrateBps, INTERACTIVE_BITRATE_FLOOR_BPS)
+                .coerceAtMost(INTERACTIVE_BITRATE_CAP_BPS)
+        } else {
+            offer.maxVideoBitrateBps
+        }
+        val advertiseModes = if (offer.touchEnabled) {
+            interactiveModes(offer.modes)
+        } else {
+            offer.modes
+        }
+        val advertisePreferred = if (offer.touchEnabled) {
+            interactivePreferred(offer.preferred, advertiseModes)
+        } else {
+            offer.preferred
+        }
+        if (offer.touchEnabled) {
+            note(
+                "interactive offer bitrate=${advertiseBitrate / 1_000}kbps " +
+                    "preferred=${advertisePreferred?.format() ?: "none"} modes=${advertiseModes.size}",
+            )
+        }
         val session = RtspSinkSession(
             WfdCapabilityTable(
-                offer.modes,
-                offer.preferred,
+                advertiseModes,
+                advertisePreferred,
                 offer.broadcastName,
                 offer.touchEnabled,
-                offer.maxVideoBitrateBps,
+                advertiseBitrate,
             ),
         )
         val demux = MpegTsDepacketizer()
@@ -277,11 +367,15 @@ object SinkConnectionController {
         var poked = false
         var uibcNoted = false
         idrNeeded.set(false)
+        latencyLowNeeded.set(false)
+        lastLatencyModeSeen = ""
         try {
             socket.tcpNoDelay = true
             socket.soTimeout = READ_TIMEOUT_MS
             val input = socket.getInputStream()
             val output = socket.getOutputStream()
+            playSession.set(session)
+            playOutput.set(output)
             loop@ while (alive(gen) && !socket.isClosed) {
                 val n = try {
                     input.read(chunk)
@@ -323,6 +417,16 @@ object SinkConnectionController {
                             UibcTouchChannel.setPictureSize(selected.width, selected.height)
                         }
                     }
+                    val latencyMode = session.latencyMode
+                    if (latencyMode.isNotEmpty() && latencyMode != lastLatencyMode) {
+                        lastLatencyMode = latencyMode
+                        lastLatencyModeSeen = latencyMode
+                        note("source latency mode $latencyMode")
+                        if (latencyMode != "low" && offer.touchEnabled) {
+                            latencyLowNeeded.set(true)
+                            writeLatencyLowIfNeeded(session, output)
+                        }
+                    }
                     if (uibcNoted && session.uibcPort <= 0) {
                         UibcTouchChannel.close()
                         uibcNoted = false
@@ -348,6 +452,11 @@ object SinkConnectionController {
                         val mode = session.selectedMode ?: VideoMode(1920, 1080, 60)
                         decoder.setFormat(mode.width, mode.height, mode.refreshHz)
                         startRtp(session.rtpPort(), demux, gen)
+                        startHardwareCursor()
+                        if (offer.touchEnabled) {
+                            latencyLowNeeded.set(true)
+                            writeLatencyLowIfNeeded(session, output)
+                        }
                         postAction(SessionAction.EnteredPlay)
                         openPicture()
                     }
@@ -357,13 +466,17 @@ object SinkConnectionController {
                     }
                 }
                 writeIdrIfNeeded(session, output)
+                writeLatencyLowIfNeeded(session, output)
             }
         } catch (err: Exception) {
             if (alive(gen)) {
                 noteWarn("RTSP session ended", err)
             }
         } finally {
+            playSession.compareAndSet(session, null)
+            playOutput.set(null)
             UibcTouchChannel.close()
+            stopHardwareCursor()
             stopRtp()
             decoder.reset()
             activeClient.compareAndSet(socket, null)
@@ -372,21 +485,57 @@ object SinkConnectionController {
         return reachedPlay
     }
 
-    private fun writeIdrIfNeeded(session: RtspSinkSession, output: java.io.OutputStream) {
-        if (!idrNeeded.get()) {
-            return
+    private fun flushIdrNow() {
+        val session = playSession.get() ?: return
+        val output = playOutput.get() ?: return
+        writeIdrIfNeeded(session, output)
+    }
+
+    private fun flushLatencyLowNow() {
+        val session = playSession.get() ?: return
+        val output = playOutput.get() ?: return
+        writeLatencyLowIfNeeded(session, output)
+    }
+
+    private fun writeIdrIfNeeded(session: RtspSinkSession, output: OutputStream) {
+        synchronized(rtspIdrLock) {
+            if (!idrNeeded.get()) {
+                return
+            }
+            val request = session.requestIdr()
+            if (request.isEmpty()) {
+                return
+            }
+            try {
+                output.write(request.toByteArray(StandardCharsets.US_ASCII))
+                output.flush()
+                idrNeeded.set(false)
+                decoder.markIdrRequested()
+                note("RTSP >> IDR refresh")
+            } catch (err: Exception) {
+                noteWarn("IDR refresh failed", err)
+            }
         }
-        val request = session.requestIdr()
-        if (request.isEmpty()) {
-            return
-        }
-        try {
-            output.write(request.toByteArray(StandardCharsets.US_ASCII))
-            output.flush()
-            idrNeeded.set(false)
-            note("RTSP >> IDR refresh")
-        } catch (err: Exception) {
-            noteWarn("IDR refresh failed", err)
+    }
+
+    private fun writeLatencyLowIfNeeded(session: RtspSinkSession, output: OutputStream) {
+        synchronized(rtspIdrLock) {
+            if (!latencyLowNeeded.get()) {
+                return
+            }
+            val request = session.requestLatencyMode("low")
+            if (request.isEmpty()) {
+                return
+            }
+            try {
+                output.write(request.toByteArray(StandardCharsets.US_ASCII))
+                output.flush()
+                latencyLowNeeded.set(false)
+                lastLatencyModeSeen = "low"
+                note("RTSP >> latency mode low")
+            } catch (err: Exception) {
+                noteWarn("latency mode low failed", err)
+            }
         }
     }
 
@@ -395,8 +544,8 @@ object SinkConnectionController {
         try {
             val socket = DatagramSocket(null).apply {
                 reuseAddress = true
-                // Enough headroom for bursty MPEG-TS without multi-second backlog.
-                receiveBufferSize = 1024 * 1024
+                // Burst headroom without a multi-second UDP backlog under stalls.
+                receiveBufferSize = 256 * 1024
                 bind(InetSocketAddress(port))
             }
             P2pNetworkBinder.bind(appContext, socket)
@@ -437,12 +586,28 @@ object SinkConnectionController {
         rtpSocket = null
     }
 
+    private fun startHardwareCursor() {
+        if (!WfdCapabilityTable.ADVERTISE_HARDWARE_CURSOR) {
+            note("hardware cursor off (local echo)")
+            return
+        }
+        MicrosoftCursorChannel.onStatus = { line -> note(line) }
+        MicrosoftCursorChannel.open(appContext)
+        note("hardware cursor advertised on ${MicrosoftCursorChannel.UDP_PORT}")
+    }
+
+    private fun stopHardwareCursor() {
+        MicrosoftCursorChannel.close()
+        MicrosoftCursorChannel.onStatus = null
+    }
+
     private fun stop(reason: String) {
         Log.i(TAG, "stop ($reason)")
         generation.incrementAndGet()
         running.set(false)
         closeQuietly(activeClient.getAndSet(null))
         UibcTouchChannel.close()
+        stopHardwareCursor()
         stopRtp()
         decoder.reset()
         closePicture()
@@ -478,6 +643,50 @@ object SinkConnectionController {
         val touchEnabled: Boolean,
         val maxVideoBitrateBps: Long,
     )
+
+    /**
+     * Keep modes that fit the interactive encode budget (orientation-agnostic
+     * short/long side). Always include 720p60 so Windows has a lean target even
+     * when the sink's saved preferred mode is a tall phone panel.
+     */
+    private fun interactiveModes(modes: Set<VideoMode>): Set<VideoMode> {
+        val target = VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 60)
+        val capped = modes.filter(::fitsInteractiveBudget).toSet()
+        if (capped.isNotEmpty()) {
+            return capped + target
+        }
+        return setOf(
+            target,
+            VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 30),
+            VideoMode(960, 540, 60),
+            VideoMode(854, 480, 60),
+        )
+    }
+
+    private fun fitsInteractiveBudget(mode: VideoMode): Boolean {
+        val shortSide = minOf(mode.width, mode.height)
+        val longSide = maxOf(mode.width, mode.height)
+        return shortSide <= INTERACTIVE_MAX_HEIGHT && longSide <= INTERACTIVE_MAX_WIDTH
+    }
+
+    /** Prefer 720p60 for interactive sessions. */
+    private fun interactivePreferred(
+        preferred: VideoMode?,
+        modes: Set<VideoMode>,
+    ): VideoMode? {
+        val target60 = VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 60)
+        if (target60 in modes) {
+            return target60
+        }
+        val target30 = VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 30)
+        if (target30 in modes) {
+            return target30
+        }
+        return preferred?.takeIf { it in modes }
+            ?: modes.maxWithOrNull(
+                compareBy<VideoMode> { it.width * it.height }.thenBy { it.refreshHz },
+            )
+    }
 
     /**
      * Read wm size and freeze the M3 offer on the main thread before RTSP.

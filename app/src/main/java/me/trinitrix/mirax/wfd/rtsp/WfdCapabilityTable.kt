@@ -1,6 +1,7 @@
 package me.trinitrix.mirax.wfd.rtsp
 
 import me.trinitrix.mirax.session.VideoMode
+import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 
 /**
  * Capability answers for one RTSP connection. Built from the advertisement set
@@ -40,6 +41,13 @@ class WfdCapabilityTable(
             -> "supported"
             "microsoft_max_bitrate" -> maxBitrateBps.coerceAtLeast(1L).toString()
             "microsoft_audio_mute" -> "supported"
+            // MS-WDHCE: "none" or "xor-support x-max y-max port" — not the bare token "supported".
+            "microsoft_cursor" ->
+                if (ADVERTISE_HARDWARE_CURSOR) {
+                    MicrosoftCursorChannel.capabilityValue()
+                } else {
+                    "none"
+                }
             "intel_friendly_name" -> friendlyName.ifEmpty { "Mirax" }
             "intel_sink_manufacturer_name" -> "Mirax"
             "intel_sink_model_name" -> "Mirax"
@@ -52,7 +60,6 @@ class WfdCapabilityTable(
             "microsoft_rtcp_capability",
             "microsoft_color_space_conversion",
             "microsoft_multiscreen_projection",
-            "microsoft_cursor",
             "wfd2_rotation_capability",
             "wfd2_video_stream_control",
             -> "none"
@@ -60,8 +67,14 @@ class WfdCapabilityTable(
         }
     }
 
-    private companion object {
-        const val UIBC_HIDC: String =
+    companion object {
+        /**
+         * When true, advertise [MS-WDHCE] hardware cursor so Windows stops burning
+         * the pointer into the H.264 stream (the main mouse-lag feel on local echo).
+         */
+        const val ADVERTISE_HARDWARE_CURSOR: Boolean = true
+
+        private const val UIBC_HIDC: String =
             "input_category_list=HIDC; generic_cap_list=none; " +
                 "hidc_cap_list=SingleTouch/USB, MultiTouch/USB; port=none"
     }
