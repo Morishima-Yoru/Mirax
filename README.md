@@ -30,6 +30,17 @@ Miracast sink advertising calls `WifiP2pManager.setWfdInfo()`, which requires `C
 |--------|------------------------------|
 | **Samsung (many models)** | Install Shizuku and authorize Mirax. Shell UID 2000 can call `setWfdInfo` on builds that still grant that permission to `com.android.shell`. |
 | **Rooted** | Magisk / KernelSU / `su`. Mirax starts the helper entry as UID 0 so the sink beacon runs with full WFD permission. |
+| **Manual ADB shell** | Build and launch the helper JAR from a connected PC. This is the fallback when Shizuku and root are unavailable. |
+
+To start the manual ADB helper from the repository root:
+
+```powershell
+.\helper\build.ps1
+adb push .\helper\mirax-helper.jar /data/local/tmp/mirax-helper.jar
+adb shell "CLASSPATH=/data/local/tmp/mirax-helper.jar app_process /system/bin me.trinitrix.mirax.helper.Helper"
+```
+
+Leave the ADB shell command running while Mirax uses the helper. Mirax prefers authorized Shizuku, then its root-started helper, then this manual ADB helper.
 
 Stock OEM phones that grant `CONFIGURE_WIFI_DISPLAY` neither to shell nor to a sideloaded APK (and are not rooted) are **out of scope**. The in-app Compatibility page explains that case when broadcast cannot start.
 
