@@ -22,6 +22,8 @@ object RootHelper {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val starting = AtomicBoolean(false)
     private val rootCached = AtomicReference<Boolean?>(null)
+    private val lastProbeTime = AtomicReference<Long>(0L)
+    private const val PROBE_COOLDOWN_MS = 30_000L // 30 seconds between probes
 
     /** Last known root probe result; false until the first async probe finishes. */
     fun availableCached(): Boolean = rootCached.get() == true
@@ -48,6 +50,22 @@ object RootHelper {
     }
 
     /**
+     * Check if enough time has passed since the last probe to allow a new one.
+     */
+    private fun canProbe(): Boolean {
+        val now = System.currentTimeMillis()
+        val last = lastProbeTime.get()
+        return (now - last) >= PROBE_COOLDOWN_MS
+    }
+
+    /**
+     * Update the last probe time to now.
+     */
+    private fun updateProbeTime() {
+        lastProbeTime.set(System.currentTimeMillis())
+    }
+
+    /**
      * Probe root (and start the helper when needed) on a worker thread.
      *
      * Args:
@@ -58,6 +76,11 @@ object RootHelper {
     fun refreshAsync(context: Context, onChanged: () -> Unit) {
         val appContext = context.applicationContext
         Thread({
+            if (!canProbe()) {
+                return@Thread
+            }
+            updateProbeTime()
+            
             val rooted = available()
             val previous = rootCached.getAndSet(rooted)
             var helperChanged = false

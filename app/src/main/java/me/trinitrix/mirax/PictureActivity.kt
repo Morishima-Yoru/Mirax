@@ -24,11 +24,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.graphics.Rect
 import me.trinitrix.mirax.session.PicturePlacement
 import me.trinitrix.mirax.session.PictureTouchMap
-import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.ScreenPhase
+import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.VideoMode
+import me.trinitrix.mirax.wfd.DebugOverlayView
 import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import me.trinitrix.mirax.wfd.UibcContact
@@ -70,6 +72,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private var cursorHotspotY: Int = 0
     private var cursorBitmapW: Int = 0
     private var cursorBitmapH: Int = 0
+    private lateinit var debugOverlay: DebugOverlayView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -125,6 +128,19 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             ),
         )
         setContentView(stage)
+
+        debugOverlay = DebugOverlayView(this, null).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END,
+            ).apply {
+                rightMargin = MiraxUi.dp(this@PictureActivity, 16)
+                topMargin = MiraxUi.dp(this@PictureActivity, 16)
+            }
+            visibility = View.GONE
+        }
+        stage.addView(debugOverlay)
 
         surfaceView.holder.addCallback(this)
         stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutPicture() }
@@ -242,6 +258,12 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         renderHandle(snapshot)
         ViewCompat.requestApplyInsets(stage)
         layoutPicture()
+        
+        // Update debug overlay
+        debugOverlay.visibility = if (snapshot.showDebugOverlay) View.VISIBLE else View.GONE
+        if (snapshot.showDebugOverlay) {
+            updateDebugOverlay(snapshot)
+        }
     }
 
     private fun applyProjectionCutoutInsets(view: View, insets: WindowInsetsCompat) {
@@ -733,6 +755,48 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         controller.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         if (::stage.isInitialized) {
             ViewCompat.requestApplyInsets(stage)
+        }
+    }
+
+    private fun updateDebugOverlay(snapshot: SessionSnapshot) {
+        val decoder = SinkConnectionController.decoder
+        val stats = DebugOverlayView.DecoderStats(
+            decoderName = decoder.decoderName,
+            inputWidth = decoder.inputWidth,
+            inputHeight = decoder.inputHeight,
+            inputFps = decoder.inputFps,
+            outputWidth = bufferW,
+            outputHeight = bufferH,
+            framesDecoded = decoder.framesDecoded,
+            framesDropped = 0, // TODO: track dropped frames
+            pendingFrames = decoder.pendingFrames,
+            awaitingKeyframe = decoder.isAwaitingKeyframe,
+            currentBitrateKbps = 0, // TODO: calculate bitrate
+        )
+        debugOverlay.updateDecoderStats(stats)
+        
+        // Build frame tree from decoder state
+        val frameTree = listOf(
+            DebugOverlayView.FrameNode("Decoder", bufferW, bufferH, listOf(
+                DebugOverlayView.FrameNode("Input", decoder.inputWidth, decoder.inputHeight),
+                DebugOverlayView.FrameNode("Surface", surfaceView.width, surfaceView.height),
+                DebugOverlayView.FrameNode("Panel", stage.width, stage.height),
+            ))
+        )
+        debugOverlay.updateFrameTree(frameTree)
+        debugOverlay.updateLayout(stage.width, stage.height, snapshot.pictureScale.name)
+        
+        // Crop rect from picture placement
+        val picture = snapshot.selectedMode
+        if (picture != null) {
+            val rect = PicturePlacement.place(
+                pictureWidth = picture.width,
+                pictureHeight = picture.height,
+                panelWidth = stage.width - stage.paddingLeft - stage.paddingRight,
+                panelHeight = stage.height - stage.paddingTop - stage.paddingBottom,
+                scale = snapshot.pictureScale,
+            )
+            debugOverlay.updateCrop(rect)
         }
     }
 

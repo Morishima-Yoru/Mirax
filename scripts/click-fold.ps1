@@ -190,11 +190,18 @@ function Walk-Named($el, $depth, $acc) {
     }
 }
 
-$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
-    $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and
-    $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation``1"
-})[0]
+$asTaskGeneric = $null
+try {
+    $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+        $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and
+        $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation``1"
+    })[0]
+} catch {
+    Write-Host "WinRT Async extensions not available (likely PowerShell 7+). OCR matching skipped."
+}
+
 function Await-WinRT($asyncOp, $resultType) {
+    if (-not $asTaskGeneric) { return $null }
     $method = $asTaskGeneric.MakeGenericMethod($resultType)
     $task = $method.Invoke($null, @($asyncOp))
     $task.Wait(-1) | Out-Null
@@ -202,45 +209,50 @@ function Await-WinRT($asyncOp, $resultType) {
 }
 function Find-FoldInShot($path) {
     $hits = @()
+    if (-not $asTaskGeneric) { return $hits }
     if (-not (Test-Path $path)) { return $hits }
-    $null = [Windows.Storage.StorageFile, Windows.Foundation, ContentType=WindowsRuntime]
-    $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType=WindowsRuntime]
-    $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime]
-    $file = Await-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
-    $stream = Await-WinRT ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
-    $decoder = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
-    $bitmap = Await-WinRT ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-    if (-not $engine) { Write-Host "ocr engine unavailable"; return $hits }
-    $result = Await-WinRT ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-    foreach ($line in $result.Lines) {
-        Write-Host "ocr line: $($line.Text)"
-        if ($line.Text -notmatch $DeviceMatch) { continue }
-        $x1 = [double]::MaxValue
-        $y1 = [double]::MaxValue
-        $x2 = 0.0
-        $y2 = 0.0
-        foreach ($word in $line.Words) {
-            $b = $word.BoundingRect
-            $wx = [double]$b.X
-            $wy = [double]$b.Y
-            $ww = [double]$b.Width
-            $wh = [double]$b.Height
-            if ($wx -lt $x1) { $x1 = $wx }
-            if ($wy -lt $y1) { $y1 = $wy }
-            if (($wx + $ww) -gt $x2) { $x2 = $wx + $ww }
-            if (($wy + $wh) -gt $y2) { $y2 = $wy + $wh }
+    try {
+        $null = [Windows.Storage.StorageFile, Windows.Foundation, ContentType=WindowsRuntime]
+        $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType=WindowsRuntime]
+        $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime]
+        $file = Await-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
+        $stream = Await-WinRT ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+        $decoder = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+        $bitmap = Await-WinRT ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+        $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+        if (-not $engine) { Write-Host "ocr engine unavailable"; return $hits }
+        $result = Await-WinRT ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+        foreach ($line in $result.Lines) {
+            Write-Host "ocr line: $($line.Text)"
+            if ($line.Text -notmatch $DeviceMatch) { continue }
+            $x1 = [double]::MaxValue
+            $y1 = [double]::MaxValue
+            $x2 = 0.0
+            $y2 = 0.0
+            foreach ($word in $line.Words) {
+                $b = $word.BoundingRect
+                $wx = [double]$b.X
+                $wy = [double]$b.Y
+                $ww = [double]$b.Width
+                $wh = [double]$b.Height
+                if ($wx -lt $x1) { $x1 = $wx }
+                if ($wy -lt $y1) { $y1 = $wy }
+                if (($wx + $ww) -gt $x2) { $x2 = $wx + $ww }
+                if (($wy + $wh) -gt $y2) { $y2 = $wy + $wh }
+            }
+            $rowTop = [double]$bitmap.PixelHeight * 0.62
+            $rowBottom = [double]$bitmap.PixelHeight * 0.80
+            if ($y1 -lt $rowTop -or $y1 -gt $rowBottom) { continue }
+            $hits += [pscustomobject]@{
+                Text = $line.Text
+                X = [int]$x1
+                Y = [int]$y1
+                W = [int]($x2 - $x1)
+                H = [int]($y2 - $y1)
+            }
         }
-        $rowTop = [double]$bitmap.PixelHeight * 0.62
-        $rowBottom = [double]$bitmap.PixelHeight * 0.80
-        if ($y1 -lt $rowTop -or $y1 -gt $rowBottom) { continue }
-        $hits += [pscustomobject]@{
-            Text = $line.Text
-            X = [int]$x1
-            Y = [int]$y1
-            W = [int]($x2 - $x1)
-            H = [int]($y2 - $y1)
-        }
+    } catch {
+        Write-Host "OCR failed or unsupported in this shell."
     }
     return $hits
 }
@@ -329,3 +341,4 @@ for ($i = 0; $i -lt 18; $i++) {
     $log | Select-String -Pattern "click|group|RTSP|PLAY|source|listen|arm|failed|success|UP |PENDING|DOWN" | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
     if ($log -match "PLAYING|EnteredPlay|ConnectionEstablished|group down") { break }
 }
+

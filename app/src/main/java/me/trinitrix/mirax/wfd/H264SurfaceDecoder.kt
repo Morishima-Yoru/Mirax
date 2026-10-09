@@ -1,4 +1,4 @@
-package me.trinitrix.mirax.wfd
+﻿package me.trinitrix.mirax.wfd
 
 import android.media.MediaCodec
 import android.media.MediaFormat
@@ -51,6 +51,15 @@ class H264SurfaceDecoder {
     /** ElapsedRealtime ms when the sink last sent wfd_idr_request, or 0. */
     @Volatile
     private var lastIdrRequestElapsedMs: Long = 0L
+
+    // Public getters for debug overlay
+    val decoderName: String get() = codec?.name ?: "none"
+    val inputWidth: Int get() = videoW
+    val inputHeight: Int get() = videoH
+    val inputFps: Int get() = videoFps
+    val framesDecoded: Long get() = frames
+    val pendingFrames: Int get() = pending.size
+    val isAwaitingKeyframe: Boolean get() = awaitingKeyframe
 
     @Volatile
     var onFormat: ((width: Int, height: Int, fps: Int) -> Unit)? = null
@@ -159,7 +168,7 @@ class H264SurfaceDecoder {
                 submitTimesMs.clear()
                 awaitingKeyframe = true
                 Log.w(TAG, "hard backlog; wait for IDR")
-                requestKeyframeSoon()
+                requestKeyframeSoon(force = true)
                 drainPending()
                 return
             }
@@ -351,6 +360,7 @@ class H264SurfaceDecoder {
         }
     }
 
+<<<<<<< Updated upstream
     private fun maybeLogSubmitToFrameLag() {
         val submittedAt = submitTimesMs.pollFirst() ?: return
         val lagMs = SystemClock.elapsedRealtime() - submittedAt
@@ -482,12 +492,13 @@ class H264SurfaceDecoder {
     }
 
     /** Ask the source for an IDR, rate-limited so encode spikes stay rare. */
-    private fun requestKeyframeSoon() {
+    private fun requestKeyframeSoon(force: Boolean = false) {
         if (videoW <= 0) {
             return
         }
         val now = SystemClock.uptimeMillis()
-        if (now - lastKeyframeRequestMs < KEYFRAME_REQUEST_MIN_MS) {
+        val minIntervalMs = if (force) 500L else KEYFRAME_REQUEST_MIN_MS
+        if (now - lastKeyframeRequestMs < minIntervalMs) {
             return
         }
         lastKeyframeRequestMs = now

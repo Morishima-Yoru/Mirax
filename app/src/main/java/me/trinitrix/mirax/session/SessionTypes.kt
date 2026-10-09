@@ -287,6 +287,8 @@ data class SessionSettings(
     val cameraCutoutAffectsLayout: Boolean = false,
     /** Minutes of advertising before it turns itself off. Default one minute. */
     val broadcastAutoStopMinutes: Int = 1,
+    /** Show debug overlay with stream info, frame tree, and crop controls. */
+    val showDebugOverlay: Boolean = false,
 )
 
 /**
@@ -457,6 +459,8 @@ data class SessionSnapshot(
     val cameraCutoutAffectsLayout: Boolean = false,
     /** Minutes until an active broadcast turns itself off. */
     val broadcastAutoStopMinutes: Int = 1,
+    /** Show debug overlay with stream info, frame tree, and crop controls. */
+    val showDebugOverlay: Boolean = false,
     /**
      * English handshake lines for the open attempt. Empty unless the phase
      * is [ScreenPhase.CONNECTING] and [showDebugMessages] is true. The underlying
@@ -718,6 +722,9 @@ sealed interface SessionAction {
 
     /** User asked the connecting dashboard to show or hide the live handshake log. */
     data class SetShowDebugMessages(val enabled: Boolean) : SessionAction
+
+    /** User toggled the debug overlay with stream info, frame tree, and crop controls. */
+    data class SetShowDebugOverlay(val enabled: Boolean) : SessionAction
 
     /** User asked whether dashboard padding should clear the camera cutout. */
     data class SetCameraCutoutAffectsLayout(val enabled: Boolean) : SessionAction

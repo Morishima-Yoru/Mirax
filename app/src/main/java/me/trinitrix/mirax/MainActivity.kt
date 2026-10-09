@@ -869,6 +869,7 @@ class MainActivity : AppCompatActivity() {
             Page.SCALE -> updateScale(root, snapshot)
             Page.ADVANCED -> {
                 updateSwitch(root, "debug", snapshot.showDebugMessages)
+                updateSwitch(root, "overlay", snapshot.showDebugOverlay)
                 updateSwitch(root, "cutout", snapshot.cameraCutoutAffectsLayout)
                 contentColumn(root).findViewWithTag<TextView>("auto-stop")?.text =
                     getString(R.string.broadcast_auto_stop_value, snapshot.broadcastAutoStopMinutes)
@@ -1954,6 +1955,12 @@ class MainActivity : AppCompatActivity() {
             persist(session)
             render(session.snapshot())
         }.apply { tag = "debug" })
+        column.addView(switchRow(getString(R.string.debug_overlay), snapshot.showDebugOverlay) { enabled ->
+            val session = MiraxApp.instance.session
+            session.handle(SessionAction.SetShowDebugOverlay(enabled))
+            persist(session)
+            render(session.snapshot())
+        }.apply { tag = "overlay" })
         column.addView(switchRow(
             getString(R.string.camera_cutout_affects_layout),
             snapshot.cameraCutoutAffectsLayout,

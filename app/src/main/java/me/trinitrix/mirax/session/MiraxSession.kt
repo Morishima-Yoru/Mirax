@@ -56,6 +56,7 @@ class MiraxSession(
     private var showDebugMessages: Boolean = initialSettings.showDebugMessages
     private var cameraCutoutAffectsLayout: Boolean = initialSettings.cameraCutoutAffectsLayout
     private var broadcastAutoStopMinutes: Int = clampAutoStopMinutes(initialSettings.broadcastAutoStopMinutes)
+    private var showDebugOverlay: Boolean = initialSettings.showDebugOverlay
     private var privilege: PrivilegeReport = PrivilegeReport()
     private var wifiEnabled: Boolean = true
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
@@ -324,6 +325,9 @@ class MiraxSession(
             is SessionAction.SetShowDebugMessages -> {
                 showDebugMessages = action.enabled
             }
+            is SessionAction.SetShowDebugOverlay -> {
+                showDebugOverlay = action.enabled
+            }
             is SessionAction.SetCameraCutoutAffectsLayout -> {
                 cameraCutoutAffectsLayout = action.enabled
             }
@@ -408,6 +412,7 @@ class MiraxSession(
             autoAddWmSizeOnConnect = autoAddWmSizeOnConnect,
             touchEnabled = touchEnabled,
             showDebugMessages = showDebugMessages,
+            showDebugOverlay = showDebugOverlay,
             cameraCutoutAffectsLayout = cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = broadcastAutoStopMinutes,
             handshakeLog = if (phase == ScreenPhase.CONNECTING && showDebugMessages) {
@@ -441,6 +446,7 @@ class MiraxSession(
             showDebugMessages = showDebugMessages,
             cameraCutoutAffectsLayout = cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = broadcastAutoStopMinutes,
+            showDebugOverlay = showDebugOverlay,
         )
     }
 

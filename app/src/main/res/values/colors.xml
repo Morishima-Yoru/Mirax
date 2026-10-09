@@ -18,4 +18,10 @@
     <color name="mirax_frame">#08FFFFFF</color>
     <color name="mirax_stroke">#1FE8EAED</color>
     <color name="mirax_field_line">#47E8EAED</color>
+    
+    <!-- Widget status background colors -->
+    <color name="widget_bg_off">#FF1C1F26</color>
+    <color name="widget_bg_advertising">#FF2D4A3E</color>
+    <color name="widget_bg_connected">#FF1A4D2E</color>
+    <color name="widget_bg_unavailable">#FF4A2D2D</color>
 </resources>

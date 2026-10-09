@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.widget.RemoteViews
 import me.trinitrix.mirax.MainActivity
 import me.trinitrix.mirax.MiraxApp
@@ -54,6 +55,16 @@ class BroadcastStatusWidget : AppWidgetProvider() {
             }
             views.setTextViewText(R.id.widgetStatus, context.getString(statusRes))
             views.setTextViewText(R.id.widgetTitle, context.getString(R.string.widget_title))
+            
+            // Set background color based on widget status
+            val bgColor = when (snapshot.widgetStatus) {
+                WidgetStatus.OFF -> context.getColor(R.color.widget_bg_off)
+                WidgetStatus.ADVERTISING -> context.getColor(R.color.widget_bg_advertising)
+                WidgetStatus.CONNECTED -> context.getColor(R.color.widget_bg_connected)
+                WidgetStatus.UNAVAILABLE -> context.getColor(R.color.widget_bg_unavailable)
+            }
+            views.setInt(R.id.widgetRoot, "setBackgroundColor", bgColor)
+            
             val open = PendingIntent.getActivity(
                 context,
                 0,
