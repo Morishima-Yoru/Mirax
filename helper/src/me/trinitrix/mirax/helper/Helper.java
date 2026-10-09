@@ -74,6 +74,10 @@ public final class Helper {
             return;
         }
         OutputStream out = client.getOutputStream();
+        if ("UID".equals(line)) {
+            writeLine(out, Integer.toString(android.os.Process.myUid()));
+            return;
+        }
         if ("STOP".equals(line)) {
             stopProcess();
             writeLine(out, "OK");
@@ -90,6 +94,15 @@ public final class Helper {
         }
         if ("LISTENING".equals(line)) {
             writeLine(out, beacon.isListening() ? "YES" : "NO");
+            return;
+        }
+        if ("FORGET_PAIRINGS".equals(line)) {
+            beacon.forgetAllPairings();
+            writeLine(out, "OK");
+            return;
+        }
+        if ("PAIRING_STATE".equals(line)) {
+            writeLine(out, beacon.getPairingState().name());
             return;
         }
         if ("END".equals(line)) {
