@@ -458,7 +458,6 @@ object SinkConnectionController {
                             writeLatencyLowIfNeeded(session, output)
                         }
                         postAction(SessionAction.EnteredPlay)
-                        openPicture()
                     }
                     if (session.state == "TEARDOWN" || session.state == "ERROR") {
                         note("RTSP session ${session.state}")

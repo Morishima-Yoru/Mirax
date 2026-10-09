@@ -687,6 +687,7 @@ class MiraxSession(
         if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
             connected = true
             awayOnHomeScreen = false
+            enqueueEffect(SessionEffect.BringProjectionToFront)
         }
     }
 

@@ -4,6 +4,8 @@ import android.util.Log
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.SurfaceHolder
@@ -31,6 +33,7 @@ import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.wfd.DebugOverlayView
+import me.trinitrix.mirax.wfd.H264SurfaceDecoder
 import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import me.trinitrix.mirax.wfd.UibcContact
@@ -73,6 +76,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private var cursorBitmapW: Int = 0
     private var cursorBitmapH: Int = 0
     private lateinit var debugOverlay: DebugOverlayView
+    private val debugOverlayHandler = Handler(Looper.getMainLooper())
+    private val debugOverlayRunnable = Runnable { updateDebugOverlayPeriodic() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -198,6 +203,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         } else {
             applySession(session.snapshot())
         }
+        startDebugOverlayUpdates()
     }
 
     override fun onUserLeaveHint() {
@@ -210,6 +216,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun onStop() {
         super.onStop()
+        stopDebugOverlayUpdates()
         if (isChangingConfigurations || isFinishing) {
             return
         }
@@ -223,6 +230,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onDestroy() {
+        stopDebugOverlayUpdates()
         endConnectionDialog?.dismiss()
         endConnectionDialog = null
         if (showing?.get() === this) {
@@ -760,28 +768,17 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     private fun updateDebugOverlay(snapshot: SessionSnapshot) {
         val decoder = SinkConnectionController.decoder
-        val stats = DebugOverlayView.DecoderStats(
-            decoderName = decoder.decoderName,
-            inputWidth = decoder.inputWidth,
-            inputHeight = decoder.inputHeight,
-            inputFps = decoder.inputFps,
-            outputWidth = bufferW,
-            outputHeight = bufferH,
-            framesDecoded = decoder.framesDecoded,
-            framesDropped = 0, // TODO: track dropped frames
-            pendingFrames = decoder.pendingFrames,
-            awaitingKeyframe = decoder.isAwaitingKeyframe,
-            currentBitrateKbps = 0, // TODO: calculate bitrate
-        )
+        val outW = if (bufferW > 0) bufferW else decoder.inputWidth
+        val outH = if (bufferH > 0) bufferH else decoder.inputHeight
+        val stats = decoder.getDebugStats(outputWidth = outW, outputHeight = outH)
         debugOverlay.updateDecoderStats(stats)
-        
-        // Build frame tree from decoder state
+
         val frameTree = listOf(
-            DebugOverlayView.FrameNode("Decoder", bufferW, bufferH, listOf(
+            DebugOverlayView.FrameNode("Decoder", outW, outH, listOf(
                 DebugOverlayView.FrameNode("Input", decoder.inputWidth, decoder.inputHeight),
                 DebugOverlayView.FrameNode("Surface", surfaceView.width, surfaceView.height),
                 DebugOverlayView.FrameNode("Panel", stage.width, stage.height),
-            ))
+            )),
         )
         debugOverlay.updateFrameTree(frameTree)
         debugOverlay.updateLayout(stage.width, stage.height, snapshot.pictureScale.name)
@@ -798,6 +795,24 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             )
             debugOverlay.updateCrop(rect)
         }
+    }
+
+    private fun updateDebugOverlayPeriodic() {
+        val snapshot = MiraxApp.instance.session.snapshot()
+        if (snapshot.showDebugOverlay && snapshot.showPicture) {
+            updateDebugOverlay(snapshot)
+            // Schedule next update
+            debugOverlayHandler.postDelayed(debugOverlayRunnable, 500)
+        }
+    }
+
+    private fun startDebugOverlayUpdates() {
+        debugOverlayHandler.removeCallbacks(debugOverlayRunnable)
+        debugOverlayHandler.post(debugOverlayRunnable)
+    }
+
+    private fun stopDebugOverlayUpdates() {
+        debugOverlayHandler.removeCallbacks(debugOverlayRunnable)
     }
 
     companion object {

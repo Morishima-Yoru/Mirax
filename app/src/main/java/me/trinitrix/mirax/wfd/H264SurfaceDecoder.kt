@@ -1,4 +1,6 @@
-﻿package me.trinitrix.mirax.wfd
+package me.trinitrix.mirax.wfd
+
+
 
 import android.media.MediaCodec
 import android.media.MediaFormat
@@ -8,6 +10,8 @@ import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.util.ArrayDeque
+
+
 
 /**
  * Decodes H.264 access units onto an attached [Surface].
@@ -33,8 +37,12 @@ class H264SurfaceDecoder {
     private var drainThread: Thread? = null
     private val submitTimesMs = ArrayDeque<Long>()
 
+
+
     @Volatile
     private var drainAlive: Boolean = false
+
+
 
     /**
      * ElapsedRealtime ms of the latest UIBC touch write. Decoder logs
@@ -43,14 +51,20 @@ class H264SurfaceDecoder {
     @Volatile
     var lastTouchElapsedRealtimeMs: Long = 0L
 
+
+
     /** ElapsedRealtime ms of the latest released output frame, or 0. */
     @Volatile
     var lastFrameElapsedRealtimeMs: Long = 0L
         private set
 
+
+
     /** ElapsedRealtime ms when the sink last sent wfd_idr_request, or 0. */
     @Volatile
     private var lastIdrRequestElapsedMs: Long = 0L
+
+
 
     // Public getters for debug overlay
     val decoderName: String get() = codec?.name ?: "none"
@@ -61,8 +75,12 @@ class H264SurfaceDecoder {
     val pendingFrames: Int get() = pending.size
     val isAwaitingKeyframe: Boolean get() = awaitingKeyframe
 
+
+
     @Volatile
     var onFormat: ((width: Int, height: Int, fps: Int) -> Unit)? = null
+
+
 
     /** Record that an RTSP IDR request was flushed toward the source. */
     fun markIdrRequested() {
@@ -72,12 +90,94 @@ class H264SurfaceDecoder {
         }
     }
 
+
+
     /**
      * Fired when a new decoder cannot start until the source sends an IDR.
      * The callback must not re-enter this decoder.
      */
     @Volatile
     var onNeedKeyframe: (() -> Unit)? = null
+
+
+
+    // Debug stats for overlay (rolling window)
+    private var currentFps: Int = 0
+    private var currentBitrateKbps: Long = 0
+    @Volatile
+    private var lastSubmitToFrameMs: Long = 0
+    private var rateWindowBytes: Long = 0
+    private var rateWindowFrames: Long = 0
+    private var rateWindowStartMs: Long = 0
+
+    data class DebugStats(
+        val decoderName: String,
+        val inputWidth: Int,
+        val inputHeight: Int,
+        val inputFps: Int,
+        val outputWidth: Int,
+        val outputHeight: Int,
+        val framesDecoded: Long,
+        val framesDropped: Long,
+        val pendingFrames: Int,
+        val awaitingKeyframe: Boolean,
+        val currentBitrateKbps: Long,
+        val currentFps: Int,
+        /** Decoder queue latency: input submit → output release, ms. */
+        val submitToFrameMs: Long,
+    )
+
+    fun getDebugStats(outputWidth: Int = 0, outputHeight: Int = 0): DebugStats {
+        synchronized(this) {
+            refreshRateWindowLocked()
+            return DebugStats(
+                decoderName = decoderName,
+                inputWidth = inputWidth,
+                inputHeight = inputHeight,
+                inputFps = inputFps,
+                outputWidth = outputWidth,
+                outputHeight = outputHeight,
+                framesDecoded = framesDecoded,
+                framesDropped = 0,
+                pendingFrames = pendingFrames,
+                awaitingKeyframe = isAwaitingKeyframe,
+                currentBitrateKbps = currentBitrateKbps,
+                currentFps = currentFps,
+                submitToFrameMs = lastSubmitToFrameMs,
+            )
+        }
+    }
+
+    fun updateDebugStats() {
+        synchronized(this) {
+            refreshRateWindowLocked()
+        }
+    }
+
+    /** Caller must hold the decoder monitor. */
+    private fun refreshRateWindowLocked() {
+        val now = SystemClock.elapsedRealtime()
+        if (rateWindowStartMs == 0L) {
+            rateWindowStartMs = now
+            return
+        }
+        val elapsed = now - rateWindowStartMs
+        if (elapsed < 400L) {
+            return
+        }
+        val bytes = rateWindowBytes
+        val decoded = rateWindowFrames
+        rateWindowBytes = 0
+        rateWindowFrames = 0
+        rateWindowStartMs = now
+        // Sparse desktop can pause briefly; keep last rate instead of flashing 0.
+        if (bytes > 0L || decoded > 0L) {
+            currentBitrateKbps = (bytes * 8L) / elapsed
+            currentFps = ((decoded * 1000L) / elapsed).toInt()
+        }
+    }
+
+
 
     fun attachSurface(surface: Surface?) {
         synchronized(this) {
@@ -117,6 +217,8 @@ class H264SurfaceDecoder {
         }
     }
 
+
+
     fun setFormat(width: Int, height: Int, fps: Int) {
         synchronized(this) {
             val changed = videoW != 0 && (width != videoW || height != videoH)
@@ -132,6 +234,8 @@ class H264SurfaceDecoder {
             drainPending()
         }
     }
+
+
 
     fun submitAccessUnit(au: ByteArray) {
         synchronized(this) {
@@ -161,7 +265,7 @@ class H264SurfaceDecoder {
             }
             // Soft backlog: ask Windows for an IDR soon, but keep decoding.
             // Hard backlog: freeze for resync. Do NOT treat sparse Miracast
-            // (static desktop often <5 fps) as an output stall — that path was
+            // (static desktop often <5 fps) as an output stall - that path was
             // flooding wfd_idr_request every ~1s and inflating encode lag.
             if (pending.size >= HARD_PENDING_FRAMES) {
                 pending.clear()
@@ -181,6 +285,8 @@ class H264SurfaceDecoder {
         }
     }
 
+
+
     fun reset() {
         synchronized(this) {
             pending.clear()
@@ -193,6 +299,8 @@ class H264SurfaceDecoder {
             submitTimesMs.clear()
         }
     }
+
+
 
     private fun drainPending() {
         val surfaceReady = surface != null && surface!!.isValid
@@ -221,6 +329,8 @@ class H264SurfaceDecoder {
         }
         releaseOutput(active)
     }
+
+
 
     private fun ensureCodec() {
         val output = surface
@@ -295,6 +405,8 @@ class H264SurfaceDecoder {
         }
     }
 
+
+
     /**
      * @return false when the codec has no free input buffer; caller must keep [au].
      */
@@ -318,6 +430,7 @@ class H264SurfaceDecoder {
             val ptsUs = frames * 1_000L
             codec.queueInputBuffer(index, 0, au.size, ptsUs, flags)
             submitted++
+            rateWindowBytes += au.size.toLong()
             submitTimesMs.addLast(SystemClock.elapsedRealtime())
             while (submitTimesMs.size > 120) {
                 submitTimesMs.removeFirst()
@@ -331,6 +444,8 @@ class H264SurfaceDecoder {
             return false
         }
     }
+
+
 
     private fun releaseOutput(codec: MediaCodec) {
         val info = MediaCodec.BufferInfo()
@@ -353,6 +468,7 @@ class H264SurfaceDecoder {
             val show = surface != null && surface!!.isValid
             codec.releaseOutputBuffer(index, show)
             frames++
+            rateWindowFrames++
             val nowElapsed = SystemClock.elapsedRealtime()
             lastFrameElapsedRealtimeMs = nowElapsed
             maybeLogSubmitToFrameLag()
@@ -360,10 +476,12 @@ class H264SurfaceDecoder {
         }
     }
 
-<<<<<<< Updated upstream
+
+
     private fun maybeLogSubmitToFrameLag() {
         val submittedAt = submitTimesMs.pollFirst() ?: return
         val lagMs = SystemClock.elapsedRealtime() - submittedAt
+        lastSubmitToFrameMs = lagMs
         val now = SystemClock.uptimeMillis()
         if (now - lastSubmitLagLogMs < SUBMIT_LAG_LOG_INTERVAL_MS) {
             return
@@ -371,6 +489,8 @@ class H264SurfaceDecoder {
         lastSubmitLagLogMs = now
         Log.i(TAG, "submit_to_frame_ms=$lagMs")
     }
+
+
 
     private fun maybeLogTouchToFrameLag() {
         val touchAt = lastTouchElapsedRealtimeMs
@@ -394,6 +514,8 @@ class H264SurfaceDecoder {
         lastTouchElapsedRealtimeMs = 0L
         Log.i(TAG, "touch_to_frame_ms=$lagMs")
     }
+
+
 
     private fun startDrainThread() {
         if (drainAlive) {
@@ -425,6 +547,8 @@ class H264SurfaceDecoder {
         }
     }
 
+
+
     private fun stopDrainThread() {
         // Never join here: callers hold the decoder monitor and the drain thread
         // needs that same monitor to finish its current releaseOutput pass.
@@ -432,6 +556,8 @@ class H264SurfaceDecoder {
         drainThread?.interrupt()
         drainThread = null
     }
+
+
 
     private fun maybeLogStats(where: String) {
         val now = SystemClock.uptimeMillis()
@@ -445,6 +571,8 @@ class H264SurfaceDecoder {
                 "awaitIdr=$awaitingKeyframe",
         )
     }
+
+
 
     /**
      * Soft stall nudge: if outputs freeze while work is queued, ask for an IDR
@@ -491,6 +619,8 @@ class H264SurfaceDecoder {
         requestKeyframeSoon()
     }
 
+
+
     /** Ask the source for an IDR, rate-limited so encode spikes stay rare. */
     private fun requestKeyframeSoon(force: Boolean = false) {
         if (videoW <= 0) {
@@ -505,6 +635,8 @@ class H264SurfaceDecoder {
         onNeedKeyframe?.invoke()
     }
 
+
+
     private fun stopCodec() {
         stopDrainThread()
         try {
@@ -518,16 +650,22 @@ class H264SurfaceDecoder {
         codec = null
     }
 
+
+
     companion object {
         private const val TAG = "MiraxH264"
         /** Soft catch-up nudge (~200 ms at 60 fps) without freezing decode. */
         private const val SOFT_PENDING_FRAMES = 12
+
+
 
         /**
          * Freeze for IDR when backlog is ~400 ms at 60 fps.
          * Dropping mid-GOP tears the picture; a hard cut waits for the next keyframe.
          */
         private const val HARD_PENDING_FRAMES = 24
+
+
 
         /** Minimum gap between wfd_idr_request SET_PARAMETERs. */
         private const val KEYFRAME_REQUEST_MIN_MS = 4_000L
@@ -541,7 +679,11 @@ class H264SurfaceDecoder {
         private const val SUBMIT_LAG_LOG_INTERVAL_MS = 500L
         private const val PREFERRED_MTK_AVC = "OMX.MTK.VIDEO.DECODER.AVC"
 
+
+
         private fun isKeyframe(au: ByteArray): Boolean = hasNal(au, 5) || hasNal(au, 7)
+
+
 
         private fun hasNal(au: ByteArray, type: Int): Boolean {
             var i = 0
@@ -566,3 +708,4 @@ class H264SurfaceDecoder {
         }
     }
 }
+
