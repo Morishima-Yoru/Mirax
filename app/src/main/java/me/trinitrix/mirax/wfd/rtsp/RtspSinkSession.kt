@@ -35,6 +35,14 @@ class RtspSinkSession(
      */
     var uibcHidType: Int = 3
         private set
+
+    /**
+     * Latest microsoft_latency_management_capability value from the source
+     * (`low` / `normal` / `high`), or empty before the first SET_PARAMETER.
+     */
+    var latencyMode: String = ""
+        private set
+
     private var customSelected: Boolean = false
     private var activeRtpPort: Int = rtpPort
 
@@ -131,6 +139,29 @@ class RtspSinkSession(
             return ""
         }
         return idrRequest()
+    }
+
+    /**
+     * Ask the source to switch microsoft latency role (`low` / `normal` / `high`).
+     *
+     * Windows normally pushes this sink-ward; sending it sink-ward after PLAY is a
+     * best-effort nudge toward interactive encode when UIBC is active.
+     */
+    fun requestLatencyMode(mode: String): String {
+        if (state != "PLAYING" || outstandingCseq != -1) {
+            return ""
+        }
+        val normalized = mode.trim().lowercase(Locale.US)
+        if (normalized !in setOf("low", "normal", "high")) {
+            return ""
+        }
+        val url = presentationUrl.ifEmpty { "rtsp://localhost/wfd1.0" }
+        return request(
+            "SET_PARAMETER",
+            url,
+            "Content-Type: text/parameters\r\n",
+            "microsoft_latency_management_capability: $normalized\r\n",
+        )
     }
 
     private fun handleResponse(start: String, lines: List<String>, out: MutableList<String>) {
@@ -258,7 +289,9 @@ class RtspSinkSession(
                         uibcPort = -1
                     }
                 }
-                "microsoft_latency_management_capability",
+                "microsoft_latency_management_capability" -> {
+                    latencyMode = value.lowercase(Locale.US).ifEmpty { "supported" }
+                }
                 "microsoft_audio_mute",
                 "microsoft_format_change_capability",
                 -> {
