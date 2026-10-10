@@ -12,74 +12,52 @@ Five canonical roles, each label string equal to its name. See `../docs/agents/t
 
 Single-context: `../docs/CONTEXT.md` and `../docs/adr/`. See `../docs/agents/domain.md`.
 
+### E2E testing handoff
+
+**MANDATORY**: When user mentions any of: `E2E`, `end-to-end`, `UiAutomator`, `adb verification`, `click-fold`, `device test`, `instrumentation test` → **IMMEDIATELY READ** `.agents/e2e-testing.md` before responding.
+See `.agents/e2e-testing.md` for `adb` + `UiAutomator` verification procedures.
+
 # Policy
-## When Python
-* Aimed to use Python 3.15 interpreter.
-* Always use uv to manage Python environment.
-* Prevent use `typing.Any` type-hint (prefer `object` or generics), except in low-level C-FFI/DLL wrapper modules.
-* Use Google-style docstring for class, method, and:
-    * use ``Args:``, ``Returns:``, ``Raises:`` sections when appropriate.
-    * use ``:class:`Foo``` to reference other classes in docstring.
-    * use ``Attributes:`` section for class attributes.
-* Always use standard 4-space indentation (PEP 8).
-* Standardize logging with `AppLogger` wrapping `rich` console styling and daily log file rotation (`YYYY-MM-DD.log`).
-* Always ensure the code with clear type-hint.
-* Let artifact be flake8 compliant. And considering run checker using uv.
-* Always keep code be `snake_case` naming for normal, `PascalCase` naming for class and `UPPER_CASE` for Final.
+## When Kotlin / Java
+* Aim to use Kotlin (Java only when required for JNI/legacy).
+* Use Gradle (KTS) for builds.
+* Prevent use of raw `Any` (prefer strong types or generics).
+* Use KDoc for classes and methods (`@param`, `@return`).
+* Always use standard 4-space indentation.
+* Standardize logging with Android `Log` or `Timber`. Avoid silent failure.
+* Avoid `!!` (not-null assertions); prefer safe calls `?.` and elvis `?:`.
+* Always keep code `camelCase` for normal, `PascalCase` for classes/interfaces, and `UPPER_SNAKE_CASE` for const vals.
 
 ## Naming Conventions
-* Variables & functions: `snake_case` — descriptive, explicit verbs for functions.
-* Classes & exceptions: `PascalCase` — nouns or noun phrases.
-* Constants & `Final` values: `UPPER_CASE` — always explicitly marked with `Final[...]` type annotation.
-* Private class members: `_snake_case` — single leading underscore for internal attributes.
-* Name-mangled lifecycle methods: `__snake_case` — double leading underscore used in bootstrapping routines (e.g. `__construct_gui`).
-* Generic type parameters: suffix with `T` or use PEP 695 `[T]` syntax (e.g. `stateT`, `PossibleBackendT`).
+* Variables & functions: `camelCase` — descriptive, explicit verbs.
+* Classes & exceptions: `PascalCase` — nouns.
+* Constants: `UPPER_SNAKE_CASE` (for `const val`).
+* Generic type parameters: single letter `T` or descriptive `StateT`.
 
-## Type Hints
-* Use `A | B` instead of `Union[A, B]` (Python 3.10+ syntax).
-* Use `A | None` instead of `Optional[A]`.
-* Use built-in generic collections (`list[str]`, `dict[str, int]`) instead of `List`, `Dict` from `typing`.
-* Leverage PEP 695 type alias syntax for modern projects:
-    ```python
-    type _OrEllipsis[T] = T | EllipsisType
-    ```
+## Features
+* Use Kotlin Coroutines & Flows (`StateFlow`/`SharedFlow`) over plain threads/RxJava.
+* Prefer read-only collections (`List<T>`, `Map<K,V>`) implicitly over mutable variants.
+* Use `sealed class` / `sealed interface` for exhaustive state and error modeling.
+* Use `typealias` for complex lambda signatures.
 
 ## Architecture & OOP Design
-* Primary considers OOP design pattern.
-* Organize codebases with clean, decoupled module layers:
-    * `definitions/` — interfaces, exceptions, namespace enums, type aliases.
-    * `backends/` — low-level communication drivers (FTD2XX, VCP, SCPI).
-    * `implements/` — concrete hardware/device implementors.
-    * `controllers/` — sub-controllers (ISN, Menu, Status, MainController).
-    * `managers/` — system managers (Config, Logger, Passphrase, Session).
-    * `tasks/` — FSM task step handlers.
-    * `services/` — external service integration (SFIS, Web APIs).
-    * `view/` — GUI views and popups.
-    * `core/` — bootstrap lifecycle, AppRuntime, engine cores.
-* Key patterns in practice:
-    * **Abstract Factory** — decouple board models from communication backends.
-    * **FSM Orchestration** — Moore/Mealy state machines with picklable `FsmSnapshot`.
-    * **Controller Orchestration (MVC/PAC)** — `MainController` composing sub-controllers.
-    * **Hardware Strategy/Backend Abstraction** — inject `CommunicationInterface`.
-    * **Application Lifecycle Bootstrapper** — `AppRuntime.bootstrap()` classmethod with `atexit` cleanup.
+* Prefer standard Android MVVM or MVI.
+* Organize codebase by clean architecture boundaries:
+    * `domain/` — generic interfaces, models, exceptions.
+    * `data/` — repositories, concrete hw drivers, APIs.
+    * `ui/` — Views, Compose, ViewModels.
+    * `di/` — Dependency injection.
+    * `core/` or `common/` — base components, utilities.
 
 ## Exception Handling
-* Never swallow exceptions silently; log errors before re-raising.
-* Place all custom exception classes in a dedicated `definitions/exceptions.py` module.
-* Define a single root exception per project (e.g. `HiokiError`, `FsmError`), then subclass for specific domains.
-* Preserve original traceback with `raise NewException(...) from err`.
-* Use `contextlib.suppress(Exception)` only for explicit safe cleanup paths (e.g. hardware disconnect on `atexit`).
-
-## Logging
-* Adopt `AppLogger` as the standard logging wrapper.
-* Use `rich.logging.RichHandler` for colored terminal output.
-* Rotate log files daily with filename format `YYYY-MM-DD.log`.
-* Initialize module-level loggers as: `_logger = logging.getLogger(__name__)`.
+* Never swallow exceptions silently. Log first.
+* Group custom domain exceptions in `domain/exceptions/`.
+* Preserve original traceback: `throw CustomException(msg, cause)`.
+* Treat expected domain errors as data (e.g. returning `Result<T>`) rather than throwing exceptions.
 
 ## Configuration
-* Store user-editable settings in YAML files (`config.yaml`).
-* Map YAML content to frozen dataclass models in `definitions/namespace.py`.
-* Expose configs via a `ConfigManager` singleton parsed at startup.
+* Read settings using `DataStore` or `SharedPreferences`.
+* Map settings to Kotlin `data class` models for runtime config consumption.
 
 # Globally
 ## Languaging
@@ -89,6 +67,10 @@ Single-context: `../docs/CONTEXT.md` and `../docs/adr/`. See `../docs/agents/dom
 ## Programming Style
 * Primary considers OOP design pattern.
 
-## Misc
-* Always use pwsh for terminal command
-
+## Misc (PowerShell Guardrails)
+* Always use Windows PowerShell (`pwsh`) for terminal commands. DO NOT assume a Linux Bash environment.
+* NEVER use `ls -la` (crashes due to unrecognised `-la` parameter). Use `ls` or `Get-ChildItem`.
+* NEVER use `grep`. Use `Select-String` (e.g., `| Select-String "pattern"`).
+* NEVER use `> /dev/null` or `2> /dev/null`. It creates a literal `C:\dev\null` file and crashes. Use `> $null` or `2> $null` instead.
+* NEVER use `export VAR=VALUE`. Use `$env:VAR='VALUE'` to set environment variables.
+* NEVER use `touch file`. Use `New-Item -ItemType File -Path file` instead.
