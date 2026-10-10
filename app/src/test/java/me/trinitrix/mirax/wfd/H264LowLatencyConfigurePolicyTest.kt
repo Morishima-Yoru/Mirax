@@ -11,22 +11,30 @@ class H264LowLatencyConfigurePolicyTest {
     }
 
     @Test
-    fun usesAndroidLowLatency_onlyOnFirstPhase() {
-        assertThat(H264LowLatencyConfigurePolicy.usesAndroidLowLatency(Phase.WITH_LOW_LATENCY)).isTrue()
+    fun initialPhase_isVendorFirst() {
+        assertThat(H264LowLatencyConfigurePolicy.initialPhase())
+            .isEqualTo(Phase.WITH_VENDOR_LOW_LATENCY)
+    }
+
+    @Test
+    fun usesAndroidLowLatency_onlyOnAndroidPhase() {
         assertThat(
             H264LowLatencyConfigurePolicy.usesAndroidLowLatency(Phase.WITH_VENDOR_LOW_LATENCY),
         ).isFalse()
+        assertThat(H264LowLatencyConfigurePolicy.usesAndroidLowLatency(Phase.WITH_LOW_LATENCY))
+            .isTrue()
         assertThat(
             H264LowLatencyConfigurePolicy.usesAndroidLowLatency(Phase.WITHOUT_LOW_LATENCY),
         ).isFalse()
     }
 
     @Test
-    fun usesVendorLowLatency_onlyOnSecondPhase() {
-        assertThat(H264LowLatencyConfigurePolicy.usesVendorLowLatency(Phase.WITH_LOW_LATENCY)).isFalse()
+    fun usesVendorLowLatency_onlyOnVendorPhase() {
         assertThat(
             H264LowLatencyConfigurePolicy.usesVendorLowLatency(Phase.WITH_VENDOR_LOW_LATENCY),
         ).isTrue()
+        assertThat(H264LowLatencyConfigurePolicy.usesVendorLowLatency(Phase.WITH_LOW_LATENCY))
+            .isFalse()
         assertThat(
             H264LowLatencyConfigurePolicy.usesVendorLowLatency(Phase.WITHOUT_LOW_LATENCY),
         ).isFalse()
@@ -43,19 +51,19 @@ class H264LowLatencyConfigurePolicyTest {
     }
 
     @Test
-    fun nextPhase_afterAndroidLowLatency_retriesVendor() {
+    fun nextPhase_afterVendorLowLatency_retriesAndroid() {
         val next = H264LowLatencyConfigurePolicy.nextPhaseAfterFailure(
-            phase = Phase.WITH_LOW_LATENCY,
+            phase = Phase.WITH_VENDOR_LOW_LATENCY,
             isCodecException = true,
             errorCode = H264LowLatencyConfigurePolicy.ERROR_UNSUPPORTED,
         )
-        assertThat(next).isEqualTo(Phase.WITH_VENDOR_LOW_LATENCY)
+        assertThat(next).isEqualTo(Phase.WITH_LOW_LATENCY)
     }
 
     @Test
-    fun nextPhase_afterVendorLowLatency_retriesWithoutKeys() {
+    fun nextPhase_afterAndroidLowLatency_retriesWithoutKeys() {
         val next = H264LowLatencyConfigurePolicy.nextPhaseAfterFailure(
-            phase = Phase.WITH_VENDOR_LOW_LATENCY,
+            phase = Phase.WITH_LOW_LATENCY,
             isCodecException = true,
             errorCode = H264LowLatencyConfigurePolicy.ERROR_UNSUPPORTED,
         )
@@ -70,5 +78,14 @@ class H264LowLatencyConfigurePolicyTest {
             errorCode = H264LowLatencyConfigurePolicy.ERROR_UNSUPPORTED,
         )
         assertThat(next).isNull()
+    }
+
+    @Test
+    fun retryReason_vendorThenAndroidThenExhausted() {
+        assertThat(H264LowLatencyConfigurePolicy.retryReason(Phase.WITH_VENDOR_LOW_LATENCY))
+            .contains("vdec-lowlatency")
+        assertThat(H264LowLatencyConfigurePolicy.retryReason(Phase.WITH_LOW_LATENCY))
+            .contains("KEY_LOW_LATENCY")
+        assertThat(H264LowLatencyConfigurePolicy.retryReason(Phase.WITHOUT_LOW_LATENCY)).isNull()
     }
 }

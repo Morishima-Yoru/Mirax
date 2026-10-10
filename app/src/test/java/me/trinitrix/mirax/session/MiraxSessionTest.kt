@@ -1088,7 +1088,7 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun sourceSelectedMode_mustBelongToAdvertisedSet_rejectsOthers() {
+    fun sourceSelectedMode_alwaysAcceptsNegotiatedMode_andLatchesOffer() {
         val session = sessionWithBroadcast()
         session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
         val advertised = session.snapshot().nextAdvertisementModes
@@ -1096,8 +1096,11 @@ class MiraxSessionTest {
         assertThat(advertised).doesNotContain(VideoMode(2560, 1440, 60))
 
         session.handle(SessionAction.BecameDiscoverable)
+        // Windows may pick a mode outside the saved checklist (interactive remap);
+        // still accept so UIBC/picture axes stay valid.
         session.handle(SessionAction.SourceSelectedMode(VideoMode(2560, 1440, 60)))
-        assertThat(session.snapshot().selectedMode).isNull()
+        assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2560, 1440, 60))
+        assertThat(session.snapshot().connectionOfferModes).contains(VideoMode(2560, 1440, 60))
 
         session.handle(SessionAction.SourceSelectedMode(VideoMode(2176, 1812, 60)))
         assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2176, 1812, 60))
@@ -1627,11 +1630,12 @@ class MiraxSessionTest {
 
         val snap = session.snapshot()
         assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTING)
-        assertThat(snap.connectionPreferredMode).isEqualTo(VideoMode(720, 1280, 60))
-        assertThat(snap.connectionOfferModes).contains(VideoMode(720, 1280, 60))
+        // Touch on → wm inject prefers 30 Hz (keeps panel axes).
+        assertThat(snap.connectionPreferredMode).isEqualTo(VideoMode(720, 1280, 30))
+        assertThat(snap.connectionOfferModes).contains(VideoMode(720, 1280, 30))
         assertThat(snap.preferredMode).isNull()
         assertThat(snap.customModes).isEmpty()
-        assertThat(snap.nextAdvertisementModes).doesNotContain(VideoMode(720, 1280, 60))
+        assertThat(snap.nextAdvertisementModes).doesNotContain(VideoMode(720, 1280, 30))
     }
 
     @Test

@@ -34,6 +34,7 @@ class H264SurfaceDecoder {
     private var lastStatsMs: Long = 0
     private var lastTouchLagLogMs: Long = 0
     private var lastSubmitLagLogMs: Long = 0
+    private var lastPresentGapLogMs: Long = 0
     private var drainThread: Thread? = null
     private val submitTimesMs = ArrayDeque<Long>()
 
@@ -101,9 +102,13 @@ class H264SurfaceDecoder {
 
 
 
-    // Debug stats for overlay (rolling window)
+    // Debug stats for overlay (rolling window + light EMA so IDR spikes /
+    // sub-second gaps do not thrash the on-screen bitrate/FPS readouts).
     private var currentFps: Int = 0
     private var currentBitrateKbps: Long = 0
+    private var smoothedFps: Float = 0f
+    private var smoothedBitrateKbps: Float = 0f
+    private var lastNonZeroRateElapsedMs: Long = 0
     @Volatile
     private var lastSubmitToFrameMs: Long = 0
     private var rateWindowBytes: Long = 0
@@ -170,11 +175,27 @@ class H264SurfaceDecoder {
         rateWindowBytes = 0
         rateWindowFrames = 0
         rateWindowStartMs = now
-        // Sparse desktop can pause briefly; keep last rate instead of flashing 0.
+        val instantBitrate = (bytes * 8L) / elapsed
+        val instantFps = ((decoded * 1000L) / elapsed).toInt()
         if (bytes > 0L || decoded > 0L) {
-            currentBitrateKbps = (bytes * 8L) / elapsed
-            currentFps = ((decoded * 1000L) / elapsed).toInt()
+            lastNonZeroRateElapsedMs = now
+            smoothedBitrateKbps = if (smoothedBitrateKbps <= 0f) {
+                instantBitrate.toFloat()
+            } else {
+                smoothedBitrateKbps * (1f - RATE_EMA_ALPHA) + instantBitrate * RATE_EMA_ALPHA
+            }
+            smoothedFps = if (smoothedFps <= 0f) {
+                instantFps.toFloat()
+            } else {
+                smoothedFps * (1f - RATE_EMA_ALPHA) + instantFps * RATE_EMA_ALPHA
+            }
+        } else if (now - lastNonZeroRateElapsedMs >= RATE_HOLD_MS) {
+            // Real stall (feed scroll gaps from Windows were multi-second).
+            smoothedBitrateKbps = 0f
+            smoothedFps = 0f
         }
+        currentBitrateKbps = smoothedBitrateKbps.toLong()
+        currentFps = smoothedFps.toInt()
     }
 
 
@@ -337,7 +358,7 @@ class H264SurfaceDecoder {
         if (codec != null || output == null) {
             return
         }
-        var phase = H264LowLatencyConfigurePolicy.Phase.WITH_LOW_LATENCY
+        var phase = H264LowLatencyConfigurePolicy.initialPhase()
         while (true) {
             var created: MediaCodec? = null
             try {
@@ -449,11 +470,16 @@ class H264SurfaceDecoder {
 
     private fun releaseOutput(codec: MediaCodec) {
         val info = MediaCodec.BufferInfo()
+        // Gather every ready output first. MTK often dumps a burst in one go;
+        // rendering only the last of a large burst made visual FPS swing
+        // (e.g. one present / many decoded) even while content kept changing.
+        val indices = ArrayList<Int>(8)
         while (true) {
             val index = try {
                 codec.dequeueOutputBuffer(info, 0)
             } catch (err: Exception) {
                 Log.e(TAG, "dequeue output failed", err)
+                releaseGathered(codec, indices)
                 stopCodec()
                 awaitingKeyframe = true
                 requestKeyframeSoon()
@@ -463,16 +489,68 @@ class H264SurfaceDecoder {
                 continue
             }
             if (index < 0) {
+                break
+            }
+            indices.add(index)
+        }
+        if (indices.isEmpty()) {
+            return
+        }
+        val canShow = surface != null && surface!!.isValid
+        // Always show the newest ready buffer — never queue decoded frames for
+        // smoothness; that traded the 1s hitch for constant hundreds of ms lag.
+        val renderFrom = indices.size - 1
+        for (i in indices.indices) {
+            val show = canShow && i >= renderFrom
+            try {
+                codec.releaseOutputBuffer(indices[i], show)
+            } catch (err: Exception) {
+                Log.e(TAG, "release output failed", err)
+                for (j in (i + 1) until indices.size) {
+                    try {
+                        codec.releaseOutputBuffer(indices[j], false)
+                    } catch (_: Exception) {
+                    }
+                }
+                stopCodec()
+                awaitingKeyframe = true
+                requestKeyframeSoon()
                 return
             }
-            val show = surface != null && surface!!.isValid
-            codec.releaseOutputBuffer(index, show)
             frames++
-            rateWindowFrames++
-            val nowElapsed = SystemClock.elapsedRealtime()
-            lastFrameElapsedRealtimeMs = nowElapsed
+            if (show) {
+                val nowElapsed = SystemClock.elapsedRealtime()
+                val gap = if (lastFrameElapsedRealtimeMs > 0L) {
+                    nowElapsed - lastFrameElapsedRealtimeMs
+                } else {
+                    0L
+                }
+                rateWindowFrames++
+                lastFrameElapsedRealtimeMs = nowElapsed
+                if (gap >= PRESENT_HITCH_MS) {
+                    val nowUp = SystemClock.uptimeMillis()
+                    if (nowUp - lastPresentGapLogMs >= 200L) {
+                        lastPresentGapLogMs = nowUp
+                        Log.w(
+                            TAG,
+                            "present hitch gap_ms=$gap ready=${indices.size} " +
+                                "pending=${pending.size} in=$submitted out=$frames",
+                        )
+                    }
+                }
+                maybeLogTouchToFrameLag()
+            }
             maybeLogSubmitToFrameLag()
-            maybeLogTouchToFrameLag()
+        }
+    }
+
+    /** Release any already-dequeued indices without rendering (error path). */
+    private fun releaseGathered(codec: MediaCodec, indices: List<Int>) {
+        for (index in indices) {
+            try {
+                codec.releaseOutputBuffer(index, false)
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -565,19 +643,27 @@ class H264SurfaceDecoder {
             return
         }
         lastStatsMs = now
+        refreshRateWindowLocked()
         Log.i(
             TAG,
-            "stats where=$where out=$frames in=$submitted pending=${pending.size} " +
-                "awaitIdr=$awaitingKeyframe",
+            "[DEBUG-a4f2] stats where=$where out=$frames in=$submitted pending=${pending.size} " +
+                "awaitIdr=$awaitingKeyframe fps=$currentFps bitrate_kbps=$currentBitrateKbps " +
+                "submit_to_frame_ms=$lastSubmitToFrameMs " +
+                "size=${videoW}x${videoH}@${inputFps}",
         )
     }
 
 
 
     /**
-     * Soft stall nudge: if outputs freeze while work is queued, ask for an IDR
-     * without dropping the GOP. Distinct from the old hard output-stall freeze
-     * that flooded Windows with keyframe requests on static desktops.
+     * Soft stall nudge: if outputs freeze while RTP work is queued, ask for an
+     * IDR without dropping the GOP.
+     *
+     * Sparse Miracast (static desktop) often idles >700ms with a few AUs still
+     * parked in the codec (`inFlight`). That is not a wedge — treating it as a
+     * stall flooded Windows with IDRs and felt like random hitches. Only nudge
+     * when the pending RTP queue is growing, or in-flight is badly wedged for
+     * a long idle.
      */
     private fun maybeNudgeStalledPipeline() {
         if (videoW <= 0 || awaitingKeyframe) {
@@ -591,24 +677,30 @@ class H264SurfaceDecoder {
         if (idleMs < OUTPUT_SOFT_STALL_MS) {
             return
         }
-        // One in-flight AU is normal; only nudge when the pipeline is actually
-        // backed up (pending queue or several unreleased outputs).
         val inFlight = submitted - frames
-        val workQueued = pending.isNotEmpty() || inFlight >= 3
-        if (!workQueued) {
+        val rtpBackedUp = pending.isNotEmpty()
+        val codecWedged = inFlight >= OUTPUT_WEDGE_IN_FLIGHT
+        if (!rtpBackedUp && !codecWedged) {
             return
         }
-        if (idleMs >= OUTPUT_HARD_STALL_MS) {
-            // MTK can park several AUs forever while Windows also goes quiet;
-            // drop the wedged GOP and wait for a fresh IDR.
+        // Sparse quiet: a few parked outputs with an empty pending queue is OK.
+        if (!rtpBackedUp && idleMs < OUTPUT_HARD_STALL_MS) {
+            return
+        }
+        if (idleMs >= OUTPUT_HARD_STALL_MS && codecWedged) {
+            // MTK can park several AUs forever; drop the wedged GOP and wait.
+            val pendingBefore = pending.size
             pending.clear()
             submitTimesMs.clear()
             awaitingKeyframe = true
             Log.w(
                 TAG,
-                "hard stall ${idleMs}ms pending=${pending.size} inFlight=$inFlight; wait for IDR",
+                "hard stall ${idleMs}ms pending=$pendingBefore inFlight=$inFlight; wait for IDR",
             )
-            requestKeyframeSoon()
+            requestKeyframeSoon(force = true)
+            return
+        }
+        if (!rtpBackedUp) {
             return
         }
         Log.w(
@@ -659,24 +751,33 @@ class H264SurfaceDecoder {
 
 
 
-        /**
-         * Freeze for IDR when backlog is ~400 ms at 60 fps.
-         * Dropping mid-GOP tears the picture; a hard cut waits for the next keyframe.
-         */
+        /** Freeze for IDR when backlog is ~400 ms at 60 fps / ~800 ms at 30. */
         private const val HARD_PENDING_FRAMES = 24
+
+        /** Log when two presents are this far apart (source RTP idle signal). */
+        private const val PRESENT_HITCH_MS = 80L
 
 
 
         /** Minimum gap between wfd_idr_request SET_PARAMETERs. */
         private const val KEYFRAME_REQUEST_MIN_MS = 4_000L
-        /** Soft IDR nudge when decode/output freezes while work is queued. */
-        private const val OUTPUT_SOFT_STALL_MS = 700L
+        /**
+         * Soft IDR nudge when RTP is backed up and output has been idle this long.
+         * Must stay above typical sparse-desktop frame gaps (~250–500ms).
+         */
+        private const val OUTPUT_SOFT_STALL_MS = 1_500L
         /** Drop wedged in-flight AUs and await IDR after this freeze. */
-        private const val OUTPUT_HARD_STALL_MS = 2_000L
+        private const val OUTPUT_HARD_STALL_MS = 3_000L
+        /** In-flight AUs that count as a codec wedge (not sparse-park). */
+        private const val OUTPUT_WEDGE_IN_FLIGHT = 6
         private const val DRAIN_SLEEP_MS = 2L
         private const val STATS_INTERVAL_MS = 1_000L
         private const val TOUCH_LAG_LOG_INTERVAL_MS = 500L
         private const val SUBMIT_LAG_LOG_INTERVAL_MS = 500L
+        /** Overlay rate smoothing; higher = snappier, lower = calmer. */
+        private const val RATE_EMA_ALPHA = 0.2f
+        /** Hold last non-zero overlay rate across brief gaps (not multi-second stalls). */
+        private const val RATE_HOLD_MS = 1500L
         private const val PREFERRED_MTK_AVC = "OMX.MTK.VIDEO.DECODER.AVC"
 
 

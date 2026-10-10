@@ -11,10 +11,12 @@ import me.trinitrix.mirax.SessionHost
 import me.trinitrix.mirax.wm.WmSize
 import me.trinitrix.mirax.session.ConnectionRunFact
 import me.trinitrix.mirax.session.SessionAction
+import me.trinitrix.mirax.session.PreferredModeCorrection
 import me.trinitrix.mirax.session.StandardVideoModes
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.wfd.rtsp.MpegTsDepacketizer
+import me.trinitrix.mirax.wfd.rtsp.RtcpChannel
 import me.trinitrix.mirax.wfd.rtsp.RtspMessageBuffer
 import me.trinitrix.mirax.wfd.rtsp.RtspSinkSession
 import me.trinitrix.mirax.wfd.rtsp.WfdCapabilityTable
@@ -53,16 +55,13 @@ object SinkConnectionController {
     /**
      * Interactive sessions need enough microsoft_max_bitrate that Windows keeps
      * encoding during motion. A user floor of 1 Mbps made the source go sparse
-     * (few frames/sec) even when UIBC was active.
+     * (few frames/sec) even when UIBC was active; 8 Mbps still measured ~2 Mbps
+     * on device, so the interactive floor/cap sit higher.
      */
-    private const val INTERACTIVE_BITRATE_FLOOR_BPS = 8_000_000L
-    private const val INTERACTIVE_BITRATE_CAP_BPS = 16_000_000L
-    /**
-     * Cap advertised modes while touch is on so Windows encodes a lighter
-     * stream without the blurry 480p/540p interactive caps that hurt feel.
-     */
-    private const val INTERACTIVE_MAX_WIDTH = 1280
-    private const val INTERACTIVE_MAX_HEIGHT = 720
+    private const val INTERACTIVE_BITRATE_FLOOR_BPS = 12_000_000L
+    private const val INTERACTIVE_BITRATE_CAP_BPS = 20_000_000L
+    /** Interactive refresh ceiling — resolution stays Settings/wm-owned. */
+    private const val INTERACTIVE_MAX_FPS = 30
     /**
      * Gap since the previous UIBC input before a touch may request one IDR.
      * Idle-only: mid-gesture IDR was ~500ms Windows RTT and caused cursor drift
@@ -84,16 +83,17 @@ object SinkConnectionController {
     private val lastTouchEnabled = AtomicBoolean(true)
     private val connectionRunOpen = AtomicBoolean(false)
     private val idrNeeded = AtomicBoolean(false)
-    private val latencyLowNeeded = AtomicBoolean(false)
     private val lastTouchIdleIdrMs = AtomicInteger(0)
     private val lastUibcActivityMs = AtomicInteger(0)
     private val rtspIdrLock = Any()
     private val playSession = AtomicReference<RtspSinkSession?>(null)
     private val playOutput = AtomicReference<OutputStream?>(null)
+    /** Last microsoft latency mode reported by the source (log / diagnostics). */
     @Volatile
     private var lastLatencyModeSeen: String = ""
     private var serveSelected: VideoMode? = null
     private var rtpSocket: DatagramSocket? = null
+    private val rtcpChannel = RtcpChannel()
     private var appContext: Context? = null
 
     init {
@@ -101,12 +101,16 @@ object SinkConnectionController {
     }
 
     /**
-     * Interactive UIBC catch-up: keep microsoft latency `low`, and after a real
-     * input idle gap request a single IDR so the first touch after pause is not
-     * waiting on a frozen desktop encode.
+     * Interactive UIBC catch-up: after a real input idle gap request a single
+     * IDR so the first touch after pause is not waiting on a frozen desktop
+     * encode.
      *
      * Continuous motion must NOT request IDR — Windows IDR RTT (~500ms) plus a
      * backed-up UIBC write queue is what felt like lag then cursor drift.
+     *
+     * Latency: M3 answers `low` and we may send one post-PLAY SET_PARAMETER
+     * when the source still announces `high`. Repeated mid-scroll nudges used
+     * to stall encode; keep that path single-shot per session.
      */
     fun requestIdrForTouch() {
         val now = SystemClock.elapsedRealtime()
@@ -118,10 +122,6 @@ object SinkConnectionController {
             (nowInt - previousActivity).toLong()
         }
 
-        if (lastLatencyModeSeen != "low") {
-            latencyLowNeeded.set(true)
-            flushLatencyLowNow()
-        }
         if (inputGapMs < TOUCH_IDLE_IDR_INPUT_GAP_MS) {
             return
         }
@@ -328,25 +328,31 @@ object SinkConnectionController {
         var lastSelected: VideoMode? = null
         var lastLatencyMode = ""
         val offer = connectionOffer(command)
+        // Settings own resolution. Interactive only remaps refresh >30 → 30 so
+        // Win11 cannot pick *@60 (that path pinned ~550 ms bursts + sub‑Mbps ABR
+        // on HA1CSQTM). Do not inject or lock width/height.
+        val advertiseModes = offer.modes
+            .plus(if (offer.touchEnabled) {
+                remappedInteractiveRefresh(offer.modes)
+            } else {
+                emptySet()
+            })
+            .toSet()
+        val advertisePreferred = if (offer.touchEnabled) {
+            offer.preferred?.let { remappedInteractiveRefresh(it) } ?: offer.preferred
+        } else {
+            offer.preferred
+        }
         val advertiseBitrate = if (offer.touchEnabled) {
             maxOf(offer.maxVideoBitrateBps, INTERACTIVE_BITRATE_FLOOR_BPS)
                 .coerceAtMost(INTERACTIVE_BITRATE_CAP_BPS)
         } else {
             offer.maxVideoBitrateBps
         }
-        val advertiseModes = if (offer.touchEnabled) {
-            interactiveModes(offer.modes)
-        } else {
-            offer.modes
-        }
-        val advertisePreferred = if (offer.touchEnabled) {
-            interactivePreferred(offer.preferred, advertiseModes)
-        } else {
-            offer.preferred
-        }
         if (offer.touchEnabled) {
             note(
                 "interactive offer bitrate=${advertiseBitrate / 1_000}kbps " +
+                    "microsoft_max_bitrate=$advertiseBitrate " +
                     "preferred=${advertisePreferred?.format() ?: "none"} modes=${advertiseModes.size}",
             )
         }
@@ -367,7 +373,6 @@ object SinkConnectionController {
         var poked = false
         var uibcNoted = false
         idrNeeded.set(false)
-        latencyLowNeeded.set(false)
         lastLatencyModeSeen = ""
         try {
             socket.tcpNoDelay = true
@@ -422,10 +427,6 @@ object SinkConnectionController {
                         lastLatencyMode = latencyMode
                         lastLatencyModeSeen = latencyMode
                         note("source latency mode $latencyMode")
-                        if (latencyMode != "low" && offer.touchEnabled) {
-                            latencyLowNeeded.set(true)
-                            writeLatencyLowIfNeeded(session, output)
-                        }
                     }
                     if (uibcNoted && session.uibcPort <= 0) {
                         UibcTouchChannel.close()
@@ -451,21 +452,19 @@ object SinkConnectionController {
                         note("playback started")
                         val mode = session.selectedMode ?: VideoMode(1920, 1080, 60)
                         decoder.setFormat(mode.width, mode.height, mode.refreshHz)
+                        startRtcp(session)
                         startRtp(session.rtpPort(), demux, gen)
                         startHardwareCursor()
-                        if (offer.touchEnabled) {
-                            latencyLowNeeded.set(true)
-                            writeLatencyLowIfNeeded(session, output)
-                        }
                         postAction(SessionAction.EnteredPlay)
                     }
+                    // Latency role switching disabled: interactive M3 advertises
+                    // microsoft_latency_management_capability: none.
                     if (session.state == "TEARDOWN" || session.state == "ERROR") {
                         note("RTSP session ${session.state}")
                         break@loop
                     }
                 }
                 writeIdrIfNeeded(session, output)
-                writeLatencyLowIfNeeded(session, output)
             }
         } catch (err: Exception) {
             if (alive(gen)) {
@@ -477,6 +476,7 @@ object SinkConnectionController {
             UibcTouchChannel.close()
             stopHardwareCursor()
             stopRtp()
+            stopRtcp()
             decoder.reset()
             activeClient.compareAndSet(socket, null)
             closeQuietly(socket)
@@ -488,12 +488,6 @@ object SinkConnectionController {
         val session = playSession.get() ?: return
         val output = playOutput.get() ?: return
         writeIdrIfNeeded(session, output)
-    }
-
-    private fun flushLatencyLowNow() {
-        val session = playSession.get() ?: return
-        val output = playOutput.get() ?: return
-        writeLatencyLowIfNeeded(session, output)
     }
 
     private fun writeIdrIfNeeded(session: RtspSinkSession, output: OutputStream) {
@@ -517,25 +511,19 @@ object SinkConnectionController {
         }
     }
 
-    private fun writeLatencyLowIfNeeded(session: RtspSinkSession, output: OutputStream) {
-        synchronized(rtspIdrLock) {
-            if (!latencyLowNeeded.get()) {
-                return
-            }
-            val request = session.requestLatencyMode("low")
-            if (request.isEmpty()) {
-                return
-            }
-            try {
-                output.write(request.toByteArray(StandardCharsets.US_ASCII))
-                output.flush()
-                latencyLowNeeded.set(false)
-                lastLatencyModeSeen = "low"
-                note("RTSP >> latency mode low")
-            } catch (err: Exception) {
-                noteWarn("latency mode low failed", err)
-            }
+    private fun startRtcp(session: RtspSinkSession) {
+        stopRtcp()
+        val remoteRtcp = session.rtcpServerPort
+        if (remoteRtcp <= 0) {
+            note("RTCP not negotiated (no server_port pair)")
+            return
         }
+        rtcpChannel.start(session.rtcpPort(), remoteRtcp, appContext)
+        note("RTCP RR → source :$remoteRtcp (local ${session.rtcpPort()})")
+    }
+
+    private fun stopRtcp() {
+        rtcpChannel.stop()
     }
 
     private fun startRtp(port: Int, demux: MpegTsDepacketizer, gen: Int) {
@@ -543,8 +531,9 @@ object SinkConnectionController {
         try {
             val socket = DatagramSocket(null).apply {
                 reuseAddress = true
-                // Burst headroom without a multi-second UDP backlog under stalls.
-                receiveBufferSize = 256 * 1024
+                // Win11 bursts ~1s of AUs; undersized rcvbuf → drops → RTCP
+                // loss → ABR stuck near 2–3 Mbps (Fold/Samsung does not show this).
+                receiveBufferSize = 1024 * 1024
                 bind(InetSocketAddress(port))
             }
             P2pNetworkBinder.bind(appContext, socket)
@@ -553,16 +542,36 @@ object SinkConnectionController {
             Thread({
                 val buf = ByteArray(64 * 1024)
                 var packets = 0L
+                var lastRtpElapsed = 0L
+                var lastRtpGapLogMs = 0L
+                var auSinceGap = 0
                 while (alive(gen) && !socket.isClosed) {
                     try {
                         val packet = DatagramPacket(buf, buf.size)
                         socket.receive(packet)
+                        val now = SystemClock.elapsedRealtime()
                         if (++packets == 1L) {
                             note("first RTP packet from ${packet.address}")
+                        } else {
+                            val gap = now - lastRtpElapsed
+                            if (gap >= 80L) {
+                                val up = SystemClock.uptimeMillis()
+                                if (up - lastRtpGapLogMs >= 200L) {
+                                    lastRtpGapLogMs = up
+                                    Log.w(
+                                        TAG,
+                                        "RTP gap_ms=$gap au_since=${auSinceGap} from=${packet.address}",
+                                    )
+                                    auSinceGap = 0
+                                }
+                            }
                         }
+                        lastRtpElapsed = now
+                        rtcpChannel.onRtp(packet.data, packet.length, packet.address)
                         demux.pushRtp(packet.data, packet.length)
                         while (true) {
                             val au = demux.poll() ?: break
+                            auSinceGap++
                             decoder.submitAccessUnit(au)
                         }
                     } catch (_: Exception) {
@@ -608,6 +617,7 @@ object SinkConnectionController {
         UibcTouchChannel.close()
         stopHardwareCursor()
         stopRtp()
+        stopRtcp()
         decoder.reset()
         closePicture()
     }
@@ -644,48 +654,25 @@ object SinkConnectionController {
     )
 
     /**
-     * Keep modes that fit the interactive encode budget (orientation-agnostic
-     * short/long side). Always include 720p60 so Windows has a lean target even
-     * when the sink's saved preferred mode is a tall phone panel.
+     * Keep width/height; cap refresh at [INTERACTIVE_MAX_FPS] for touch sessions.
      */
-    private fun interactiveModes(modes: Set<VideoMode>): Set<VideoMode> {
-        val target = VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 60)
-        val capped = modes.filter(::fitsInteractiveBudget).toSet()
-        if (capped.isNotEmpty()) {
-            return capped + target
+    private fun remappedInteractiveRefresh(mode: VideoMode): VideoMode {
+        val remapped = if (mode.refreshHz <= INTERACTIVE_MAX_FPS) {
+            mode
+        } else {
+            VideoMode(mode.width, mode.height, INTERACTIVE_MAX_FPS)
         }
-        return setOf(
-            target,
-            VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 30),
-            VideoMode(960, 540, 60),
-            VideoMode(854, 480, 60),
+        val level51Compliant = PreferredModeCorrection.correct(
+            remapped.width, remapped.height, remapped.refreshHz
         )
+        return level51Compliant ?: run {
+            Log.w(TAG, "interactive remap ${mode.format()} exceeds Level 5.1, keeping original")
+            mode
+        }
     }
 
-    private fun fitsInteractiveBudget(mode: VideoMode): Boolean {
-        val shortSide = minOf(mode.width, mode.height)
-        val longSide = maxOf(mode.width, mode.height)
-        return shortSide <= INTERACTIVE_MAX_HEIGHT && longSide <= INTERACTIVE_MAX_WIDTH
-    }
-
-    /** Prefer 720p60 for interactive sessions. */
-    private fun interactivePreferred(
-        preferred: VideoMode?,
-        modes: Set<VideoMode>,
-    ): VideoMode? {
-        val target60 = VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 60)
-        if (target60 in modes) {
-            return target60
-        }
-        val target30 = VideoMode(INTERACTIVE_MAX_WIDTH, INTERACTIVE_MAX_HEIGHT, 30)
-        if (target30 in modes) {
-            return target30
-        }
-        return preferred?.takeIf { it in modes }
-            ?: modes.maxWithOrNull(
-                compareBy<VideoMode> { it.width * it.height }.thenBy { it.refreshHz },
-            )
-    }
+    private fun remappedInteractiveRefresh(modes: Set<VideoMode>): Set<VideoMode> =
+        modes.map(::remappedInteractiveRefresh).toSet()
 
     /**
      * Read wm size and freeze the M3 offer on the main thread before RTSP.
@@ -783,6 +770,12 @@ object SinkConnectionController {
                 val label = preferred?.let { "${it.width}x${it.height}@${it.refreshHz}" } ?: "none"
                 note("M3 reply preferred $label")
             }
+            !incoming && message.contains("microsoft_max_bitrate") -> {
+                val match = MICROSOFT_MAX_BITRATE_LINE.find(message)
+                if (match != null) {
+                    note("M3 advertise microsoft_max_bitrate=${match.groupValues[1]}")
+                }
+            }
             incoming && method == "SET_PARAMETER" -> note("M4 SET_PARAMETER")
         }
         val arrow = if (incoming) "RTSP << " else "RTSP >> "
@@ -802,4 +795,7 @@ object SinkConnectionController {
     }
 
     private const val OPTIONS_POKE = "OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n"
+
+    private val MICROSOFT_MAX_BITRATE_LINE =
+        Regex("microsoft_max_bitrate:\\s*(\\d+)", RegexOption.IGNORE_CASE)
 }

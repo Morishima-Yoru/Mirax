@@ -15,12 +15,14 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import kotlin.math.roundToInt
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -30,6 +32,7 @@ import android.graphics.Rect
 import me.trinitrix.mirax.session.PicturePlacement
 import me.trinitrix.mirax.session.PictureTouchMap
 import me.trinitrix.mirax.session.ScreenPhase
+import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.wfd.DebugOverlayView
@@ -57,11 +60,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var cursorView: ImageView
     private lateinit var handleRoot: FrameLayout
     private lateinit var handleScrim: View
+    private lateinit var handleScrollView: ScrollView
     private lateinit var handlePanel: LinearLayout
     private var endConnectionDialog: AlertDialog? = null
     private lateinit var handleEndButton: MaterialButton
     private lateinit var handleResolutionValue: TextView
     private lateinit var handleRefreshValue: TextView
+    private lateinit var debugOverlaySwitch: MaterialSwitch
     /** Decoder buffer size for [SurfaceHolder.setFixedSize]; may be padded. */
     private var bufferW: Int = 0
     private var bufferH: Int = 0
@@ -184,6 +189,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         hideSystemBars()
         applySession(MiraxApp.instance.session.snapshot())
+        startDebugOverlayUpdates()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -266,11 +272,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         renderHandle(snapshot)
         ViewCompat.requestApplyInsets(stage)
         layoutPicture()
-        
-        // Update debug overlay
+
         debugOverlay.visibility = if (snapshot.showDebugOverlay) View.VISIBLE else View.GONE
         if (snapshot.showDebugOverlay) {
+            startDebugOverlayUpdates()
             updateDebugOverlay(snapshot)
+        } else {
+            stopDebugOverlayUpdates()
         }
     }
 
@@ -302,12 +310,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         }
 
-        handlePanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            isClickable = true
-            setOnClickListener { /* keep taps on the card from dismissing via the scrim */ }
-            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_frame, 16, R.color.mirax_stroke, 1)
-            setPadding(dp(16), dp(18), dp(16), dp(16))
+        handleScrollView = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_surface, 16, R.color.mirax_stroke, 1)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -316,15 +322,26 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 leftMargin = dp(16)
                 rightMargin = dp(16)
                 bottomMargin = dp(16)
+                topMargin = dp(32)
             }
         }
-        ViewCompat.setOnApplyWindowInsetsListener(handlePanel) { view, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(handleScrollView) { view, insets ->
             val nav = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
-            view.setPadding(dp(16), dp(18), dp(16), dp(16) + nav.bottom)
             val params = view.layoutParams as FrameLayout.LayoutParams
             params.bottomMargin = dp(16) + nav.bottom
             view.layoutParams = params
             insets
+        }
+
+        handlePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            setOnClickListener { }
+            setPadding(dp(16), dp(18), dp(16), dp(16))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            )
         }
 
         handleEndButton = MiraxUi.stopActionButton(this, getString(R.string.handle_end_connection)) {
@@ -345,10 +362,31 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         stats.addView(frameLabel(getString(R.string.handle_refresh_label), topPadDp = 14))
         handleRefreshValue = valueText()
         stats.addView(handleRefreshValue)
+
         handlePanel.addView(stats)
 
+        debugOverlaySwitch = MaterialSwitch(this).apply {
+            text = getString(R.string.handle_debug_overlay)
+            isChecked = MiraxApp.instance.session.snapshot().showDebugOverlay
+            textSize = 17f
+            minHeight = dp(56)
+            setTextColor(getColor(R.color.mirax_on_surface))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(12) }
+            setOnCheckedChangeListener { _, isChecked ->
+                val session = MiraxApp.instance.session
+                session.handle(SessionAction.SetShowDebugOverlay(isChecked))
+                val snapshot = SessionHost.commit(this@PictureActivity)
+                applySession(snapshot)
+            }
+        }
+        handlePanel.addView(debugOverlaySwitch)
+
+        handleScrollView.addView(handlePanel)
         handleRoot.addView(handleScrim)
-        handleRoot.addView(handlePanel)
+        handleRoot.addView(handleScrollView)
     }
 
     private fun frameLabel(text: String, topPadDp: Int = 0): TextView {
@@ -408,10 +446,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         } else {
             ""
         }
+        if (::debugOverlaySwitch.isInitialized && debugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
+            debugOverlaySwitch.isChecked = snapshot.showDebugOverlay
+        }
         val expanded = snapshot.bottomHandleExpanded
         handleRoot.visibility = if (expanded) View.VISIBLE else View.GONE
-        if (expanded) {
-            ViewCompat.requestApplyInsets(handlePanel)
+        if (expanded && ::handleScrollView.isInitialized) {
+            ViewCompat.requestApplyInsets(handleScrollView)
         }
     }
 
@@ -767,6 +808,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun updateDebugOverlay(snapshot: SessionSnapshot) {
+        // Show or hide the overlay view based on the session setting.
+        debugOverlay.visibility = if (snapshot.showDebugOverlay) View.VISIBLE else View.GONE
+
         val decoder = SinkConnectionController.decoder
         val outW = if (bufferW > 0) bufferW else decoder.inputWidth
         val outH = if (bufferH > 0) bufferH else decoder.inputHeight
@@ -782,7 +826,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         )
         debugOverlay.updateFrameTree(frameTree)
         debugOverlay.updateLayout(stage.width, stage.height, snapshot.pictureScale.name)
-        
+
         // Crop rect from picture placement
         val picture = snapshot.selectedMode
         if (picture != null) {

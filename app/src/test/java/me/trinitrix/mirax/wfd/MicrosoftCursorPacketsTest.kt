@@ -58,6 +58,6 @@ class MicrosoftCursorPacketsTest {
     @Test
     fun capabilityValue_advertisesPortAndMaxEdge() {
         assertThat(MicrosoftCursorChannel.capabilityValue())
-            .isEqualTo("full 0x0040 0x0040 4a39")
+            .isEqualTo("full 0x0040 0x0040 4a3a")
     }
 }

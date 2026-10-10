@@ -34,24 +34,38 @@ public final class Helper {
             Looper.prepareMainLooper();
         } catch (Exception ignored) {
         }
+        // Bind first — RootHelper probes UID while beacon init is still running.
+        final LocalServerSocket server;
+        try {
+            server = new LocalServerSocket(SOCKET_NAME);
+        } catch (Exception err) {
+            Log.e(TAG, "bind " + SOCKET_NAME + " failed", err);
+            return;
+        }
+        Thread accept = new Thread(() -> serve(server), "mirax-helper-socket");
+        accept.setDaemon(true);
+        accept.start();
+        Log.i(TAG, "listening on " + SOCKET_NAME);
+
         beacon = new PrimarySinkBeacon(Looper.getMainLooper());
         if (!beacon.initialize()) {
             Log.e(TAG, "WFD beacon init failed");
+            RUNNING.set(false);
+            try {
+                server.close();
+            } catch (Exception ignored) {
+            }
             return;
         }
         if (args != null && args.length > 0 && args[0] != null && !args[0].isEmpty()) {
             Log.i(TAG, "advertise from argument \"" + args[0] + "\"");
             beacon.startAdvertising(args[0]);
         }
-        Thread server = new Thread(Helper::serve, "mirax-helper-socket");
-        server.setDaemon(true);
-        server.start();
-        Log.i(TAG, "listening on " + SOCKET_NAME);
         Looper.loop();
     }
 
-    private static void serve() {
-        try (LocalServerSocket server = new LocalServerSocket(SOCKET_NAME)) {
+    private static void serve(LocalServerSocket server) {
+        try (server) {
             while (RUNNING.get()) {
                 try (LocalSocket client = server.accept()) {
                     handleClient(client);

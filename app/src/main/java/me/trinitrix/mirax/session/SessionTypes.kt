@@ -453,14 +453,16 @@ data class SessionSnapshot(
     val touchEnabled: Boolean = true,
     val showDebugMessages: Boolean = true,
     /**
+     * Show debug overlay with stream info, frame tree, and crop controls.
+     */
+    val showDebugOverlay: Boolean = false,
+    /**
      * When true, dashboard padding clears the punch-hole / notch. Default false
      * so the cutout does not shift the layout.
      */
     val cameraCutoutAffectsLayout: Boolean = false,
     /** Minutes until an active broadcast turns itself off. */
     val broadcastAutoStopMinutes: Int = 1,
-    /** Show debug overlay with stream info, frame tree, and crop controls. */
-    val showDebugOverlay: Boolean = false,
     /**
      * English handshake lines for the open attempt. Empty unless the phase
      * is [ScreenPhase.CONNECTING] and [showDebugMessages] is true. The underlying
@@ -656,6 +658,12 @@ sealed interface SessionAction {
     data class SetBottomHandleEnabled(val enabled: Boolean) : SessionAction
 
     /**
+     * User toggled the debug overlay switch in the bottom handle panel.
+     * Persisted; defaults off.
+     */
+    data class SetShowDebugOverlay(val enabled: Boolean) : SessionAction
+
+    /**
      * User tapped the thin bottom-handle control to expand or collapse its panel.
      * Only meaningful while [SessionSnapshot.showBottomHandle] is true.
      */
@@ -722,9 +730,6 @@ sealed interface SessionAction {
 
     /** User asked the connecting dashboard to show or hide the live handshake log. */
     data class SetShowDebugMessages(val enabled: Boolean) : SessionAction
-
-    /** User toggled the debug overlay with stream info, frame tree, and crop controls. */
-    data class SetShowDebugOverlay(val enabled: Boolean) : SessionAction
 
     /** User asked whether dashboard padding should clear the camera cutout. */
     data class SetCameraCutoutAffectsLayout(val enabled: Boolean) : SessionAction

@@ -16,6 +16,13 @@ class WfdCapabilityTable(
     private val touchEnabled: Boolean = false,
     private val maxBitrateBps: Long = 40_000_000L,
 ) {
+    /**
+     * Interactive (UIBC) sessions: M3 should prefer low-latency encode and always
+     * surface [microsoft_max_bitrate], even when Windows omitted those names.
+     */
+    val interactiveHints: Boolean
+        get() = touchEnabled
+
     fun valueFor(name: String): String {
         return when (name) {
             "wfd_video_formats" -> WfdVideoFormatCodec.wfdVideoFormats(modes, preferred)
@@ -36,9 +43,15 @@ class WfdCapabilityTable(
             "wfd_uibc_capability" -> if (touchEnabled) UIBC_HIDC else "none"
             "wfd_idr_request_capability" -> "1"
             "microsoft_format_change_capability",
-            "microsoft_latency_management_capability",
             "microsoft_diagnostics_capability",
+            "microsoft_rtcp_capability",
             -> "supported"
+            // Interactive: advertise none so Win11 does not pick a buffered
+            // high/normal role that batches ~30 AU then ~550 ms silence on this
+            // Phh link. Mid-session role switches still stall encode — do not
+            // fight after PLAY. Resolution stays Settings-owned.
+            "microsoft_latency_management_capability" ->
+                if (touchEnabled) "none" else "supported"
             "microsoft_max_bitrate" -> maxBitrateBps.coerceAtLeast(1L).toString()
             "microsoft_audio_mute" -> "supported"
             // MS-WDHCE: "none" or "xor-support x-max y-max port" — not the bare token "supported".
@@ -57,7 +70,6 @@ class WfdCapabilityTable(
             "wfd_content_protection",
             "wfd_3d_video_formats",
             "wfd_presentation_URL",
-            "microsoft_rtcp_capability",
             "microsoft_color_space_conversion",
             "microsoft_multiscreen_projection",
             "wfd2_rotation_capability",

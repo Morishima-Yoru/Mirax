@@ -86,6 +86,7 @@
     <string name="press_back_again_to_leave">Press Back again to leave</string>
     <string name="handle_end_connection">End this connection</string>
     <string name="handle_resolution_label">Resolution</string>
+    <string name="handle_debug_overlay">Show debug overlay</string>
     <string name="handle_refresh_label">Refresh rate</string>
     <string name="handle_refresh_value">%1$d Hz</string>
     <string name="settings_bottom_handle_title">Bottom handle</string>
@@ -147,7 +148,6 @@
     <string name="custom_disclaimer_title">Compatibility</string>
     <string name="custom_disclaimer_body">On Windows 11, non-standard resolutions need KB5120998 (24H2, 25H2) or KB5120996 (26H1 and later). Without it, the source usually stays on a standard mode.</string>
     <string name="debug_messages">Show debug messages</string>
-    <string name="debug_overlay">Show debug overlay</string>
     <string name="camera_cutout_affects_layout">Camera cutout affects layout</string>
     <string name="camera_cutout_affects_layout_hint">When on, dashboard and projection padding clear the punch-hole or notch. Off by default.</string>
     <string name="broadcast_auto_stop">Stop broadcast after</string>

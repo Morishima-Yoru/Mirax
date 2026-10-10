@@ -140,12 +140,12 @@ object RootHelper {
             helperChanged = true
             process.waitFor(3, TimeUnit.SECONDS)
             var ready = false
-            repeat(10) {
+            repeat(40) {
                 if (!ready) {
                     if (PrivilegeProbe.helperUid() == 0) {
                         ready = true
                     } else {
-                        Thread.sleep(200)
+                        Thread.sleep(250)
                     }
                 }
             }

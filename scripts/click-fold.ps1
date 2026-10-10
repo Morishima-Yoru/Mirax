@@ -240,8 +240,9 @@ function Find-FoldInShot($path) {
                 if (($wx + $ww) -gt $x2) { $x2 = $wx + $ww }
                 if (($wy + $wh) -gt $y2) { $y2 = $wy + $wh }
             }
-            $rowTop = [double]$bitmap.PixelHeight * 0.62
-            $rowBottom = [double]$bitmap.PixelHeight * 0.80
+            # Prefer mid-list rows (Fold), but still accept Phh/Mirax higher up.
+            $rowTop = [double]$bitmap.PixelHeight * 0.35
+            $rowBottom = [double]$bitmap.PixelHeight * 0.92
             if ($y1 -lt $rowTop -or $y1 -gt $rowBottom) { continue }
             $hits += [pscustomobject]@{
                 Text = $line.Text

@@ -20,7 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object MicrosoftCursorChannel {
     private const val TAG = "MiraxCursor"
-    const val UDP_PORT: Int = 19_001
+    /** Keep off RTP+1 (19001) so RTCP receiver reports can use the WFD pair. */
+    const val UDP_PORT: Int = 19_002
     private const val MAX_CURSOR_EDGE: Int = 64
     private const val TOUCH_CURSOR_LOG_INTERVAL_MS = 250L
 
