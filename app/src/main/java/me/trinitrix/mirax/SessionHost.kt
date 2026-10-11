@@ -237,6 +237,16 @@ object SessionHost {
     }
 
     /**
+     * Persist and apply orientation lock setting.
+     */
+    fun toggleOrientationLock(context: Context, enabled: Boolean): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SetOrientationLock(enabled))
+        SessionPreferences.saveOrientationLockEnabled(context.applicationContext, enabled)
+        return commit(context)
+    }
+
+    /**
      * Dashboard reminder: ask again for overlay permission (or open settings).
      */
     fun requestOverlayPermission(context: Context): SessionSnapshot {
@@ -271,6 +281,15 @@ object SessionHost {
     fun floatingBallTapped(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
         session.handle(SessionAction.FloatingBallTapped)
+        return commit(context)
+    }
+
+    /**
+     * User tapped the floating ball to toggle the control panel.
+     */
+    fun toggleControlPanel(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.ToggleControlPanel)
         return commit(context)
     }
 

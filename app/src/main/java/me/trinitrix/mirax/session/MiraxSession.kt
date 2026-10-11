@@ -1,6 +1,7 @@
 package me.trinitrix.mirax.session
 
 import android.util.Log
+import java.net.InetAddress
 import me.trinitrix.mirax.MiraxApp
 import me.trinitrix.mirax.SessionPreferences
 
@@ -324,6 +325,9 @@ fun snapshot(): SessionSnapshot {
                 activeConnection.awayOnHomeScreenState &&
                 overlayGranted &&
                 display.floatingBallEnabled
+        if (sourceDeviceName == null) {
+            sourceDeviceName = resolveSourceDeviceName()
+        }
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
@@ -663,6 +667,17 @@ fun snapshot(): SessionSnapshot {
                 phase == ScreenPhase.CONNECTING ||
                 phase == ScreenPhase.WIFI_PAUSED -> WidgetStatus.ADVERTISING
             else -> WidgetStatus.OFF
+        }
+    }
+
+    private fun resolveSourceDeviceName(): String? {
+        val activeRun = connectionHistory.activeRun() ?: return null
+        val host = activeRun.remoteHost
+        if (host.isBlank()) return null
+        return try {
+            InetAddress.getByName(host).takeIf { !it.hostName.equals(host, ignoreCase = true) }?.hostName
+        } catch (e: Exception) {
+            null
         }
     }
 

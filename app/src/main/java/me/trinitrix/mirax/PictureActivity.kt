@@ -3,6 +3,7 @@ package me.trinitrix.mirax
 import android.util.Log
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.os.Handler
@@ -365,6 +366,19 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
     }
 
+    /**
+     * Applies orientation lock to the activity based on the user preference.
+     * When enabled, locks the screen to its current orientation.
+     * When disabled, allows the screen to rotate freely.
+     */
+    private fun applyOrientationLock(orientationLockEnabled: Boolean) {
+        requestedOrientation = if (orientationLockEnabled) {
+            ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
     private fun applyProjectionCutoutInsets(view: View, insets: WindowInsetsCompat) {
         val avoidCutout = MiraxApp.instance.session.snapshot().cameraCutoutAffectsLayout
         if (avoidCutout) {
@@ -629,9 +643,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             ).apply { bottomMargin = dp(12) }
             setOnCheckedChangeListener { _, isChecked ->
-                val session = MiraxApp.instance.session
-                session.handle(me.trinitrix.mirax.session.SessionAction.SetOrientationLock(isChecked))
-                val snapshot = SessionHost.commit(this@PictureActivity)
+                val snapshot = SessionHost.toggleOrientationLock(this@PictureActivity, isChecked)
                 applySession(snapshot)
             }
         }
@@ -802,6 +814,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (::controlPanelOrientationLockSwitch.isInitialized && controlPanelOrientationLockSwitch.isChecked != snapshot.orientationLockEnabled) {
             controlPanelOrientationLockSwitch.isChecked = snapshot.orientationLockEnabled
         }
+        applyOrientationLock(snapshot.orientationLockEnabled)
         if (::controlPanelDebugOverlaySwitch.isInitialized && controlPanelDebugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
             controlPanelDebugOverlaySwitch.isChecked = snapshot.showDebugOverlay
         }
