@@ -276,6 +276,14 @@ object SessionHost {
     }
 
     /**
+     * Enter mock connected state for debug / E2E verification without real remote device.
+     */
+    fun enterMockConnected(context: Context): SessionSnapshot {
+        MiraxApp.instance.session.enterMockConnected()
+        return commit(context)
+    }
+
+    /**
      * Refresh privilege, overlay grant, and push status surfaces without a user action.
      */
     fun refreshPrivilegeAndSurfaces(context: Context): SessionSnapshot {
@@ -318,7 +326,7 @@ object SessionHost {
      *     context: Used to resolve the display manager.
      *     displayId: Specific display, or null for the default display.
      */
-    private fun pictureRotationDegrees(context: Context, displayId: Int?): Int {
+    internal fun pictureRotationDegrees(context: Context, displayId: Int?): Int {
         val manager = context.getSystemService(DisplayManager::class.java) ?: return 0
         val display = if (displayId == null) {
             manager.getDisplay(Display.DEFAULT_DISPLAY)

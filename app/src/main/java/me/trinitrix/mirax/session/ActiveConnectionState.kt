@@ -124,6 +124,15 @@ internal class ActiveConnectionState {
         return true
     }
 
+    fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60)) {
+        _phase = ConnectionPhase.PLAYING
+        _selectedMode = mode
+        connectionPreferredModeInternal = mode
+        connectionAdvertisedModesInternal = setOf(mode)
+        awayOnHomeScreen = false
+        backEndsConnectionPending = false
+    }
+
     sealed interface BackResult {
         data object ExpandControlPanel : BackResult
         data object RequestEnd : BackResult

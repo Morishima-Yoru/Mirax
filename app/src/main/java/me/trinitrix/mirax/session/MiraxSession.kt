@@ -126,6 +126,11 @@ class MiraxSession(
         maybeEndHomeStayWithoutBall()
     }
 
+    fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60), name: String = "Mock Device") {
+        activeConnection.enterMockConnected(mode)
+        sourceDeviceName = name
+    }
+
     fun handle(action: SessionAction) {
         when (action) {
             SessionAction.OpenApp -> onOpenApp()
