@@ -209,6 +209,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val mockSession = intent.getBooleanExtra("mirax_mock_session", false) && isDebuggable
         if (mockSession) {
             SessionHost.enterMockConnected(this)
+            MiraxApp.instance.session.handle(SessionAction.ToggleControlPanel)
+            SessionHost.commit(this)
         }
         hideSystemBars()
         applySession(MiraxApp.instance.session.snapshot())

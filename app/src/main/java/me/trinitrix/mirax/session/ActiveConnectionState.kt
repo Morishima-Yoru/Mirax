@@ -49,6 +49,9 @@ internal class ActiveConnectionState {
 
     fun setControlPanelExpanded(value: Boolean) {
         controlPanelExpanded = value
+        if (!value) {
+            backEndsConnectionPending = false
+        }
     }
 
     var backEndsConnectionPending: Boolean = false
@@ -144,13 +147,14 @@ internal class ActiveConnectionState {
             return BackResult.ArmedSecondBack
         }
         if (!controlPanelExpanded) {
+            if (backEndsConnectionPending) {
+                backEndsConnectionPending = false
+                return BackResult.RequestEnd
+            }
             controlPanelExpanded = true
             return BackResult.ExpandControlPanel
         }
-        if (backEndsConnectionPending) {
-            backEndsConnectionPending = false
-            return BackResult.RequestEnd
-        }
+        controlPanelExpanded = false
         backEndsConnectionPending = true
         return BackResult.ArmedSecondBack
     }

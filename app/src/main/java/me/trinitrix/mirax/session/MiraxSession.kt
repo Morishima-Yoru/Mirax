@@ -222,6 +222,7 @@ class MiraxSession(
             SessionAction.CollapseControlPanel -> {
                 if (activeConnection.isConnected) {
                     display.setControlPanelExpanded(false)
+                    activeConnection.setControlPanelExpanded(false)
                 }
             }
             is SessionAction.SetControlPanelEnabled -> {
@@ -273,7 +274,9 @@ class MiraxSession(
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
             SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe()
             SessionAction.ToggleControlPanel -> {
-                display.setControlPanelExpanded(!display.controlPanelExpanded)
+                val next = !display.controlPanelExpanded
+                display.setControlPanelExpanded(next)
+                activeConnection.setControlPanelExpanded(next)
             }
             is SessionAction.SetOrientationLock -> {
                 display.setOrientationLockEnabled(action.enabled)
@@ -492,8 +495,11 @@ fun snapshot(): SessionSnapshot {
             ActiveConnectionState.BackResult.ExpandControlPanel -> {
                 display.setControlPanelExpanded(true)
             }
+            ActiveConnectionState.BackResult.ArmedSecondBack -> {
+                display.setControlPanelExpanded(false)
+                enqueueEffect(SessionEffect.ShowPressBackAgainToEndToast)
+            }
             ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()
-            ActiveConnectionState.BackResult.ArmedSecondBack -> Unit
         }
     }
 
@@ -692,11 +698,11 @@ fun snapshot(): SessionSnapshot {
         advertisingPhase: AdvertisingPhase,
         connectionPhase: ConnectionPhase,
     ): ScreenPhase {
-        if (owner == WfdOwner.NONE) {
-            return ScreenPhase.FROZEN
-        }
         if (connected) {
             return ScreenPhase.CONNECTED
+        }
+        if (owner == WfdOwner.NONE) {
+            return ScreenPhase.FROZEN
         }
         if (advertisingPhase == AdvertisingPhase.IDLE) {
             return ScreenPhase.READY
