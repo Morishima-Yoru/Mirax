@@ -1781,6 +1781,44 @@ class MiraxSessionTest {
         assertThat(snap.wfdAdvertise).isNotNull()
     }
 
+    // --- Issue #17: Expand session types (prefactor for control panel) ---
+
+    @Test
+    fun toggleControlPanel_togglesExpandedState() {
+        val session = freshSession()
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+
+        session.handle(SessionAction.ToggleControlPanel)
+        assertThat(session.snapshot().controlPanelExpanded).isTrue()
+
+        session.handle(SessionAction.ToggleControlPanel)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+    }
+
+    @Test
+    fun setOrientationLock_updatesSnapshotAndPersists() {
+        val session = freshSession()
+        assertThat(session.snapshot().orientationLockEnabled).isFalse()
+
+        session.handle(SessionAction.SetOrientationLock(true))
+        assertThat(session.snapshot().orientationLockEnabled).isTrue()
+
+        session.handle(SessionAction.SetOrientationLock(false))
+        assertThat(session.snapshot().orientationLockEnabled).isFalse()
+    }
+
+    @Test
+    fun setSourceDeviceName_updatesSnapshot() {
+        val session = freshSession()
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+
+        session.handle(SessionAction.SetSourceDeviceName("Source Device"))
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Source Device")
+
+        session.handle(SessionAction.SetSourceDeviceName(null))
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+    }
+
     private fun connectedSession(): MiraxSession {
         val session = sessionWithBroadcast()
         session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))

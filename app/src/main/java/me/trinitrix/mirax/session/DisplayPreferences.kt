@@ -2,7 +2,7 @@ package me.trinitrix.mirax.session
 
 /**
  * Encapsulates UI display preferences: picture scale, bottom handle,
- * floating ball, touch enable, debug messages, and auto-stop timer.
+ * floating ball, touch enable, debug messages, auto-stop timer, control panel, and orientation lock.
  */
 internal class DisplayPreferences(
     initialBottomHandleEnabled: Boolean = true,
@@ -13,6 +13,8 @@ internal class DisplayPreferences(
     initialCameraCutoutAffectsLayout: Boolean = false,
     initialBroadcastAutoStopMinutes: Int = 1,
     initialShowDebugOverlay: Boolean = false,
+    initialControlPanelExpanded: Boolean = false,
+    initialOrientationLockEnabled: Boolean = false,
 ) {
     var bottomHandleEnabled: Boolean = initialBottomHandleEnabled
         private set
@@ -36,6 +38,12 @@ internal class DisplayPreferences(
         private set
 
     var showDebugOverlay: Boolean = initialShowDebugOverlay
+        private set
+
+    var controlPanelExpanded: Boolean = initialControlPanelExpanded
+        private set
+
+    var orientationLockEnabled: Boolean = initialOrientationLockEnabled
         private set
 
     fun setBottomHandleEnabled(enabled: Boolean) {
@@ -68,6 +76,14 @@ internal class DisplayPreferences(
 
     fun setBroadcastAutoStopMinutes(minutes: Int) {
         broadcastAutoStopMinutes = clampAutoStopMinutes(minutes)
+    }
+
+    fun setControlPanelExpanded(expanded: Boolean) {
+        controlPanelExpanded = expanded
+    }
+
+    fun setOrientationLockEnabled(enabled: Boolean) {
+        orientationLockEnabled = enabled
     }
 
     companion object {

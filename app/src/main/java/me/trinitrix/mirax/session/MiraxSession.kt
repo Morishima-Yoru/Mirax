@@ -1,6 +1,8 @@
 package me.trinitrix.mirax.session
 
 import android.util.Log
+import me.trinitrix.mirax.MiraxApp
+import me.trinitrix.mirax.SessionPreferences
 
 /**
  * Mirax product session facade: the single external test seam preserving
@@ -35,6 +37,8 @@ class MiraxSession(
         initialCameraCutoutAffectsLayout = initialSettings.cameraCutoutAffectsLayout,
         initialBroadcastAutoStopMinutes = initialSettings.broadcastAutoStopMinutes,
         initialShowDebugOverlay = initialSettings.showDebugOverlay,
+        initialControlPanelExpanded = false,
+        initialOrientationLockEnabled = initialSettings.orientationLockEnabled,
     )
     private var activeConnection = ActiveConnectionState()
     private val diagnostics = ConnectionDiagnosticsRepository()
@@ -45,6 +49,7 @@ class MiraxSession(
     private var wifiEnabled: Boolean = true
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
+    private var sourceDeviceName: String? = null
     private var miraxDisplayId: Int = 0
     private var pictureRotationDegrees: Int = 0
     private var overlayGranted: Boolean = false
@@ -269,6 +274,20 @@ class MiraxSession(
             }
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
             SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe()
+            SessionAction.ToggleControlPanel -> {
+                display.setControlPanelExpanded(!display.controlPanelExpanded)
+            }
+            is SessionAction.SetOrientationLock -> {
+                display.setOrientationLockEnabled(action.enabled)
+                try {
+                    SessionPreferences.saveOrientationLockEnabled(MiraxApp.instance.applicationContext, action.enabled)
+                } catch (e: UninitializedPropertyAccessException) {
+                    // MiraxApp not initialized (e.g., in unit tests), skip persistence
+                }
+            }
+            is SessionAction.SetSourceDeviceName -> {
+                sourceDeviceName = action.name
+            }
         }
     }
 
@@ -346,6 +365,9 @@ fun snapshot(): SessionSnapshot {
             showDebugOverlay = display.showDebugOverlay,
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
+            controlPanelExpanded = display.controlPanelExpanded,
+            orientationLockEnabled = display.orientationLockEnabled,
+            sourceDeviceName = sourceDeviceName,
             handshakeLog = if (phase == ScreenPhase.CONNECTING && display.showDebugMessages) {
                 diagnostics.currentHandshakeLog()
             } else {
@@ -375,6 +397,8 @@ fun snapshot(): SessionSnapshot {
             showDebugOverlay = display.showDebugOverlay,
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
+            controlPanelEnabled = true,
+            orientationLockEnabled = display.orientationLockEnabled,
         )
     }
 

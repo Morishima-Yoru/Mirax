@@ -314,6 +314,10 @@ data class SessionSettings(
     val broadcastAutoStopMinutes: Int = 1,
     /** Show debug overlay with stream info, frame tree, and crop controls. */
     val showDebugOverlay: Boolean = false,
+    /** Enable/disable the control panel. Default true. */
+    val controlPanelEnabled: Boolean = true,
+    /** Enable/disable orientation lock (ADR 0005). Default false. */
+    val orientationLockEnabled: Boolean = false,
 )
 
 /**
@@ -486,6 +490,12 @@ data class SessionSnapshot(
      * so the cutout does not shift the layout.
      */
     val cameraCutoutAffectsLayout: Boolean = false,
+    /** Whether the control panel is currently expanded. */
+    val controlPanelExpanded: Boolean = false,
+    /** Whether orientation lock is enabled (ADR 0005). */
+    val orientationLockEnabled: Boolean = false,
+    /** Source device name for display, if set. */
+    val sourceDeviceName: String? = null,
     /** Minutes until an active broadcast turns itself off. */
     val broadcastAutoStopMinutes: Int = 1,
     /**
@@ -781,4 +791,13 @@ sealed interface SessionAction {
      * Clear all persisted connection history from DataStore.
      */
     data object ClearConnectionHistory : SessionAction
+
+    /** Toggle the control panel expanded/collapsed state. */
+    data object ToggleControlPanel : SessionAction
+
+    /** Set orientation lock enabled state (ADR 0005). */
+    data class SetOrientationLock(val enabled: Boolean) : SessionAction
+
+    /** Set the source device name for display. */
+    data class SetSourceDeviceName(val name: String?) : SessionAction
 }
