@@ -132,6 +132,7 @@ class WfdProtocolTest {
             "RTSP/1.0 200 OK\r\nCSeq: 2\r\nSession: 12345678;timeout=30\r\n" +
                 "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
         )
+        assertThat(session.rtcpServerPort).isEqualTo(5001)
         val afterPlay = session.handle(
             "RTSP/1.0 200 OK\r\nCSeq: 3\r\nSession: 12345678\r\n\r\n",
         )
@@ -162,6 +163,45 @@ class WfdProtocolTest {
             maxBitrateBps = 12_000_000L,
         )
         assertThat(caps.valueFor("microsoft_max_bitrate")).isEqualTo("12000000")
+    }
+
+    @Test
+    fun touchEnabled_m3InjectsMaxBitrateWhenOmitted() {
+        val caps = WfdCapabilityTable(
+            defaults,
+            foldPreferred,
+            "Mirax",
+            touchEnabled = true,
+            maxBitrateBps = 12_000_000L,
+        )
+        assertThat(caps.interactiveHints).isTrue()
+        assertThat(caps.valueFor("microsoft_latency_management_capability"))
+            .isEqualTo("none")
+        assertThat(caps.valueFor("microsoft_rtcp_capability")).isEqualTo("supported")
+        val session = RtspSinkSession(caps)
+        val replies = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\n" +
+                "CSeq: 2\r\nContent-Type: text/parameters\r\nContent-Length: 40\r\n\r\n" +
+                "wfd_video_formats\r\nwfd_audio_codecs\r\n",
+        )
+        val body = replies.joinToString("\n")
+        assertThat(body).contains("microsoft_max_bitrate: 12000000")
+        assertThat(body).contains("microsoft_latency_management_capability: none")
+        assertThat(body).contains("microsoft_custom_video_formats:")
+    }
+
+    @Test
+    fun setupResponse_parsesServerRtcpPort() {
+        assertThat(
+            RtspSinkSession.parseServerRtcpPort(
+                "RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001",
+            ),
+        ).isEqualTo(5001)
+        assertThat(
+            RtspSinkSession.parseServerRtcpPort(
+                "RTP/AVP/UDP;unicast;client_port=19000;server_port=5000",
+            ),
+        ).isEqualTo(-1)
     }
 
     @Test

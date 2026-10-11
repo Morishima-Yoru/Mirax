@@ -22,6 +22,8 @@ object RootHelper {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val starting = AtomicBoolean(false)
     private val rootCached = AtomicReference<Boolean?>(null)
+    private val lastProbeTime = AtomicReference<Long>(0L)
+    private const val PROBE_COOLDOWN_MS = 30_000L // 30 seconds between probes
 
     /** Last known root probe result; false until the first async probe finishes. */
     fun availableCached(): Boolean = rootCached.get() == true
@@ -48,6 +50,22 @@ object RootHelper {
     }
 
     /**
+     * Check if enough time has passed since the last probe to allow a new one.
+     */
+    private fun canProbe(): Boolean {
+        val now = System.currentTimeMillis()
+        val last = lastProbeTime.get()
+        return (now - last) >= PROBE_COOLDOWN_MS
+    }
+
+    /**
+     * Update the last probe time to now.
+     */
+    private fun updateProbeTime() {
+        lastProbeTime.set(System.currentTimeMillis())
+    }
+
+    /**
      * Probe root (and start the helper when needed) on a worker thread.
      *
      * Args:
@@ -58,33 +76,58 @@ object RootHelper {
     fun refreshAsync(context: Context, onChanged: () -> Unit) {
         val appContext = context.applicationContext
         Thread({
+            if (!canProbe()) {
+                return@Thread
+            }
+            updateProbeTime()
+            
             val rooted = available()
             val previous = rootCached.getAndSet(rooted)
-            var started = false
-            if (rooted && !PrivilegeProbe.isHelperRunning()) {
-                started = ensureStartedBlocking(appContext)
+            var helperChanged = false
+            if (rooted) {
+                helperChanged = ensureStartedBlocking(appContext)
             }
-            if (previous != rooted || started) {
+            if (previous != rooted || helperChanged) {
                 mainHandler.post(onChanged)
             }
         }, "mirax-root").start()
     }
 
     /**
-     * Start [Helper.main] via `su` when the helper socket is not already up.
+     * Ensure the helper socket belongs to a root process when `su` is available.
      * Blocking; intended for the root worker thread.
      */
     private fun ensureStartedBlocking(context: Context): Boolean {
-        if (PrivilegeProbe.isHelperRunning()) {
-            return true
-        }
         if (!availableCached() && !available()) {
             return false
         }
         if (!starting.compareAndSet(false, true)) {
-            return PrivilegeProbe.isHelperRunning()
+            return false
         }
+        var helperChanged = false
         return try {
+            if (PrivilegeProbe.helperUid() == 0) {
+                return false
+            }
+            if (PrivilegeProbe.isHelperRunning()) {
+                Log.i(TAG, "replacing non-root helper with root helper")
+                PrivilegeProbe.requestStopHelper()
+                helperChanged = true
+                var stopped = false
+                repeat(10) {
+                    if (!stopped) {
+                        if (!PrivilegeProbe.isHelperRunning()) {
+                            stopped = true
+                        } else {
+                            Thread.sleep(200)
+                        }
+                    }
+                }
+                if (!stopped) {
+                    Log.w(TAG, "helper socket remained up after stop request")
+                    return helperChanged
+                }
+            }
             val apk = context.applicationInfo.sourceDir
             val log = File(context.cacheDir, "mirax-helper-root.log").absolutePath
             val remote =
@@ -94,22 +137,25 @@ object RootHelper {
             val process = ProcessBuilder("su", "-c", remote)
                 .redirectErrorStream(true)
                 .start()
+            helperChanged = true
             process.waitFor(3, TimeUnit.SECONDS)
             var ready = false
-            repeat(10) {
-                if (PrivilegeProbe.isHelperRunning()) {
-                    ready = true
-                    return@repeat
+            repeat(40) {
+                if (!ready) {
+                    if (PrivilegeProbe.helperUid() == 0) {
+                        ready = true
+                    } else {
+                        Thread.sleep(250)
+                    }
                 }
-                Thread.sleep(200)
             }
             if (!ready) {
-                Log.w(TAG, "helper socket not up after su start; log=$log")
+                Log.w(TAG, "root helper did not report UID 0; log=$log")
             }
-            ready
+            helperChanged
         } catch (err: Exception) {
             Log.w(TAG, "su helper start failed", err)
-            false
+            helperChanged
         } finally {
             starting.set(false)
         }

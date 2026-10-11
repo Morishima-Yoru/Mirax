@@ -29,8 +29,8 @@ import java.util.concurrent.atomic.AtomicReference
  * Host adapter between the app process and the privileged WFD owner.
  *
  * Owners, in priority order used by the session:
- * - [WfdOwner.HELPER]: local-socket helper (rooted `su` `app_process`).
- * - [WfdOwner.SHIZUKU]: shell-UID user-service binder (Samsung path).
+ * - [WfdOwner.SHIZUKU]: shell-UID user-service binder.
+ * - [WfdOwner.HELPER]: local-socket helper, root when available or manual ADB shell otherwise.
  *
  * Advertise hand-off alone is not enough for the UI: the bridge watches until
  * the owner reports listening (or times out) and feeds
@@ -203,7 +203,10 @@ object WfdOwnerBridge {
                 Log.d(TAG, "pairingState via Shizuku failed", err)
                 "UNPAIRED"
             }
-            WfdOwner.HELPER -> "UNPAIRED"
+            WfdOwner.HELPER -> when (val state = exchangeHelper("PAIRING_STATE")) {
+                "UNPAIRED", "PAIRING", "PAIRED" -> state
+                else -> "UNPAIRED"
+            }
             WfdOwner.NONE -> "UNPAIRED"
         }
     }

@@ -35,10 +35,27 @@ class RtspSinkSession(
      */
     var uibcHidType: Int = 3
         private set
+
+    /**
+     * Latest microsoft_latency_management_capability value from the source
+     * (`low` / `normal` / `high`), or empty before the first SET_PARAMETER.
+     */
+    var latencyMode: String = ""
+        private set
+
+    /**
+     * Source RTCP UDP port from SETUP Transport `server_port=rtp-rtcp`, or -1
+     * when RTCP was not negotiated.
+     */
+    var rtcpServerPort: Int = -1
+        private set
+
     private var customSelected: Boolean = false
     private var activeRtpPort: Int = rtpPort
 
     fun rtpPort(): Int = activeRtpPort
+
+    fun rtcpPort(): Int = activeRtpPort + 1
 
     fun presentationUrl(): String = presentationUrl
 
@@ -133,6 +150,29 @@ class RtspSinkSession(
         return idrRequest()
     }
 
+    /**
+     * Ask the source to switch microsoft latency role (`low` / `normal` / `high`).
+     *
+     * Windows normally pushes this sink-ward; sending it sink-ward after PLAY is a
+     * best-effort nudge toward interactive encode when UIBC is active.
+     */
+    fun requestLatencyMode(mode: String): String {
+        if (state != "PLAYING" || outstandingCseq != -1) {
+            return ""
+        }
+        val normalized = mode.trim().lowercase(Locale.US)
+        if (normalized !in setOf("low", "normal", "high")) {
+            return ""
+        }
+        val url = presentationUrl.ifEmpty { "rtsp://localhost/wfd1.0" }
+        return request(
+            "SET_PARAMETER",
+            url,
+            "Content-Type: text/parameters\r\n",
+            "microsoft_latency_management_capability: $normalized\r\n",
+        )
+    }
+
     private fun handleResponse(start: String, lines: List<String>, out: MutableList<String>) {
         val code = statusCode(start)
         val cseq = headerInt(lines, "CSeq")
@@ -150,6 +190,7 @@ class RtspSinkSession(
             "OPTIONS" -> state = "READY"
             "SETUP" -> {
                 sessionId = headerToken(lines, "Session")
+                rtcpServerPort = parseServerRtcpPort(headerValue(lines, "Transport"))
                 state = "READY_TO_PLAY"
                 out.add(playRequest())
             }
@@ -185,6 +226,8 @@ class RtspSinkSession(
         var askedCustom = false
         var askedWfdx = false
         var askedWfd2 = false
+        var askedMaxBitrate = false
+        var askedLatency = false
         for (line in lines) {
             val name = parameterName(line)
             if (name.isEmpty()) {
@@ -195,6 +238,8 @@ class RtspSinkSession(
                 "wfdx_video_formats" -> askedWfdx = true
                 "wfd2_video_formats" -> askedWfd2 = true
                 "microsoft_custom_video_formats" -> askedCustom = true
+                "microsoft_max_bitrate" -> askedMaxBitrate = true
+                "microsoft_latency_management_capability" -> askedLatency = true
             }
             appendParam(sb, name, capabilities.valueFor(name))
         }
@@ -207,6 +252,24 @@ class RtspSinkSession(
                 "microsoft_custom_video_formats",
                 capabilities.valueFor("microsoft_custom_video_formats"),
             )
+        }
+        // Interactive sinks: force bitrate floor + low-latency preference into M3
+        // even when Windows omitted those keys (common on Win11 Miracast).
+        if (capabilities.interactiveHints) {
+            if (!askedMaxBitrate) {
+                appendParam(
+                    sb,
+                    "microsoft_max_bitrate",
+                    capabilities.valueFor("microsoft_max_bitrate"),
+                )
+            }
+            if (!askedLatency) {
+                appendParam(
+                    sb,
+                    "microsoft_latency_management_capability",
+                    capabilities.valueFor("microsoft_latency_management_capability"),
+                )
+            }
         }
         return sb.toString()
     }
@@ -258,7 +321,9 @@ class RtspSinkSession(
                         uibcPort = -1
                     }
                 }
-                "microsoft_latency_management_capability",
+                "microsoft_latency_management_capability" -> {
+                    latencyMode = value.lowercase(Locale.US).ifEmpty { "supported" }
+                }
                 "microsoft_audio_mute",
                 "microsoft_format_change_capability",
                 -> {
@@ -377,6 +442,15 @@ class RtspSinkSession(
         }
 
         private fun headerToken(lines: List<String>, name: String): String {
+            var value = headerValue(lines, name)
+            val semi = value.indexOf(';')
+            if (semi >= 0) {
+                value = value.substring(0, semi).trim()
+            }
+            return value
+        }
+
+        private fun headerValue(lines: List<String>, name: String): String {
             val prefix = name.lowercase(Locale.US)
             for (i in 1 until lines.size) {
                 val colon = lines[i].indexOf(':')
@@ -387,14 +461,21 @@ class RtspSinkSession(
                 if (key != prefix) {
                     continue
                 }
-                var value = lines[i].substring(colon + 1).trim()
-                val semi = value.indexOf(';')
-                if (semi >= 0) {
-                    value = value.substring(0, semi).trim()
-                }
-                return value
+                return lines[i].substring(colon + 1).trim()
             }
             return ""
+        }
+
+        /**
+         * Parse `server_port=rtp-rtcp` (or a lone rtp port) from a Transport header.
+         */
+        fun parseServerRtcpPort(transport: String): Int {
+            val match = Regex(
+                "server_port=(\\d+)(?:-(\\d+))?",
+                RegexOption.IGNORE_CASE,
+            ).find(transport) ?: return -1
+            val rtcp = match.groupValues[2].ifEmpty { return -1 }
+            return rtcp.toIntOrNull()?.takeIf { it in 1..65535 } ?: -1
         }
 
         private fun parameterName(line: String): String {
@@ -407,3 +488,5 @@ class RtspSinkSession(
         }
     }
 }
+
+

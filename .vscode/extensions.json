@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "fwcd.kotlin",
+    "vscjava.vscode-java-pack",
+    "redhat.vscode-yaml",
+    "gradle.gradle-lint"
+  ]
+}

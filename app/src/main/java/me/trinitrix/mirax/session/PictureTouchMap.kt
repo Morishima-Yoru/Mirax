@@ -36,4 +36,14 @@ object PictureTouchMap {
         val scaled = (clamped / viewSpan.toFloat()) * pictureSpan.toFloat()
         return scaled.roundToInt().coerceIn(0, pictureSpan)
     }
+
+    /**
+     * Map a picture pixel back onto the view coordinate span.
+     */
+    fun viewCoord(picturePixel: Int, viewSpan: Int, pictureSpan: Int): Float {
+        if (viewSpan <= 0 || pictureSpan <= 0) {
+            return 0f
+        }
+        return (picturePixel.toFloat() / pictureSpan.toFloat()) * viewSpan.toFloat()
+    }
 }

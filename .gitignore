@@ -35,6 +35,7 @@ google-services.json
 # Scratch & local experiments
 .scratch*
 receiver/
+.omo/
 
 # Compiled leftovers
 *.class
