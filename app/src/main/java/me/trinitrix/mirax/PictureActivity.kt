@@ -64,15 +64,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var stage: FrameLayout
     private lateinit var surfaceView: SurfaceView
     private lateinit var cursorView: ImageView
-    private lateinit var handleRoot: FrameLayout
-    private lateinit var handleScrim: View
-    private lateinit var handleScrollView: ScrollView
-    private lateinit var handlePanel: LinearLayout
     private var endConnectionDialog: AlertDialog? = null
-    private lateinit var handleEndButton: MaterialButton
-    private lateinit var handleResolutionValue: TextView
-    private lateinit var handleRefreshValue: TextView
-    private lateinit var debugOverlaySwitch: MaterialSwitch
     // Control panel fields
     private lateinit var controlPanelRoot: FrameLayout
     private lateinit var controlPanelScrim: View
@@ -144,18 +136,12 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             layoutParams = FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START)
         }
         stage.addView(cursorView)
-        stage.setOnClickListener { /* intentionally empty */ }
+        stage.setOnClickListener {
+            applySession(SessionHost.toggleControlPanel(this@PictureActivity))
+        }
         stage.setOnLongClickListener { true }
 
-        buildHandle()
         buildControlPanel()
-        stage.addView(
-            handleRoot,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-            ),
-        )
         stage.addView(
             controlPanelRoot,
             FrameLayout.LayoutParams(
@@ -349,7 +335,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             finish()
             return
         }
-        renderHandle(snapshot)
         renderControlPanel(snapshot)
         ViewCompat.requestApplyInsets(stage)
         layoutPicture()
@@ -384,103 +369,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         } else {
             view.setPadding(0, 0, 0, 0)
         }
-    }
-
-    private fun buildHandle() {
-        fun dp(value: Int): Int = MiraxUi.dp(this, value)
-
-        handleRoot = FrameLayout(this).apply {
-            visibility = View.GONE
-        }
-        handleScrim = View(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-            )
-            setBackgroundColor(MiraxUi.scrimColor(this@PictureActivity))
-            isClickable = true
-            setOnClickListener {
-                applySession(SessionHost.collapseControlPanel(this@PictureActivity))
-            }
-        }
-
-        handleScrollView = ScrollView(this).apply {
-            isFillViewport = true
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_surface, 16, R.color.mirax_stroke, 1)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
-            ).apply {
-                leftMargin = dp(16)
-                rightMargin = dp(16)
-                bottomMargin = dp(16)
-                topMargin = dp(32)
-            }
-        }
-        ViewCompat.setOnApplyWindowInsetsListener(handleScrollView) { view, insets ->
-            val nav = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
-            val params = view.layoutParams as FrameLayout.LayoutParams
-            params.bottomMargin = dp(16) + nav.bottom
-            view.layoutParams = params
-            insets
-        }
-
-        handlePanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            isClickable = true
-            setOnClickListener { }
-            setPadding(dp(16), dp(18), dp(16), dp(16))
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-            )
-        }
-
-        handleEndButton = MiraxUi.stopActionButton(this, getString(R.string.handle_end_connection)) {
-            applySession(SessionHost.requestEndConnection(this@PictureActivity))
-        }.apply {
-            (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(16)
-        }
-        handlePanel.addView(handleEndButton)
-
-        val stats = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_chip, 14)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-        }
-        stats.addView(frameLabel(getString(R.string.handle_resolution_label)))
-        handleResolutionValue = valueText()
-        stats.addView(handleResolutionValue)
-        stats.addView(frameLabel(getString(R.string.handle_refresh_label), topPadDp = 14))
-        handleRefreshValue = valueText()
-        stats.addView(handleRefreshValue)
-
-        handlePanel.addView(stats)
-
-        debugOverlaySwitch = MaterialSwitch(this).apply {
-            text = getString(R.string.handle_debug_overlay)
-            isChecked = MiraxApp.instance.session.snapshot().showDebugOverlay
-            textSize = 17f
-            minHeight = dp(56)
-            setTextColor(getColor(R.color.mirax_on_surface))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(12) }
-            setOnCheckedChangeListener { _, isChecked ->
-                val session = MiraxApp.instance.session
-                session.handle(SessionAction.SetShowDebugOverlay(isChecked))
-                val snapshot = SessionHost.commit(this@PictureActivity)
-                applySession(snapshot)
-            }
-        }
-        handlePanel.addView(debugOverlaySwitch)
-
-        handleScrollView.addView(handlePanel)
-        handleRoot.addView(handleScrim)
-        handleRoot.addView(handleScrollView)
     }
 
     private fun buildControlPanel() {
@@ -772,27 +660,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         endConnectionDialog?.show()
     }
 
-    private fun renderHandle(snapshot: SessionSnapshot) {
-        if (snapshot.phase != ScreenPhase.CONNECTED) {
-            handleRoot.visibility = View.GONE
-            return
-        }
-        handleResolutionValue.text = snapshot.handleResolutionText
-        val refresh = snapshot.handleRefreshRateHz
-        handleRefreshValue.text = if (refresh != null) {
-            getString(R.string.handle_refresh_value, refresh)
-        } else {
-            ""
-        }
-        if (::debugOverlaySwitch.isInitialized && debugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
-            debugOverlaySwitch.isChecked = snapshot.showDebugOverlay
-        }
-        handleRoot.visibility = View.VISIBLE
-        if (::handleScrollView.isInitialized) {
-            ViewCompat.requestApplyInsets(handleScrollView)
-        }
-    }
-
     private fun renderControlPanel(snapshot: SessionSnapshot) {
         if (!snapshot.controlPanelExpanded) {
             controlPanelRoot.visibility = View.GONE
@@ -981,6 +848,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val snapshot = MiraxApp.instance.session.snapshot()
         val mode = snapshot.selectedMode
         if (!snapshot.touchEnabled || mode == null) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                applySession(SessionHost.toggleControlPanel(this@PictureActivity))
+            }
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL
             ) {

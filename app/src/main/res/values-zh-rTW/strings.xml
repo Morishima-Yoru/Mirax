@@ -83,9 +83,6 @@
     <string name="end_connection_confirm_message">要結束這次 Miracast 連線嗎？</string>
     <string name="end_connection_confirm_action">結束連線</string>
     <string name="press_back_again_to_leave">再按一次返回即可離開</string>
-    <string name="handle_end_connection">結束這次連線</string>
-    <string name="handle_resolution_label">解析度</string>
-    <string name="handle_refresh_label">更新率</string>
     <string name="handle_refresh_value">%1$d Hz</string>
     <string name="settings_floating_ball_title">浮動球</string>
     <string name="settings_floating_ball_switch">離開投影時顯示浮動球</string>
