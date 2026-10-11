@@ -20,7 +20,6 @@ object SessionPreferences {
     private const val KEY_CHECKED_STANDARD_MODES = "checked_standard_modes"
     private const val KEY_PROVISIONING_CONSUMED = "provisioning_consumed"
     private const val KEY_MAX_VIDEO_BITRATE_BPS = "max_video_bitrate_bps"
-    private const val KEY_BOTTOM_HANDLE_ENABLED = "bottom_handle_enabled"
     private const val KEY_FLOATING_BALL_ENABLED = "floating_ball_enabled"
     private const val KEY_PICTURE_SCALE = "picture_scale"
     private const val KEY_CUSTOM_MODES = "custom_modes"
@@ -70,7 +69,6 @@ object SessionPreferences {
                 ),
             ),
             provisioningConsumed = prefs.getBoolean(KEY_PROVISIONING_CONSUMED, preferred != null),
-            bottomHandleEnabled = prefs.getBoolean(KEY_BOTTOM_HANDLE_ENABLED, true),
             floatingBallEnabled = prefs.getBoolean(KEY_FLOATING_BALL_ENABLED, true),
             pictureScale = pictureScale,
             customModes = prefs.getString(KEY_CUSTOM_MODES, null)
@@ -139,7 +137,6 @@ object SessionPreferences {
                 )
                 putBoolean(KEY_PROVISIONING_CONSUMED, settings.provisioningConsumed)
                 putLong(KEY_MAX_VIDEO_BITRATE_BPS, settings.maxVideoBitrateBps)
-                putBoolean(KEY_BOTTOM_HANDLE_ENABLED, settings.bottomHandleEnabled)
                 putBoolean(KEY_FLOATING_BALL_ENABLED, settings.floatingBallEnabled)
                 putString(KEY_PICTURE_SCALE, settings.pictureScale.name)
                 putString(
@@ -155,13 +152,6 @@ object SessionPreferences {
                 putBoolean(KEY_CONTROL_PANEL_ENABLED, settings.controlPanelEnabled)
                 putBoolean(KEY_ORIENTATION_LOCK_ENABLED, settings.orientationLockEnabled)
             }
-            .apply()
-    }
-
-    fun saveBottomHandleEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_BOTTOM_HANDLE_ENABLED, enabled)
             .apply()
     }
 

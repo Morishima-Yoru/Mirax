@@ -178,7 +178,7 @@ class ActiveConnectionStateTest {
         assertThat(state.controlPanelExpandedState).isFalse()
 
         val result = state.onSystemBack()
-        assertThat(result).isEqualTo(ActiveConnectionState.BackResult.ExpandHandle)
+        assertThat(result).isEqualTo(ActiveConnectionState.BackResult.ExpandControlPanel)
         assertThat(state.controlPanelExpandedState).isTrue()
     }
 

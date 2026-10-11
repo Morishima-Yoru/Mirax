@@ -30,7 +30,6 @@ class MiraxSession(
         initialAutoAddWmSizeOnConnect = initialSettings.autoAddWmSizeOnConnect,
     )
     private val display = DisplayPreferences(
-        initialBottomHandleEnabled = initialSettings.bottomHandleEnabled,
         initialFloatingBallEnabled = initialSettings.floatingBallEnabled,
         initialPictureScale = initialSettings.pictureScale,
         initialTouchEnabled = initialSettings.touchEnabled,
@@ -214,22 +213,6 @@ class MiraxSession(
             SessionAction.EndConnection -> {
                 endConnectionFromUser()
             }
-            is SessionAction.SetBottomHandleEnabled -> {
-                display.setBottomHandleEnabled(action.enabled)
-                if (!action.enabled) {
-                    activeConnection.setBottomHandleExpanded(false)
-                }
-            }
-            SessionAction.ToggleBottomHandleExpanded -> {
-                if (activeConnection.isConnected && display.bottomHandleEnabled) {
-                    activeConnection.setBottomHandleExpanded(!activeConnection.bottomHandleExpandedState)
-                }
-            }
-            SessionAction.CollapseBottomHandleExpanded -> {
-                if (activeConnection.isConnected && display.bottomHandleEnabled) {
-                    activeConnection.setBottomHandleExpanded(false)
-                }
-            }
             SessionAction.CollapseControlPanel -> {
                 if (activeConnection.isConnected) {
                     display.setControlPanelExpanded(false)
@@ -319,7 +302,6 @@ fun snapshot(): SessionSnapshot {
         }
         val handleResolution = activeConnection.selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
         val handleRefresh = activeConnection.selectedMode?.refreshHz
-        val showHandle = phase == ScreenPhase.CONNECTED && display.bottomHandleEnabled
         val showBall =
             phase == ScreenPhase.CONNECTED &&
                 activeConnection.awayOnHomeScreenState &&
@@ -357,11 +339,8 @@ fun snapshot(): SessionSnapshot {
             wfdAdvertise = resolveWfdAdvertise(owner, effectiveName, nextModes),
             selectedMode = activeConnection.selectedMode,
             showPicture = phase == ScreenPhase.CONNECTED,
-            bottomHandleEnabled = display.bottomHandleEnabled,
-            showBottomHandle = showHandle,
-            bottomHandleExpanded = showHandle && activeConnection.bottomHandleExpandedState,
-            handleResolutionText = if (showHandle) handleResolution else "",
-            handleRefreshRateHz = if (showHandle) handleRefresh else null,
+            handleResolutionText = if (activeConnection.isConnected && activeConnection.selectedMode != null) handleResolution else "",
+            handleRefreshRateHz = if (activeConnection.isConnected && activeConnection.selectedMode != null) handleRefresh else null,
             floatingBallEnabled = display.floatingBallEnabled,
             showOverlayPermissionReminder = !overlayGranted,
             showFloatingBall = showBall,
@@ -396,7 +375,6 @@ fun snapshot(): SessionSnapshot {
             checkedStandardModes = caps.checkedStandardModes,
             maxVideoBitrateBps = caps.maxVideoBitrateBps,
             provisioningConsumed = caps.provisioningConsumed,
-            bottomHandleEnabled = display.bottomHandleEnabled,
             floatingBallEnabled = display.floatingBallEnabled,
             pictureScale = display.pictureScale,
             customModes = caps.customModes,
@@ -446,7 +424,6 @@ fun snapshot(): SessionSnapshot {
     private fun onFloatingBallTapped() {
         if (!activeConnection.isConnected || !activeConnection.awayOnHomeScreenState) return
         activeConnection.setAwayOnHomeScreen(false)
-        activeConnection.setBottomHandleExpanded(false)
         activeConnection.setBackEndsConnectionPending(false)
         pendingEffects = pendingEffects.filterNot { it is SessionEffect.ConfirmEndConnection }
         enqueueEffect(SessionEffect.BringProjectionToFront)
@@ -503,7 +480,7 @@ fun snapshot(): SessionSnapshot {
     private fun onSystemBack() {
         if (!activeConnection.isConnected) return
         when (activeConnection.onSystemBack()) {
-            ActiveConnectionState.BackResult.ExpandHandle -> {
+            ActiveConnectionState.BackResult.ExpandControlPanel -> {
                 display.setControlPanelExpanded(true)
             }
             ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()

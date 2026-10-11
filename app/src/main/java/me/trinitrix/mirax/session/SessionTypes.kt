@@ -283,7 +283,6 @@ data class OverlayPermissionReport(
  *     maxVideoBitrateBps: Cap that filters the standard-mode list and is
  *         advertised as `microsoft_max_bitrate` on the next RTSP connection.
  *     provisioningConsumed: Whether the one-time preferred-mode provisioning chance is gone.
- *     bottomHandleEnabled: Whether the picture bottom handle is shown while connected.
  *     floatingBallEnabled: Whether the floating ball may appear when leaving to home.
  *     pictureScale: How the picture sits on the panel (等比 / 鋪滿 / 拉伸 / 原寸).
  *     customModes: Ordered custom resolutions. First is preferred when auto wm size is off.
@@ -302,7 +301,6 @@ data class SessionSettings(
     val checkedStandardModes: Set<VideoMode> = StandardVideoModes.DEFAULT_CHECKED,
     val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
     val provisioningConsumed: Boolean = false,
-    val bottomHandleEnabled: Boolean = true,
     val floatingBallEnabled: Boolean = true,
     val pictureScale: PictureScale = PictureScale.PROPORTIONAL,
     val customModes: List<VideoMode> = emptyList(),
@@ -420,11 +418,6 @@ data class WfdAdvertiseCommand(
  * sits on the panel; placement uses [PicturePlacement] with negotiated picture
  * axes, not a padded decoder buffer.
  *
- * [showBottomHandle] is true only while connected and the bottom-handle setting
- * is on. [bottomHandleExpanded] is whether the handle panel is open.
- * [handleResolutionText] and [handleRefreshRateHz] are the handle content for
- * the current selected mode (empty / null when the handle is not shown).
- *
  * [showOverlayPermissionReminder] is true only when overlay permission is
  * missing — never when permission is granted and the user merely turned the
  * floating ball off. [showFloatingBall] is true only while connected, away on
@@ -462,9 +455,6 @@ data class SessionSnapshot(
     val wfdAdvertise: WfdAdvertiseCommand? = null,
     val selectedMode: VideoMode? = null,
     val showPicture: Boolean = false,
-    val bottomHandleEnabled: Boolean = true,
-    val showBottomHandle: Boolean = false,
-    val bottomHandleExpanded: Boolean = false,
     val handleResolutionText: String = "",
     val handleRefreshRateHz: Int? = null,
     val floatingBallEnabled: Boolean = true,
@@ -688,26 +678,10 @@ sealed interface SessionAction {
     data object EndConnection : SessionAction
 
     /**
-     * User toggled the bottom-handle setting. Persisted; defaults on.
-     */
-    data class SetBottomHandleEnabled(val enabled: Boolean) : SessionAction
-
-    /**
-     * User toggled the debug overlay switch in the bottom handle panel.
+     * User toggled the debug overlay switch in the control panel.
      * Persisted; defaults off.
      */
     data class SetShowDebugOverlay(val enabled: Boolean) : SessionAction
-
-    /**
-     * User tapped the thin bottom-handle control to expand or collapse its panel.
-     * Only meaningful while [SessionSnapshot.showBottomHandle] is true.
-     */
-    data object ToggleBottomHandleExpanded : SessionAction
-
-    /**
-     * User dismissed the picture status panel (tap outside the panel).
-     */
-    data object CollapseBottomHandleExpanded : SessionAction
 
     /**
      * User dismissed the control panel (tap on scrim).

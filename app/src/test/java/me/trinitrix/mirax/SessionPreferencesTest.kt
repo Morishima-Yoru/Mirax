@@ -39,7 +39,6 @@ class SessionPreferencesTest {
         val settings = SessionSettings(
             controlPanelEnabled = false,
             orientationLockEnabled = true,
-            bottomHandleEnabled = false,
             floatingBallEnabled = false,
             touchEnabled = false,
             showDebugMessages = false,
@@ -62,7 +61,6 @@ class SessionPreferencesTest {
             checkedStandardModes = StandardVideoModes.DEFAULT_CHECKED,
             maxVideoBitrateBps = StandardVideoModes.BITRATE_CAP_BPS,
             provisioningConsumed = false,
-            bottomHandleEnabled = true,
             floatingBallEnabled = true,
             pictureScale = PictureScale.PROPORTIONAL,
             customModes = emptyList(),

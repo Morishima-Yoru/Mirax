@@ -41,16 +41,6 @@ internal class ActiveConnectionState {
         awayOnHomeScreen = value
     }
 
-    var bottomHandleExpanded: Boolean = false
-        private set
-
-    val bottomHandleExpandedState: Boolean
-        get() = bottomHandleExpanded
-
-    fun setBottomHandleExpanded(value: Boolean) {
-        bottomHandleExpanded = value
-    }
-
     var controlPanelExpanded: Boolean = false
         private set
 
@@ -113,7 +103,6 @@ internal class ActiveConnectionState {
     fun onConnectionEnded() {
         _phase = ConnectionPhase.ENDED
         backEndsConnectionPending = false
-        bottomHandleExpanded = false
         controlPanelExpanded = false
         awayOnHomeScreen = false
         _selectedMode = null
@@ -136,7 +125,7 @@ internal class ActiveConnectionState {
     }
 
     sealed interface BackResult {
-        data object ExpandHandle : BackResult
+        data object ExpandControlPanel : BackResult
         data object RequestEnd : BackResult
         data object ArmedSecondBack : BackResult
     }
@@ -147,7 +136,7 @@ internal class ActiveConnectionState {
         }
         if (!controlPanelExpanded) {
             controlPanelExpanded = true
-            return BackResult.ExpandHandle
+            return BackResult.ExpandControlPanel
         }
         if (backEndsConnectionPending) {
             backEndsConnectionPending = false

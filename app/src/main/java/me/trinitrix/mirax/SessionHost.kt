@@ -178,30 +178,11 @@ object SessionHost {
     }
 
     /**
-     * User dismissed the picture status panel.
-     */
-    fun collapseBottomHandleExpanded(context: Context): SessionSnapshot {
-        val session = MiraxApp.instance.session
-        session.handle(SessionAction.CollapseBottomHandleExpanded)
-        return commit(context)
-    }
-
-    /**
      * User dismissed the control panel (tap on scrim).
      */
     fun collapseControlPanel(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
         session.handle(SessionAction.CollapseControlPanel)
-        return commit(context)
-    }
-
-    /**
-     * Persist and apply the bottom-handle setting.
-     */
-    fun setBottomHandleEnabled(context: Context, enabled: Boolean): SessionSnapshot {
-        val session = MiraxApp.instance.session
-        session.handle(SessionAction.SetBottomHandleEnabled(enabled))
-        SessionPreferences.saveBottomHandleEnabled(context.applicationContext, enabled)
         return commit(context)
     }
 
@@ -225,15 +206,6 @@ object SessionHost {
         val snapshot = commit(context)
         PictureActivity.relayoutIfShowing()
         return snapshot
-    }
-
-    /**
-     * User tapped the thin bottom handle to expand or collapse its panel.
-     */
-    fun toggleBottomHandleExpanded(context: Context): SessionSnapshot {
-        val session = MiraxApp.instance.session
-        session.handle(SessionAction.ToggleBottomHandleExpanded)
-        return commit(context)
     }
 
     /**

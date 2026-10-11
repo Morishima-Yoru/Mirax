@@ -89,8 +89,6 @@
     <string name="handle_debug_overlay">Show debug overlay</string>
     <string name="handle_refresh_label">Refresh rate</string>
     <string name="handle_refresh_value">%1$d Hz</string>
-    <string name="settings_bottom_handle_title">Bottom handle</string>
-    <string name="settings_bottom_handle_switch">Show bottom handle while projecting</string>
     <string name="settings_floating_ball_title">Floating ball</string>
     <string name="settings_floating_ball_switch">Show floating ball when leaving projection</string>
     <string name="overlay_reminder_body">Mirax needs permission to display over other apps so the floating ball can appear when you leave projection.</string>

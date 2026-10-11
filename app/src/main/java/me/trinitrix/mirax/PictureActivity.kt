@@ -243,9 +243,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 wfdAdvertise = null,
                 selectedMode = me.trinitrix.mirax.session.VideoMode(1920, 1080, 60),
                 showPicture = true,
-                bottomHandleEnabled = true,
-                showBottomHandle = false,
-                bottomHandleExpanded = false,
                 handleResolutionText = "1920×1080",
                 handleRefreshRateHz = 60,
                 floatingBallEnabled = true,
@@ -403,7 +400,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             setBackgroundColor(MiraxUi.scrimColor(this@PictureActivity))
             isClickable = true
             setOnClickListener {
-                applySession(SessionHost.collapseBottomHandleExpanded(this@PictureActivity))
+                applySession(SessionHost.collapseControlPanel(this@PictureActivity))
             }
         }
 
@@ -776,10 +773,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun renderHandle(snapshot: SessionSnapshot) {
-        if (!snapshot.showBottomHandle) {
-            handleRoot.visibility = View.GONE
-            return
-        }
         handleResolutionValue.text = snapshot.handleResolutionText
         val refresh = snapshot.handleRefreshRateHz
         handleRefreshValue.text = if (refresh != null) {
@@ -790,9 +783,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (::debugOverlaySwitch.isInitialized && debugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
             debugOverlaySwitch.isChecked = snapshot.showDebugOverlay
         }
-        val expanded = snapshot.bottomHandleExpanded
-        handleRoot.visibility = if (expanded) View.VISIBLE else View.GONE
-        if (expanded && ::handleScrollView.isInitialized) {
+        handleRoot.visibility = View.VISIBLE
+        if (::handleScrollView.isInitialized) {
             ViewCompat.requestApplyInsets(handleScrollView)
         }
     }
