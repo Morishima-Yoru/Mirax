@@ -16,6 +16,17 @@ class ActiveConnectionStateTest {
 
     private fun freshState() = ActiveConnectionState()
 
+    private fun setupPlayingState(state: ActiveConnectionState) {
+        state.onPrePlayProgress(advertisedModes = setOf(VideoMode(1920, 1080, 60)))
+        state.freezeOffer(
+            offeredModes = setOf(VideoMode(1920, 1080, 60)),
+            preferredMode = VideoMode(1920, 1080, 60),
+            touchEnabled = true,
+            rotationDegrees = 0
+        )
+        state.onPlayStarted()
+    }
+
     @Test
     fun initialPhaseIsNone() {
         val state = freshState()
@@ -150,5 +161,85 @@ class ActiveConnectionStateTest {
         // Second call should not change phase
         state.onPrePlayProgress(advertisedModes = setOf(VideoMode(1280, 720, 60)))
         assertThat(state.phase).isEqualTo(ConnectionPhase.NEGOTIATING)
+    }
+
+    @Test
+    fun backWhenNotPlayingReturnsArmedSecondBack() {
+        val state = freshState()
+        // Not in PLAYING phase
+        val result = state.onSystemBack()
+        assertThat(result).isEqualTo(ActiveConnectionState.BackResult.ArmedSecondBack)
+    }
+
+    @Test
+    fun firstBackExpandsControlPanel() {
+        val state = freshState()
+        setupPlayingState(state)
+        assertThat(state.controlPanelExpandedState).isFalse()
+
+        val result = state.onSystemBack()
+        assertThat(result).isEqualTo(ActiveConnectionState.BackResult.ExpandControlPanel)
+        assertThat(state.controlPanelExpandedState).isTrue()
+    }
+
+    @Test
+    fun secondBackWhenPanelExpandedArmsForEnd() {
+        val state = freshState()
+        setupPlayingState(state)
+
+        // First back expands panel
+        state.onSystemBack()
+        assertThat(state.controlPanelExpandedState).isTrue()
+
+        // Second back arms for end connection (returns ArmedSecondBack)
+        val result = state.onSystemBack()
+        assertThat(result).isEqualTo(ActiveConnectionState.BackResult.ArmedSecondBack)
+        assertThat(state.backEndsConnectionPendingState).isTrue()
+    }
+
+    @Test
+    fun thirdBackWhenPanelExpandedAndArmedRequestsEndConnection() {
+        val state = freshState()
+        setupPlayingState(state)
+
+        // First back expands panel
+        state.onSystemBack()
+        assertThat(state.controlPanelExpandedState).isTrue()
+
+        // Second back arms for end
+        state.onSystemBack()
+        assertThat(state.backEndsConnectionPendingState).isTrue()
+
+        // Third back requests end connection
+        val result = state.onSystemBack()
+        assertThat(result).isEqualTo(ActiveConnectionState.BackResult.RequestEnd)
+        assertThat(state.backEndsConnectionPendingState).isFalse()
+    }
+
+    @Test
+    fun connectionEndResetsControlPanelExpanded() {
+        val state = freshState()
+        setupPlayingState(state)
+
+        // Expand panel first
+        state.onSystemBack()
+        assertThat(state.controlPanelExpandedState).isTrue()
+
+        // End connection
+        state.onConnectionEnded()
+
+        assertThat(state.controlPanelExpandedState).isFalse()
+        assertThat(state.phase).isEqualTo(ConnectionPhase.ENDED)
+    }
+
+    @Test
+    fun backAfterArmedSecondBackRequestsEnd() {
+        val state = freshState()
+        // Not in PLAYING phase - first back returns ArmedSecondBack
+        state.onSystemBack()
+
+        // Still not in PLAYING - second back also returns ArmedSecondBack
+        val result = state.onSystemBack()
+        assertThat(result).isEqualTo(ActiveConnectionState.BackResult.ArmedSecondBack)
     }
 }

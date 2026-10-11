@@ -41,14 +41,17 @@ internal class ActiveConnectionState {
         awayOnHomeScreen = value
     }
 
-    var bottomHandleExpanded: Boolean = false
+    var controlPanelExpanded: Boolean = false
         private set
 
-    val bottomHandleExpandedState: Boolean
-        get() = bottomHandleExpanded
+    val controlPanelExpandedState: Boolean
+        get() = controlPanelExpanded
 
-    fun setBottomHandleExpanded(value: Boolean) {
-        bottomHandleExpanded = value
+    fun setControlPanelExpanded(value: Boolean) {
+        controlPanelExpanded = value
+        if (!value) {
+            backEndsConnectionPending = false
+        }
     }
 
     var backEndsConnectionPending: Boolean = false
@@ -103,7 +106,7 @@ internal class ActiveConnectionState {
     fun onConnectionEnded() {
         _phase = ConnectionPhase.ENDED
         backEndsConnectionPending = false
-        bottomHandleExpanded = false
+        controlPanelExpanded = false
         awayOnHomeScreen = false
         _selectedMode = null
         connectionAdvertisedModesInternal = null
@@ -124,28 +127,34 @@ internal class ActiveConnectionState {
         return true
     }
 
+    fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60)) {
+        _phase = ConnectionPhase.PLAYING
+        _selectedMode = mode
+        connectionPreferredModeInternal = mode
+        connectionAdvertisedModesInternal = setOf(mode)
+        awayOnHomeScreen = false
+        backEndsConnectionPending = false
+    }
+
     sealed interface BackResult {
-        data object ExpandHandle : BackResult
+        data object ExpandControlPanel : BackResult
         data object RequestEnd : BackResult
         data object ArmedSecondBack : BackResult
     }
 
-    fun onSystemBack(bottomHandleEnabled: Boolean): BackResult {
+    fun onSystemBack(): BackResult {
         if (_phase != ConnectionPhase.PLAYING) {
             return BackResult.ArmedSecondBack
         }
-        if (bottomHandleEnabled) {
-            return if (!bottomHandleExpanded) {
-                bottomHandleExpanded = true
-                BackResult.ExpandHandle
-            } else {
-                BackResult.RequestEnd
+        if (!controlPanelExpanded) {
+            if (backEndsConnectionPending) {
+                backEndsConnectionPending = false
+                return BackResult.RequestEnd
             }
+            controlPanelExpanded = true
+            return BackResult.ExpandControlPanel
         }
-        if (backEndsConnectionPending) {
-            backEndsConnectionPending = false
-            return BackResult.RequestEnd
-        }
+        controlPanelExpanded = false
         backEndsConnectionPending = true
         return BackResult.ArmedSecondBack
     }

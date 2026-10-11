@@ -1,11 +1,10 @@
 package me.trinitrix.mirax.session
 
 /**
- * Encapsulates UI display preferences: picture scale, bottom handle,
- * floating ball, touch enable, debug messages, and auto-stop timer.
+ * Encapsulates UI display preferences: picture scale, floating ball,
+ * touch enable, debug messages, auto-stop timer, control panel, and orientation lock.
  */
 internal class DisplayPreferences(
-    initialBottomHandleEnabled: Boolean = true,
     initialFloatingBallEnabled: Boolean = true,
     initialPictureScale: PictureScale = PictureScale.PROPORTIONAL,
     initialTouchEnabled: Boolean = true,
@@ -13,9 +12,10 @@ internal class DisplayPreferences(
     initialCameraCutoutAffectsLayout: Boolean = false,
     initialBroadcastAutoStopMinutes: Int = 1,
     initialShowDebugOverlay: Boolean = false,
+    initialControlPanelEnabled: Boolean = true,
+    initialControlPanelExpanded: Boolean = false,
+    initialOrientationLockEnabled: Boolean = false,
 ) {
-    var bottomHandleEnabled: Boolean = initialBottomHandleEnabled
-        private set
 
     var floatingBallEnabled: Boolean = initialFloatingBallEnabled
         private set
@@ -38,9 +38,14 @@ internal class DisplayPreferences(
     var showDebugOverlay: Boolean = initialShowDebugOverlay
         private set
 
-    fun setBottomHandleEnabled(enabled: Boolean) {
-        bottomHandleEnabled = enabled
-    }
+    var controlPanelEnabled: Boolean = initialControlPanelEnabled
+        private set
+
+    var controlPanelExpanded: Boolean = initialControlPanelExpanded
+        private set
+
+    var orientationLockEnabled: Boolean = initialOrientationLockEnabled
+        private set
 
     fun setFloatingBallEnabled(enabled: Boolean) {
         floatingBallEnabled = enabled
@@ -68,6 +73,18 @@ internal class DisplayPreferences(
 
     fun setBroadcastAutoStopMinutes(minutes: Int) {
         broadcastAutoStopMinutes = clampAutoStopMinutes(minutes)
+    }
+
+    fun setControlPanelEnabled(enabled: Boolean) {
+        controlPanelEnabled = enabled
+    }
+
+    fun setControlPanelExpanded(expanded: Boolean) {
+        controlPanelExpanded = expanded
+    }
+
+    fun setOrientationLockEnabled(enabled: Boolean) {
+        orientationLockEnabled = enabled
     }
 
     companion object {

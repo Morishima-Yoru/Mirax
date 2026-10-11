@@ -1,6 +1,9 @@
 package me.trinitrix.mirax.session
 
 import android.util.Log
+import java.net.InetAddress
+import me.trinitrix.mirax.MiraxApp
+import me.trinitrix.mirax.SessionPreferences
 
 /**
  * Mirax product session facade: the single external test seam preserving
@@ -27,7 +30,6 @@ class MiraxSession(
         initialAutoAddWmSizeOnConnect = initialSettings.autoAddWmSizeOnConnect,
     )
     private val display = DisplayPreferences(
-        initialBottomHandleEnabled = initialSettings.bottomHandleEnabled,
         initialFloatingBallEnabled = initialSettings.floatingBallEnabled,
         initialPictureScale = initialSettings.pictureScale,
         initialTouchEnabled = initialSettings.touchEnabled,
@@ -35,6 +37,9 @@ class MiraxSession(
         initialCameraCutoutAffectsLayout = initialSettings.cameraCutoutAffectsLayout,
         initialBroadcastAutoStopMinutes = initialSettings.broadcastAutoStopMinutes,
         initialShowDebugOverlay = initialSettings.showDebugOverlay,
+        initialControlPanelEnabled = initialSettings.controlPanelEnabled,
+        initialControlPanelExpanded = false,
+        initialOrientationLockEnabled = initialSettings.orientationLockEnabled,
     )
     private var activeConnection = ActiveConnectionState()
     private val diagnostics = ConnectionDiagnosticsRepository()
@@ -45,6 +50,7 @@ class MiraxSession(
     private var wifiEnabled: Boolean = true
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
+    private var sourceDeviceName: String? = null
     private var miraxDisplayId: Int = 0
     private var pictureRotationDegrees: Int = 0
     private var overlayGranted: Boolean = false
@@ -118,6 +124,11 @@ class MiraxSession(
         overlayGranted = report.granted
         overlayCanPrompt = report.canPrompt
         maybeEndHomeStayWithoutBall()
+    }
+
+    fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60), name: String = "Mock Device") {
+        activeConnection.enterMockConnected(mode)
+        sourceDeviceName = name
     }
 
     fun handle(action: SessionAction) {
@@ -208,21 +219,14 @@ class MiraxSession(
             SessionAction.EndConnection -> {
                 endConnectionFromUser()
             }
-            is SessionAction.SetBottomHandleEnabled -> {
-                display.setBottomHandleEnabled(action.enabled)
-                if (!action.enabled) {
-                    activeConnection.setBottomHandleExpanded(false)
+            SessionAction.CollapseControlPanel -> {
+                if (activeConnection.isConnected) {
+                    display.setControlPanelExpanded(false)
+                    activeConnection.setControlPanelExpanded(false)
                 }
             }
-            SessionAction.ToggleBottomHandleExpanded -> {
-                if (activeConnection.isConnected && display.bottomHandleEnabled) {
-                    activeConnection.setBottomHandleExpanded(!activeConnection.bottomHandleExpandedState)
-                }
-            }
-            SessionAction.CollapseBottomHandleExpanded -> {
-                if (activeConnection.isConnected && display.bottomHandleEnabled) {
-                    activeConnection.setBottomHandleExpanded(false)
-                }
+            is SessionAction.SetControlPanelEnabled -> {
+                display.setControlPanelEnabled(action.enabled)
             }
             is SessionAction.SetFloatingBallEnabled -> {
                 display.setFloatingBallEnabled(action.enabled)
@@ -269,6 +273,22 @@ class MiraxSession(
             }
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
             SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe()
+            SessionAction.ToggleControlPanel -> {
+                val next = !display.controlPanelExpanded
+                display.setControlPanelExpanded(next)
+                activeConnection.setControlPanelExpanded(next)
+            }
+            is SessionAction.SetOrientationLock -> {
+                display.setOrientationLockEnabled(action.enabled)
+                try {
+                    SessionPreferences.saveOrientationLockEnabled(MiraxApp.instance.applicationContext, action.enabled)
+                } catch (e: UninitializedPropertyAccessException) {
+                    // MiraxApp not initialized (e.g., in unit tests), skip persistence
+                }
+            }
+            is SessionAction.SetSourceDeviceName -> {
+                sourceDeviceName = action.name
+            }
         }
     }
 
@@ -294,12 +314,14 @@ fun snapshot(): SessionSnapshot {
         }
         val handleResolution = activeConnection.selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
         val handleRefresh = activeConnection.selectedMode?.refreshHz
-        val showHandle = phase == ScreenPhase.CONNECTED && display.bottomHandleEnabled
         val showBall =
             phase == ScreenPhase.CONNECTED &&
                 activeConnection.awayOnHomeScreenState &&
                 overlayGranted &&
                 display.floatingBallEnabled
+        if (sourceDeviceName == null) {
+            sourceDeviceName = resolveSourceDeviceName()
+        }
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
@@ -329,11 +351,8 @@ fun snapshot(): SessionSnapshot {
             wfdAdvertise = resolveWfdAdvertise(owner, effectiveName, nextModes),
             selectedMode = activeConnection.selectedMode,
             showPicture = phase == ScreenPhase.CONNECTED,
-            bottomHandleEnabled = display.bottomHandleEnabled,
-            showBottomHandle = showHandle,
-            bottomHandleExpanded = showHandle && activeConnection.bottomHandleExpandedState,
-            handleResolutionText = if (showHandle) handleResolution else "",
-            handleRefreshRateHz = if (showHandle) handleRefresh else null,
+            handleResolutionText = if (activeConnection.isConnected && activeConnection.selectedMode != null) handleResolution else "",
+            handleRefreshRateHz = if (activeConnection.isConnected && activeConnection.selectedMode != null) handleRefresh else null,
             floatingBallEnabled = display.floatingBallEnabled,
             showOverlayPermissionReminder = !overlayGranted,
             showFloatingBall = showBall,
@@ -346,6 +365,9 @@ fun snapshot(): SessionSnapshot {
             showDebugOverlay = display.showDebugOverlay,
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
+            controlPanelExpanded = display.controlPanelExpanded,
+            orientationLockEnabled = display.orientationLockEnabled,
+            sourceDeviceName = sourceDeviceName,
             handshakeLog = if (phase == ScreenPhase.CONNECTING && display.showDebugMessages) {
                 diagnostics.currentHandshakeLog()
             } else {
@@ -365,7 +387,6 @@ fun snapshot(): SessionSnapshot {
             checkedStandardModes = caps.checkedStandardModes,
             maxVideoBitrateBps = caps.maxVideoBitrateBps,
             provisioningConsumed = caps.provisioningConsumed,
-            bottomHandleEnabled = display.bottomHandleEnabled,
             floatingBallEnabled = display.floatingBallEnabled,
             pictureScale = display.pictureScale,
             customModes = caps.customModes,
@@ -375,6 +396,8 @@ fun snapshot(): SessionSnapshot {
             showDebugOverlay = display.showDebugOverlay,
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
+            controlPanelEnabled = display.controlPanelEnabled,
+            orientationLockEnabled = display.orientationLockEnabled,
         )
     }
 
@@ -413,7 +436,6 @@ fun snapshot(): SessionSnapshot {
     private fun onFloatingBallTapped() {
         if (!activeConnection.isConnected || !activeConnection.awayOnHomeScreenState) return
         activeConnection.setAwayOnHomeScreen(false)
-        activeConnection.setBottomHandleExpanded(false)
         activeConnection.setBackEndsConnectionPending(false)
         pendingEffects = pendingEffects.filterNot { it is SessionEffect.ConfirmEndConnection }
         enqueueEffect(SessionEffect.BringProjectionToFront)
@@ -469,10 +491,15 @@ fun snapshot(): SessionSnapshot {
 
     private fun onSystemBack() {
         if (!activeConnection.isConnected) return
-        when (activeConnection.onSystemBack(display.bottomHandleEnabled)) {
-            ActiveConnectionState.BackResult.ExpandHandle -> Unit
+        when (activeConnection.onSystemBack()) {
+            ActiveConnectionState.BackResult.ExpandControlPanel -> {
+                display.setControlPanelExpanded(true)
+            }
+            ActiveConnectionState.BackResult.ArmedSecondBack -> {
+                display.setControlPanelExpanded(false)
+                enqueueEffect(SessionEffect.ShowPressBackAgainToEndToast)
+            }
             ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()
-            ActiveConnectionState.BackResult.ArmedSecondBack -> Unit
         }
     }
 
@@ -635,6 +662,18 @@ fun snapshot(): SessionSnapshot {
         }
     }
 
+    private fun resolveSourceDeviceName(): String? {
+        val activeRun = connectionHistory.activeRun() ?: return null
+        val host = activeRun.remoteHost
+        if (host.isBlank()) return null
+        return try {
+            InetAddress.getByName(host).takeIf { !it.hostName.equals(host, ignoreCase = true) }?.hostName
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to resolve source device name for $host", e)
+            null
+        }
+    }
+
     private fun configurationBackup(): List<ConnectionRunFact> {
         val name = if (displayNameOverride == null) deviceName else displayNameOverride.orEmpty()
         val standards = caps.checkedStandardModes
@@ -659,11 +698,11 @@ fun snapshot(): SessionSnapshot {
         advertisingPhase: AdvertisingPhase,
         connectionPhase: ConnectionPhase,
     ): ScreenPhase {
-        if (owner == WfdOwner.NONE) {
-            return ScreenPhase.FROZEN
-        }
         if (connected) {
             return ScreenPhase.CONNECTED
+        }
+        if (owner == WfdOwner.NONE) {
+            return ScreenPhase.FROZEN
         }
         if (advertisingPhase == AdvertisingPhase.IDLE) {
             return ScreenPhase.READY

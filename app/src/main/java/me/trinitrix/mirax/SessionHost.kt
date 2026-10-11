@@ -178,21 +178,11 @@ object SessionHost {
     }
 
     /**
-     * User dismissed the picture status panel.
+     * User dismissed the control panel (tap on scrim).
      */
-    fun collapseBottomHandleExpanded(context: Context): SessionSnapshot {
+    fun collapseControlPanel(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
-        session.handle(SessionAction.CollapseBottomHandleExpanded)
-        return commit(context)
-    }
-
-    /**
-     * Persist and apply the bottom-handle setting.
-     */
-    fun setBottomHandleEnabled(context: Context, enabled: Boolean): SessionSnapshot {
-        val session = MiraxApp.instance.session
-        session.handle(SessionAction.SetBottomHandleEnabled(enabled))
-        SessionPreferences.saveBottomHandleEnabled(context.applicationContext, enabled)
+        session.handle(SessionAction.CollapseControlPanel)
         return commit(context)
     }
 
@@ -219,11 +209,12 @@ object SessionHost {
     }
 
     /**
-     * User tapped the thin bottom handle to expand or collapse its panel.
+     * Persist and apply orientation lock setting.
      */
-    fun toggleBottomHandleExpanded(context: Context): SessionSnapshot {
+    fun toggleOrientationLock(context: Context, enabled: Boolean): SessionSnapshot {
         val session = MiraxApp.instance.session
-        session.handle(SessionAction.ToggleBottomHandleExpanded)
+        session.handle(SessionAction.SetOrientationLock(enabled))
+        SessionPreferences.saveOrientationLockEnabled(context.applicationContext, enabled)
         return commit(context)
     }
 
@@ -262,6 +253,33 @@ object SessionHost {
     fun floatingBallTapped(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
         session.handle(SessionAction.FloatingBallTapped)
+        return commit(context)
+    }
+
+    /**
+     * User tapped the floating ball to toggle the control panel.
+     */
+    fun toggleControlPanel(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.ToggleControlPanel)
+        return commit(context)
+    }
+
+    /**
+     * Persist and apply the control panel enabled setting.
+     */
+    fun setControlPanelEnabled(context: Context, enabled: Boolean): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SetControlPanelEnabled(enabled))
+        SessionPreferences.saveControlPanelEnabled(context.applicationContext, enabled)
+        return commit(context)
+    }
+
+    /**
+     * Enter mock connected state for debug / E2E verification without real remote device.
+     */
+    fun enterMockConnected(context: Context): SessionSnapshot {
+        MiraxApp.instance.session.enterMockConnected()
         return commit(context)
     }
 
@@ -308,7 +326,7 @@ object SessionHost {
      *     context: Used to resolve the display manager.
      *     displayId: Specific display, or null for the default display.
      */
-    private fun pictureRotationDegrees(context: Context, displayId: Int?): Int {
+    internal fun pictureRotationDegrees(context: Context, displayId: Int?): Int {
         val manager = context.getSystemService(DisplayManager::class.java) ?: return 0
         val display = if (displayId == null) {
             manager.getDisplay(Display.DEFAULT_DISPLAY)

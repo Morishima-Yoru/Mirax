@@ -1,8 +1,12 @@
 package me.trinitrix.mirax
 
 import android.util.Log
+import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -17,7 +21,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import kotlin.math.roundToInt
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -30,6 +33,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.graphics.Rect
 import me.trinitrix.mirax.session.PicturePlacement
+import me.trinitrix.mirax.session.PictureRotationReport
+import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.PictureTouchMap
 import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
@@ -45,6 +50,7 @@ import me.trinitrix.mirax.wfd.UibcPenContact
 import me.trinitrix.mirax.wfd.UibcTouchChannel
 import me.trinitrix.mirax.wfd.rtsp.WfdCapabilityTable
 import java.lang.ref.WeakReference
+import kotlin.math.roundToInt
 
 /**
  * Fullscreen Miracast picture. Placement follows the session [me.trinitrix.mirax.session.PictureScale]
@@ -55,18 +61,29 @@ import java.lang.ref.WeakReference
  * this activity only renders [SessionSnapshot] outputs and forwards actions.
  */
 class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
+    private val isDebuggable: Boolean
+        get() = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
     private lateinit var stage: FrameLayout
     private lateinit var surfaceView: SurfaceView
     private lateinit var cursorView: ImageView
-    private lateinit var handleRoot: FrameLayout
-    private lateinit var handleScrim: View
-    private lateinit var handleScrollView: ScrollView
-    private lateinit var handlePanel: LinearLayout
     private var endConnectionDialog: AlertDialog? = null
-    private lateinit var handleEndButton: MaterialButton
-    private lateinit var handleResolutionValue: TextView
-    private lateinit var handleRefreshValue: TextView
-    private lateinit var debugOverlaySwitch: MaterialSwitch
+    private lateinit var controlPanelRoot: FrameLayout
+    private lateinit var controlPanelScrim: View
+    private lateinit var controlPanelCardScrollView: ScrollView
+    private lateinit var controlPanelCard: LinearLayout
+    private lateinit var controlPanelSourceName: TextView
+    private lateinit var controlPanelResolutionValue: TextView
+    private lateinit var controlPanelRefreshValue: TextView
+    private lateinit var controlPanelOrientationSubtitle: TextView
+    private lateinit var controlPanelRotateButton: MaterialButton
+    private lateinit var controlPanelOrientationLockSwitch: MaterialSwitch
+    private lateinit var controlPanelDebugOverlaySwitch: MaterialSwitch
+    private lateinit var controlPanelTouchEnabledSwitch: MaterialSwitch
+    private lateinit var controlPanelCameraCutoutSwitch: MaterialSwitch
+    private lateinit var controlPanelEndButton: MaterialButton
+    private val scaleButtons = mutableMapOf<PictureScale, MaterialButton>()
+    private var lockedDirectionIsLandscape: Boolean = true
     /** Decoder buffer size for [SurfaceHolder.setFixedSize]; may be padded. */
     private var bufferW: Int = 0
     private var bufferH: Int = 0
@@ -126,12 +143,14 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             layoutParams = FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START)
         }
         stage.addView(cursorView)
-        stage.setOnClickListener { /* intentionally empty */ }
+        stage.setOnClickListener {
+            applySession(SessionHost.toggleControlPanel(this@PictureActivity))
+        }
         stage.setOnLongClickListener { true }
 
-        buildHandle()
+        buildControlPanel()
         stage.addView(
-            handleRoot,
+            controlPanelRoot,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -187,9 +206,17 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             },
         )
 
+        val mockSession = intent.getBooleanExtra("mirax_mock_session", false) && isDebuggable
+        if (mockSession) {
+            SessionHost.enterMockConnected(this)
+            MiraxApp.instance.session.handle(SessionAction.ToggleControlPanel)
+            SessionHost.commit(this)
+        }
         hideSystemBars()
         applySession(MiraxApp.instance.session.snapshot())
-        startDebugOverlayUpdates()
+        if (!mockSession) {
+            startDebugOverlayUpdates()
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -235,6 +262,26 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        hideSystemBars()
+        MiraxApp.instance.session.report(
+            PictureRotationReport(SessionHost.pictureRotationDegrees(this, displayId = null)),
+        )
+        layoutPicture()
+        stage.removeView(controlPanelRoot)
+        buildControlPanel()
+        stage.addView(
+            controlPanelRoot,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        stage.bringChildToFront(debugOverlay)
+        applySession(MiraxApp.instance.session.snapshot())
+    }
+
     override fun onDestroy() {
         stopDebugOverlayUpdates()
         endConnectionDialog?.dismiss()
@@ -269,7 +316,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             finish()
             return
         }
-        renderHandle(snapshot)
+        renderControlPanel(snapshot)
         ViewCompat.requestApplyInsets(stage)
         layoutPicture()
 
@@ -279,6 +326,23 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             updateDebugOverlay(snapshot)
         } else {
             stopDebugOverlayUpdates()
+        }
+    }
+
+    /**
+     * Applies orientation lock to the activity based on the user preference.
+     * When enabled, locks the screen to the selected orientation (landscape or portrait).
+     * When disabled, allows the screen to rotate freely following device sensor.
+     */
+    private fun applyOrientationLock(orientationLockEnabled: Boolean) {
+        if (orientationLockEnabled) {
+            requestedOrientation = if (lockedDirectionIsLandscape) {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            }
+        } else {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
@@ -292,13 +356,14 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
     }
 
-    private fun buildHandle() {
+    private fun buildControlPanel() {
         fun dp(value: Int): Int = MiraxUi.dp(this, value)
 
-        handleRoot = FrameLayout(this).apply {
+        controlPanelRoot = FrameLayout(this).apply {
             visibility = View.GONE
         }
-        handleScrim = View(this).apply {
+
+        controlPanelScrim = View(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -306,87 +371,383 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             setBackgroundColor(MiraxUi.scrimColor(this@PictureActivity))
             isClickable = true
             setOnClickListener {
-                applySession(SessionHost.collapseBottomHandleExpanded(this@PictureActivity))
+                applySession(SessionHost.collapseControlPanel(this@PictureActivity))
             }
         }
 
-        handleScrollView = ScrollView(this).apply {
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val cardWidth = if (isLandscape) {
+            minOf(dp(620), resources.displayMetrics.widthPixels - dp(32))
+        } else {
+            minOf(dp(360), resources.displayMetrics.widthPixels - dp(32))
+        }
+
+        controlPanelCardScrollView = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_surface, 16, R.color.mirax_stroke, 1)
             layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
+                cardWidth,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+                Gravity.CENTER,
             ).apply {
-                leftMargin = dp(16)
-                rightMargin = dp(16)
-                bottomMargin = dp(16)
-                topMargin = dp(32)
+                val margin = dp(16)
+                leftMargin = margin
+                rightMargin = margin
+                topMargin = margin
+                bottomMargin = margin
             }
         }
-        ViewCompat.setOnApplyWindowInsetsListener(handleScrollView) { view, insets ->
-            val nav = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
-            val params = view.layoutParams as FrameLayout.LayoutParams
-            params.bottomMargin = dp(16) + nav.bottom
-            view.layoutParams = params
-            insets
-        }
 
-        handlePanel = LinearLayout(this).apply {
+        controlPanelCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            isClickable = true
-            setOnClickListener { }
-            setPadding(dp(16), dp(18), dp(16), dp(16))
+            setPadding(dp(20), dp(18), dp(20), dp(20))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             )
         }
 
-        handleEndButton = MiraxUi.stopActionButton(this, getString(R.string.handle_end_connection)) {
-            applySession(SessionHost.requestEndConnection(this@PictureActivity))
-        }.apply {
-            (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(16)
-        }
-        handlePanel.addView(handleEndButton)
-
-        val stats = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_chip, 14)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-        }
-        stats.addView(frameLabel(getString(R.string.handle_resolution_label)))
-        handleResolutionValue = valueText()
-        stats.addView(handleResolutionValue)
-        stats.addView(frameLabel(getString(R.string.handle_refresh_label), topPadDp = 14))
-        handleRefreshValue = valueText()
-        stats.addView(handleRefreshValue)
-
-        handlePanel.addView(stats)
-
-        debugOverlaySwitch = MaterialSwitch(this).apply {
-            text = getString(R.string.handle_debug_overlay)
-            isChecked = MiraxApp.instance.session.snapshot().showDebugOverlay
-            textSize = 17f
-            minHeight = dp(56)
-            setTextColor(getColor(R.color.mirax_on_surface))
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(12) }
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        val titleContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val dotView = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(8), dp(8)).apply {
+                rightMargin = dp(8)
+            }
+            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_accent, 4)
+        }
+        val titleText = TextView(this).apply {
+            text = "投放中"
+            textSize = 17f
+            typeface = MiraxUi.weight(700)
+            setTextColor(getColor(R.color.mirax_on_surface))
+        }
+        titleContainer.addView(dotView)
+        titleContainer.addView(titleText)
+        topRow.addView(titleContainer)
+
+        val closeButton = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+            text = "✕"
+            textSize = 15f
+            minWidth = dp(36)
+            minHeight = dp(36)
+            setPadding(0, 0, 0, 0)
+            setTextColor(getColor(R.color.mirax_muted))
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+            setOnClickListener {
+                applySession(SessionHost.collapseControlPanel(this@PictureActivity))
+            }
+        }
+        topRow.addView(closeButton)
+        controlPanelCard.addView(topRow)
+
+        // Columns layout: Summary (left) + Controls (right) in landscape
+        val columnsLayout = LinearLayout(this).apply {
+            orientation = if (isLandscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+        }
+
+        // Left: Summary column
+        val summaryColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            if (isLandscape) {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    rightMargin = dp(16)
+                }
+            } else {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(14) }
+            }
+        }
+
+        val statsBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_chip, 14)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        statsBox.addView(frameLabel("來源裝置"))
+        controlPanelSourceName = valueText()
+        statsBox.addView(controlPanelSourceName)
+
+        statsBox.addView(frameLabel("解析度", topPadDp = 12))
+        controlPanelResolutionValue = valueText()
+        statsBox.addView(controlPanelResolutionValue)
+
+        statsBox.addView(frameLabel("更新率", topPadDp = 12))
+        controlPanelRefreshValue = valueText()
+        statsBox.addView(controlPanelRefreshValue)
+
+        summaryColumn.addView(statsBox)
+        columnsLayout.addView(summaryColumn)
+
+        val midDivider = View(this).apply {
+            setBackgroundColor(getColor(R.color.mirax_stroke))
+            if (isLandscape) {
+                layoutParams = LinearLayout.LayoutParams(dp(1), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                    rightMargin = dp(16)
+                }
+            } else {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                    bottomMargin = dp(14)
+                }
+            }
+        }
+        columnsLayout.addView(midDivider)
+
+        val controlsColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            if (isLandscape) {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.35f)
+            } else {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                )
+            }
+        }
+
+        val scaleHeader = TextView(this).apply {
+            text = "畫面縮放"
+            textSize = 12f
+            typeface = MiraxUi.weight(600)
+            setTextColor(getColor(R.color.mirax_muted))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) }
+        }
+        controlsColumn.addView(scaleHeader)
+
+        val scaleGrid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(10) }
+        }
+        val scaleList = listOf(
+            listOf("等比" to PictureScale.PROPORTIONAL, "鋪滿" to PictureScale.CENTER_CROP),
+            listOf("拉伸" to PictureScale.MATCH_EDGES, "原寸" to PictureScale.ACTUAL),
+        )
+        scaleButtons.clear()
+        for ((rowIndex, rowPairs) in scaleList.withIndex()) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    if (rowIndex > 0) topMargin = dp(6)
+                }
+            }
+            for ((colIndex, pair) in rowPairs.withIndex()) {
+                val (label, scale) = pair
+                val btn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = label
+                    textSize = 13f
+                    cornerRadius = dp(12)
+                    minHeight = dp(40)
+                    insetTop = 0
+                    insetBottom = 0
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        if (colIndex == 0) rightMargin = dp(6)
+                    }
+                    setOnClickListener {
+                        val session = MiraxApp.instance.session
+                        session.handle(SessionAction.SetPictureScale(scale))
+                        val snapshot = SessionHost.commit(this@PictureActivity)
+                        applySession(snapshot)
+                    }
+                }
+                scaleButtons[scale] = btn
+                row.addView(btn)
+            }
+            scaleGrid.addView(row)
+        }
+        controlsColumn.addView(scaleGrid)
+
+        controlsColumn.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+            setBackgroundColor(getColor(R.color.mirax_stroke))
+        })
+
+        val orientationRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            }
+        }
+        val orientationTextContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val orientationTitle = TextView(this).apply {
+            text = "鎖定轉向"
+            textSize = 15f
+            setTextColor(getColor(R.color.mirax_on_surface))
+        }
+        controlPanelOrientationSubtitle = TextView(this).apply {
+            val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            text = "跟隨裝置 · " + (if (isLand) "橫向" else "直向")
+            textSize = 11f
+            setTextColor(getColor(R.color.mirax_muted))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(2) }
+        }
+        orientationTextContainer.addView(orientationTitle)
+        orientationTextContainer.addView(controlPanelOrientationSubtitle)
+        orientationRow.addView(orientationTextContainer)
+
+        val orientationActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        controlPanelRotateButton = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+            text = "↻"
+            textSize = 18f
+            minWidth = dp(36)
+            minHeight = dp(36)
+            setPadding(0, 0, 0, 0)
+            setTextColor(getColor(R.color.mirax_accent))
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply {
+                rightMargin = dp(6)
+            }
+            setOnClickListener {
+                lockedDirectionIsLandscape = !lockedDirectionIsLandscape
+                applyOrientationLock(true)
+                renderControlPanel(MiraxApp.instance.session.snapshot())
+            }
+        }
+        orientationActions.addView(controlPanelRotateButton)
+
+        controlPanelOrientationLockSwitch = MaterialSwitch(this).apply {
             setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    lockedDirectionIsLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                }
+                applyOrientationLock(isChecked)
+                val snapshot = SessionHost.toggleOrientationLock(this@PictureActivity, isChecked)
+                applySession(snapshot)
+            }
+        }
+        orientationActions.addView(controlPanelOrientationLockSwitch)
+        orientationRow.addView(orientationActions)
+        controlsColumn.addView(orientationRow)
+
+        controlsColumn.addView(createSwitchRow("顯示除錯資訊") { switch ->
+            controlPanelDebugOverlaySwitch = switch
+            switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
                 session.handle(SessionAction.SetShowDebugOverlay(isChecked))
                 val snapshot = SessionHost.commit(this@PictureActivity)
                 applySession(snapshot)
             }
-        }
-        handlePanel.addView(debugOverlaySwitch)
+        })
 
-        handleScrollView.addView(handlePanel)
-        handleRoot.addView(handleScrim)
-        handleRoot.addView(handleScrollView)
+        controlsColumn.addView(createSwitchRow("觸控輸入") { switch ->
+            controlPanelTouchEnabledSwitch = switch
+            switch.setOnCheckedChangeListener { _, isChecked ->
+                val session = MiraxApp.instance.session
+                session.handle(SessionAction.SetTouchEnabled(isChecked))
+                val snapshot = SessionHost.commit(this@PictureActivity)
+                applySession(snapshot)
+            }
+        })
+
+        controlsColumn.addView(createSwitchRow("避開螢幕開孔") { switch ->
+            controlPanelCameraCutoutSwitch = switch
+            switch.setOnCheckedChangeListener { _, isChecked ->
+                val session = MiraxApp.instance.session
+                session.handle(SessionAction.SetCameraCutoutAffectsLayout(isChecked))
+                val snapshot = SessionHost.commit(this@PictureActivity)
+                applySession(snapshot)
+            }
+        })
+
+        columnsLayout.addView(controlsColumn)
+        controlPanelCard.addView(columnsLayout)
+
+        controlPanelCard.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                topMargin = dp(14)
+                bottomMargin = dp(14)
+            }
+            setBackgroundColor(getColor(R.color.mirax_stroke))
+        })
+
+        val bottomRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        controlPanelEndButton = MiraxUi.stopActionButton(this, "結束連線") {
+            applySession(SessionHost.requestEndConnection(this@PictureActivity))
+        }
+        bottomRow.addView(controlPanelEndButton)
+        controlPanelCard.addView(bottomRow)
+
+        controlPanelCardScrollView.addView(controlPanelCard)
+        controlPanelRoot.addView(controlPanelScrim)
+        controlPanelRoot.addView(controlPanelCardScrollView)
+    }
+
+    private fun createSwitchRow(label: String, onInit: (MaterialSwitch) -> Unit): LinearLayout {
+        fun dp(v: Int): Int = MiraxUi.dp(this, v)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            }
+            addView(TextView(this@PictureActivity).apply {
+                text = label
+                textSize = 15f
+                setTextColor(getColor(R.color.mirax_on_surface))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            val switch = MaterialSwitch(this@PictureActivity)
+            onInit(switch)
+            addView(switch)
+        }
     }
 
     private fun frameLabel(text: String, topPadDp: Int = 0): TextView {
@@ -434,26 +795,53 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         endConnectionDialog?.show()
     }
 
-    private fun renderHandle(snapshot: SessionSnapshot) {
-        if (!snapshot.showBottomHandle) {
-            handleRoot.visibility = View.GONE
+    private fun renderControlPanel(snapshot: SessionSnapshot) {
+        if (!snapshot.controlPanelExpanded) {
+            controlPanelRoot.visibility = View.GONE
             return
         }
-        handleResolutionValue.text = snapshot.handleResolutionText
+        val sourceName = snapshot.sourceDeviceName ?: "來源名稱未知"
+        controlPanelSourceName.text = sourceName
+        controlPanelResolutionValue.text = snapshot.handleResolutionText
         val refresh = snapshot.handleRefreshRateHz
-        handleRefreshValue.text = if (refresh != null) {
+        controlPanelRefreshValue.text = if (refresh != null) {
             getString(R.string.handle_refresh_value, refresh)
         } else {
             ""
         }
-        if (::debugOverlaySwitch.isInitialized && debugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
-            debugOverlaySwitch.isChecked = snapshot.showDebugOverlay
+        for ((scale, button) in scaleButtons) {
+            val active = scale == snapshot.pictureScale
+            val bg = if (active) R.color.mirax_accent else android.R.color.transparent
+            val fg = if (active) R.color.mirax_on_accent else R.color.mirax_on_surface
+            button.backgroundTintList = ColorStateList.valueOf(getColor(bg))
+            button.setTextColor(getColor(fg))
         }
-        val expanded = snapshot.bottomHandleExpanded
-        handleRoot.visibility = if (expanded) View.VISIBLE else View.GONE
-        if (expanded && ::handleScrollView.isInitialized) {
-            ViewCompat.requestApplyInsets(handleScrollView)
+        if (::controlPanelOrientationSubtitle.isInitialized) {
+            val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            controlPanelOrientationSubtitle.text = if (snapshot.orientationLockEnabled) {
+                "已鎖定 · " + (if (lockedDirectionIsLandscape) "橫向" else "直向")
+            } else {
+                "跟隨裝置 · " + (if (isLand) "橫向" else "直向")
+            }
         }
+        if (::controlPanelRotateButton.isInitialized) {
+            controlPanelRotateButton.visibility =
+                if (snapshot.orientationLockEnabled) View.VISIBLE else View.GONE
+        }
+        if (::controlPanelOrientationLockSwitch.isInitialized && controlPanelOrientationLockSwitch.isChecked != snapshot.orientationLockEnabled) {
+            controlPanelOrientationLockSwitch.isChecked = snapshot.orientationLockEnabled
+        }
+        applyOrientationLock(snapshot.orientationLockEnabled)
+        if (::controlPanelDebugOverlaySwitch.isInitialized && controlPanelDebugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
+            controlPanelDebugOverlaySwitch.isChecked = snapshot.showDebugOverlay
+        }
+        if (::controlPanelTouchEnabledSwitch.isInitialized && controlPanelTouchEnabledSwitch.isChecked != snapshot.touchEnabled) {
+            controlPanelTouchEnabledSwitch.isChecked = snapshot.touchEnabled
+        }
+        if (::controlPanelCameraCutoutSwitch.isInitialized && controlPanelCameraCutoutSwitch.isChecked != snapshot.cameraCutoutAffectsLayout) {
+            controlPanelCameraCutoutSwitch.isChecked = snapshot.cameraCutoutAffectsLayout
+        }
+        controlPanelRoot.visibility = if (snapshot.controlPanelExpanded) View.VISIBLE else View.GONE
     }
 
     private fun layoutPicture() {
@@ -614,6 +1002,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val snapshot = MiraxApp.instance.session.snapshot()
         val mode = snapshot.selectedMode
         if (!snapshot.touchEnabled || mode == null) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                applySession(SessionHost.toggleControlPanel(this@PictureActivity))
+            }
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL
             ) {
