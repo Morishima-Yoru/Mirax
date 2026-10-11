@@ -78,4 +78,26 @@ class SessionPreferencesTest {
 
         assertThat(empty).isEqualTo(defaults)
     }
+
+    @Test
+    fun sessionPreferences_controlPanelEnabledKeyExists() {
+        assertThat(me.trinitrix.mirax.SessionPreferences::class.java.getDeclaredField("KEY_CONTROL_PANEL_ENABLED")).isNotNull()
+    }
+
+    @Test
+    fun sessionPreferences_orientationLockEnabledKeyExists() {
+        assertThat(me.trinitrix.mirax.SessionPreferences::class.java.getDeclaredField("KEY_ORIENTATION_LOCK_ENABLED")).isNotNull()
+    }
+
+    @Test
+    fun sessionPreferences_saveControlPanelEnabled_methodExists() {
+        assertThat(me.trinitrix.mirax.SessionPreferences::class.java.getDeclaredMethod("saveControlPanelEnabled",
+            android.content.Context::class.java, Boolean::class.java)).isNotNull()
+    }
+
+    @Test
+    fun sessionPreferences_saveOrientationLockEnabled_methodExists() {
+        assertThat(me.trinitrix.mirax.SessionPreferences::class.java.getDeclaredMethod("saveOrientationLockEnabled",
+            android.content.Context::class.java, Boolean::class.java)).isNotNull()
+    }
 }

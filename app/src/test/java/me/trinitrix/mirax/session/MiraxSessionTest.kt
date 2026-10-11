@@ -1738,9 +1738,21 @@ class MiraxSessionTest {
 
         session.handle(SessionAction.SetOrientationLock(true))
         assertThat(session.snapshot().orientationLockEnabled).isTrue()
+        assertThat(session.exportSettings().orientationLockEnabled).isTrue()
 
         session.handle(SessionAction.SetOrientationLock(false))
         assertThat(session.snapshot().orientationLockEnabled).isFalse()
+        assertThat(session.exportSettings().orientationLockEnabled).isFalse()
+    }
+
+    @Test
+    fun collapseControlPanel_setsExpandedFalse() {
+        val session = connectedSession()
+        session.handle(SessionAction.ToggleControlPanel)
+        assertThat(session.snapshot().controlPanelExpanded).isTrue()
+
+        session.handle(SessionAction.CollapseControlPanel)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
     }
 
     @Test
