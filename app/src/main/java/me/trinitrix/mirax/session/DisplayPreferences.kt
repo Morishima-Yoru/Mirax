@@ -12,6 +12,7 @@ internal class DisplayPreferences(
     initialCameraCutoutAffectsLayout: Boolean = false,
     initialBroadcastAutoStopMinutes: Int = 1,
     initialShowDebugOverlay: Boolean = false,
+    initialControlPanelEnabled: Boolean = true,
     initialControlPanelExpanded: Boolean = false,
     initialOrientationLockEnabled: Boolean = false,
 ) {
@@ -35,6 +36,9 @@ internal class DisplayPreferences(
         private set
 
     var showDebugOverlay: Boolean = initialShowDebugOverlay
+        private set
+
+    var controlPanelEnabled: Boolean = initialControlPanelEnabled
         private set
 
     var controlPanelExpanded: Boolean = initialControlPanelExpanded
@@ -69,6 +73,10 @@ internal class DisplayPreferences(
 
     fun setBroadcastAutoStopMinutes(minutes: Int) {
         broadcastAutoStopMinutes = clampAutoStopMinutes(minutes)
+    }
+
+    fun setControlPanelEnabled(enabled: Boolean) {
+        controlPanelEnabled = enabled
     }
 
     fun setControlPanelExpanded(expanded: Boolean) {

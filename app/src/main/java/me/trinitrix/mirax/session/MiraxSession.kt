@@ -37,6 +37,7 @@ class MiraxSession(
         initialCameraCutoutAffectsLayout = initialSettings.cameraCutoutAffectsLayout,
         initialBroadcastAutoStopMinutes = initialSettings.broadcastAutoStopMinutes,
         initialShowDebugOverlay = initialSettings.showDebugOverlay,
+        initialControlPanelEnabled = initialSettings.controlPanelEnabled,
         initialControlPanelExpanded = false,
         initialOrientationLockEnabled = initialSettings.orientationLockEnabled,
     )
@@ -218,6 +219,9 @@ class MiraxSession(
                     display.setControlPanelExpanded(false)
                 }
             }
+            is SessionAction.SetControlPanelEnabled -> {
+                display.setControlPanelEnabled(action.enabled)
+            }
             is SessionAction.SetFloatingBallEnabled -> {
                 display.setFloatingBallEnabled(action.enabled)
                 maybeEndHomeStayWithoutBall()
@@ -384,7 +388,7 @@ fun snapshot(): SessionSnapshot {
             showDebugOverlay = display.showDebugOverlay,
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
-            controlPanelEnabled = true,
+            controlPanelEnabled = display.controlPanelEnabled,
             orientationLockEnabled = display.orientationLockEnabled,
         )
     }
@@ -654,6 +658,7 @@ fun snapshot(): SessionSnapshot {
         return try {
             InetAddress.getByName(host).takeIf { !it.hostName.equals(host, ignoreCase = true) }?.hostName
         } catch (e: Exception) {
+            Log.w(TAG, "Failed to resolve source device name for $host", e)
             null
         }
     }

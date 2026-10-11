@@ -774,6 +774,9 @@ sealed interface SessionAction {
     /** Toggle the control panel expanded/collapsed state. */
     data object ToggleControlPanel : SessionAction
 
+    /** Enable/disable the control panel. Persisted. */
+    data class SetControlPanelEnabled(val enabled: Boolean) : SessionAction
+
     /** Set orientation lock enabled state (ADR 0005). */
     data class SetOrientationLock(val enabled: Boolean) : SessionAction
 

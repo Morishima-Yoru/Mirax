@@ -773,6 +773,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun renderHandle(snapshot: SessionSnapshot) {
+        if (snapshot.phase != ScreenPhase.CONNECTED) {
+            handleRoot.visibility = View.GONE
+            return
+        }
         handleResolutionValue.text = snapshot.handleResolutionText
         val refresh = snapshot.handleRefreshRateHz
         handleRefreshValue.text = if (refresh != null) {

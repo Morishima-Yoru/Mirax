@@ -266,6 +266,16 @@ object SessionHost {
     }
 
     /**
+     * Persist and apply the control panel enabled setting.
+     */
+    fun setControlPanelEnabled(context: Context, enabled: Boolean): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SetControlPanelEnabled(enabled))
+        SessionPreferences.saveControlPanelEnabled(context.applicationContext, enabled)
+        return commit(context)
+    }
+
+    /**
      * Refresh privilege, overlay grant, and push status surfaces without a user action.
      */
     fun refreshPrivilegeAndSurfaces(context: Context): SessionSnapshot {
