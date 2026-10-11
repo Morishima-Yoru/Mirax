@@ -43,7 +43,7 @@ class MiraxApp : Application() {
             initialSettings = SessionPreferences.load(this).copy(advertisingEnabled = false),
             connectionHistory = connectionHistory,
         )
-        session.report(SystemLocaleReport(HostEnvironment.isSystemTraditionalChinese()))
+        session.report(SystemLocaleReport(HostEnvironment.isSystemTraditionalChinese(this)))
         session.report(DeviceNameReport(HostEnvironment.readDeviceName(this)))
         session.report(WifiRadio.report(this))
         HostEnvironment.applyAppLanguage(session.snapshot().appLanguage)

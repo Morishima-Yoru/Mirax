@@ -257,6 +257,38 @@ class MiraxE2ETest {
         )
     }
 
+    @Test
+    fun testLanguageChangesImmediatelyWithoutLeavingPage() {
+        device.executeShellCommand("am start -n $packageName/.MainActivity")
+        waitForObject(By.res("$packageName:id/menuButton"), 5000).click()
+        val general = device.findObject(By.pkg(packageName).text("General"))
+            ?: waitForObject(By.pkg(packageName).text("一般"), 5000)
+        general.click()
+        val language = device.findObject(By.pkg(packageName).descContains("Language"))
+            ?: waitForObject(By.pkg(packageName).descContains("語言"), 5000)
+        language.click()
+
+        val english = device.findObject(By.pkg(packageName).text("English"))
+            ?: waitForObject(By.pkg(packageName).text("英文"), 5000)
+        english.click()
+        waitForObject(By.pkg(packageName).text("Language"), 5000)
+        waitForObject(By.pkg(packageName).text("Traditional Chinese"), 5000).click()
+        waitForObject(By.pkg(packageName).text("語言"), 5000)
+        waitForObject(By.pkg(packageName).text("英文"), 5000).click()
+        waitForObject(By.pkg(packageName).text("Language"), 5000)
+        waitForObject(By.pkg(packageName).text("Follow system"), 5000).click()
+        val systemChinese = me.trinitrix.mirax.host.HostEnvironment.isSystemTraditionalChinese(context)
+        val systemTitle = if (systemChinese) "語言" else "Language"
+        waitForObject(By.pkg(packageName).text(systemTitle), 5000)
+        val followLabel = if (systemChinese) "跟隨系統" else "Follow system"
+        assertThat(waitForObject(By.pkg(packageName).text(followLabel), 5000).isSelected, Matchers.`is`(true))
+        val englishLabel = if (systemChinese) "英文" else "English"
+        waitForObject(By.pkg(packageName).text(englishLabel), 5000).click()
+        assertThat(waitForObject(By.pkg(packageName).text(englishLabel), 5000).isSelected, Matchers.`is`(true))
+        waitForObject(By.pkg(packageName).text("Follow system"), 5000).click()
+        assertThat(waitForObject(By.pkg(packageName).text("Follow system"), 5000).isSelected, Matchers.`is`(true))
+    }
+
     private fun launchApp(): UiObject2 {
         device.executeShellCommand("am start -n $packageName/.MainActivity")
         waitForObject(By.res("$packageName:id/menuButton"), launchTimeoutMs)

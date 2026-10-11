@@ -292,22 +292,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshEnvironmentInputs() {
         val session = MiraxApp.instance.session
-        session.report(SystemLocaleReport(HostEnvironment.isSystemTraditionalChinese()))
+        session.report(SystemLocaleReport(HostEnvironment.isSystemTraditionalChinese(this)))
         session.report(DeviceNameReport(HostEnvironment.readDeviceName(this)))
         session.report(MiraxDisplayReport(binding.root.display?.displayId ?: 0))
-        applyResolvedLanguage(session.snapshot().appLanguage, recreateUi = true)
+        applyResolvedLanguage(session.snapshot().appLanguage)
     }
 
-    private fun applyResolvedLanguage(language: AppLanguage, recreateUi: Boolean) {
+    private fun applyResolvedLanguage(language: AppLanguage) {
         if (appliedAppLanguage == language) {
             return
         }
         HostEnvironment.applyAppLanguage(language)
-        val previous = appliedAppLanguage
         appliedAppLanguage = language
-        if (recreateUi && previous != null) {
-            recreate()
-        }
     }
 
     private fun refreshPrivilege() {
@@ -1320,7 +1316,12 @@ class MainActivity : AppCompatActivity() {
                 val session = MiraxApp.instance.session
                 session.handle(SessionAction.SetLanguagePreference(preference))
                 SessionPreferences.saveLanguagePreference(this, preference)
-                applyResolvedLanguage(session.snapshot().appLanguage, recreateUi = true)
+                val current = session.snapshot()
+                if (appliedAppLanguage == current.appLanguage) {
+                    render(current)
+                } else {
+                    applyResolvedLanguage(current.appLanguage)
+                }
             })
         }
         column.addView(group)
