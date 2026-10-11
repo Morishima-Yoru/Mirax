@@ -74,3 +74,18 @@ See `.agents/e2e-testing.md` for `adb` + `UiAutomator` verification procedures.
 * NEVER use `> /dev/null` or `2> /dev/null`. It creates a literal `C:\dev\null` file and crashes. Use `> $null` or `2> $null` instead.
 * NEVER use `export VAR=VALUE`. Use `$env:VAR='VALUE'` to set environment variables.
 * NEVER use `touch file`. Use `New-Item -ItemType File -Path file` instead.
+* NEVER use CMD-style flags (`/s`, `/b`, `/r`, etc.) with `dir`/`Get-ChildItem`/`ls`. PowerShell uses `-Recurse`, `-Name`, `-File`/`-Directory` parameters instead. Example: `Get-ChildItem -Recurse -Name -Filter "*.dll"` not `dir /s /b *.dll`.
+
+## Windows Path Guardrails (OpenCode bug workaround)
+* **Always use forward slashes `/` for file paths in tool calls.**  
+  → `Read("C:/Users/name/project/file.kt")` ✓ | `Read("C:\Users\name\project\file.kt")` ✗  
+  Backslashes in JSON/string literals become escape sequences (`	` → tab, `\n` → newline, etc.), breaking path resolution.
+* Prefer built-in tools (Read, Write, Edit, Glob, Grep) over `bash` for file operations — they accept forward-slash paths natively.
+* If you must use `bash`, wrap paths in single quotes: `'C:/Users/name/project/file.kt'`.
+
+## Build Debugging
+* **Run with `--stacktrace` option to get the stack trace** when Gradle compilation fails:
+  ```powershell
+  ./gradlew :app:compileDebugKotlin --stacktrace --no-daemon
+  ```
+* Use `--info` or `--debug` for more verbose output if needed.

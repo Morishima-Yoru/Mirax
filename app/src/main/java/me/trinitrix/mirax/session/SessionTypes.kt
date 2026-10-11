@@ -23,6 +23,31 @@ enum class ScreenPhase {
 }
 
 /**
+ * Internal connection phase for the active connection lifecycle.
+ * This is an internal concept; the UI sees [ScreenPhase] which is composed
+ * from this and [AdvertisingPhase] by [MiraxSession].
+ */
+enum class ConnectionPhase {
+    NONE,
+    NEGOTIATING,
+    OFFER_FROZEN,
+    PLAYING,
+    ENDED,
+}
+
+/**
+ * Internal advertising phase for the WFD advertising lifecycle.
+ * This is an internal concept; the UI sees [ScreenPhase] which is composed
+ * from this and [ConnectionPhase] by [MiraxSession].
+ */
+enum class AdvertisingPhase {
+    IDLE,
+    ADVERTISING,
+    BEACON_LISTENING,
+    DENIED,
+}
+
+/**
  * Who currently owns WFD advertise privileges for Mirax.
  */
 enum class WfdOwner {
@@ -751,4 +776,9 @@ sealed interface SessionAction {
      * becomes the preferred mode for this connection only.
      */
     data class FreezeConnectionOffer(val reading: WmSizeReading?) : SessionAction
+
+    /**
+     * Clear all persisted connection history from DataStore.
+     */
+    data object ClearConnectionHistory : SessionAction
 }

@@ -5,80 +5,121 @@ import android.util.Log
 /**
  * Tracks the ephemeral state of an in-progress or active P2P/RTSP connection attempt.
  * Destroyed and recreated when a connection ends or is reset.
+ * Deep module: exposes a small interface (ConnectionPhase) over a complex lifecycle implementation.
  */
 internal class ActiveConnectionState {
     private companion object {
         private const val TAG = "ActiveConnectionState"
     }
-    var connected: Boolean = false
-    var negotiating: Boolean = false
-    var selectedMode: VideoMode? = null
-    var connectionAdvertisedModes: Set<VideoMode>? = null
-    var connectionOfferFrozen: Boolean = false
-    var connectionPreferredMode: VideoMode? = null
-    var backEndsConnectionPending: Boolean = false
-    var bottomHandleExpanded: Boolean = false
+
+    private var _phase: ConnectionPhase = ConnectionPhase.NONE
+    val phase: ConnectionPhase
+        get() = _phase
+
+    val isConnected: Boolean
+        get() = _phase == ConnectionPhase.PLAYING
+
+    private var _selectedMode: VideoMode? = null
+    val selectedMode: VideoMode?
+        get() = _selectedMode
+
+    private var connectionAdvertisedModesInternal: Set<VideoMode>? = null
+    val connectionAdvertisedModes: Set<VideoMode>?
+        get() = connectionAdvertisedModesInternal
+
+    private var connectionPreferredModeInternal: VideoMode? = null
+    val connectionPreferredMode: VideoMode?
+        get() = connectionPreferredModeInternal
+
     var awayOnHomeScreen: Boolean = false
+        private set
+
+    val awayOnHomeScreenState: Boolean
+        get() = awayOnHomeScreen
+
+    fun setAwayOnHomeScreen(value: Boolean) {
+        awayOnHomeScreen = value
+    }
+
+    var bottomHandleExpanded: Boolean = false
+        private set
+
+    val bottomHandleExpandedState: Boolean
+        get() = bottomHandleExpanded
+
+    fun setBottomHandleExpanded(value: Boolean) {
+        bottomHandleExpanded = value
+    }
+
+    var backEndsConnectionPending: Boolean = false
+        private set
+
+    val backEndsConnectionPendingState: Boolean
+        get() = backEndsConnectionPending
+
+    fun setBackEndsConnectionPending(value: Boolean) {
+        backEndsConnectionPending = value
+    }
 
     fun onPrePlayProgress(advertisedModes: Set<VideoMode>) {
-        negotiating = true
-        freezeConnectionAdvertisedModes(advertisedModes)
+        if (_phase == ConnectionPhase.NONE) {
+            _phase = ConnectionPhase.NEGOTIATING
+            freezeConnectionAdvertisedModes(advertisedModes)
+        }
     }
 
     fun freezeConnectionAdvertisedModes(advertisedModes: Set<VideoMode>) {
-        if (connectionAdvertisedModes == null) {
-            connectionAdvertisedModes = advertisedModes
+        if (connectionAdvertisedModesInternal == null) {
+            connectionAdvertisedModesInternal = advertisedModes
         }
     }
 
-    fun freezeConnectionOffer(
-        reading: WmSizeReading?,
-        baseModes: Set<VideoMode>,
-        autoAddWmSizeOnConnect: Boolean,
+    fun freezeOffer(
+        offeredModes: Set<VideoMode>,
+        preferredMode: VideoMode?,
         touchEnabled: Boolean,
-        pictureRotationDegrees: Int,
-        customModes: List<VideoMode>,
-        savedPreferredMode: VideoMode?,
+        rotationDegrees: Int,
     ) {
-        if (connectionOfferFrozen) return
-        negotiating = true
-        val injected = if (autoAddWmSizeOnConnect) {
-            modeFromWmSize(reading, touchEnabled, pictureRotationDegrees)
-        } else {
-            null
+        if (_phase == ConnectionPhase.ENDED) {
+            return
         }
-        val savedPreferred = customModes.firstOrNull() ?: savedPreferredMode?.takeIf { it in baseModes }
-        connectionPreferredMode = injected ?: savedPreferred
-        connectionAdvertisedModes = if (injected != null) baseModes + injected else baseModes
-        connectionOfferFrozen = true
+        _phase = ConnectionPhase.OFFER_FROZEN
+        connectionPreferredModeInternal = preferredMode
+        connectionAdvertisedModesInternal = offeredModes
+        _selectedMode = preferredMode
     }
 
-    private fun modeFromWmSize(reading: WmSizeReading?, touchEnabled: Boolean, pictureRotationDegrees: Int): VideoMode? {
-        if (reading == null) return null
-        val (width, height) = CapsAndProvisioning.visiblePictureAxes(
-            reading.chosenWidth,
-            reading.chosenHeight,
-            pictureRotationDegrees,
-        )
-        val refreshHz = if (touchEnabled) 30 else 60
-        return PreferredModeCorrection.correct(width, height, refreshHz)
-            ?: run {
-                Log.w(TAG, "wm size $width×$height@$refreshHz exceeds Level 5.1, dropping")
-                null
-            }
+    fun onPlayStarted() {
+        if (_phase == ConnectionPhase.OFFER_FROZEN || _phase == ConnectionPhase.NEGOTIATING || _phase == ConnectionPhase.NONE) {
+            _phase = ConnectionPhase.PLAYING
+            awayOnHomeScreen = false
+            backEndsConnectionPending = false
+        } else {
+            Log.w(TAG, "onPlayStarted called in invalid phase $_phase, ending connection")
+            _phase = ConnectionPhase.ENDED
+        }
+    }
+
+    fun onConnectionEnded() {
+        _phase = ConnectionPhase.ENDED
+        backEndsConnectionPending = false
+        bottomHandleExpanded = false
+        awayOnHomeScreen = false
+        _selectedMode = null
+        connectionAdvertisedModesInternal = null
+        connectionPreferredModeInternal = null
     }
 
     fun onSourceSelectedMode(mode: VideoMode, fallbackModes: Set<VideoMode>) {
-        freezeConnectionAdvertisedModes(fallbackModes)
-        selectedMode = mode
-        val allowed = connectionAdvertisedModes
+        connectionAdvertisedModesInternal = fallbackModes
+        _selectedMode = mode
+        val allowed = connectionAdvertisedModesInternal
         if (allowed != null && mode !in allowed) {
-            connectionAdvertisedModes = allowed + mode
+            connectionAdvertisedModesInternal = allowed + mode
         }
     }
 
     fun enterPlay(): Boolean {
-        connected = true
         awayOnHomeScreen = false
         return true
     }
@@ -90,7 +131,9 @@ internal class ActiveConnectionState {
     }
 
     fun onSystemBack(bottomHandleEnabled: Boolean): BackResult {
-        if (!connected) return BackResult.ArmedSecondBack
+        if (_phase != ConnectionPhase.PLAYING) {
+            return BackResult.ArmedSecondBack
+        }
         if (bottomHandleEnabled) {
             return if (!bottomHandleExpanded) {
                 bottomHandleExpanded = true

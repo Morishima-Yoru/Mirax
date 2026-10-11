@@ -5,6 +5,7 @@ import me.trinitrix.mirax.session.DeviceNameReport
 import me.trinitrix.mirax.session.MiraxSession
 import me.trinitrix.mirax.session.PrivilegeReport
 import me.trinitrix.mirax.session.SessionSettings
+import me.trinitrix.mirax.session.TestConnectionHistory
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.session.WfdOwner
@@ -31,7 +32,7 @@ class WfdOwnerBridgeTest {
 
     @Test
     fun recordingOwner_receivesSessionAdvertiseCommand() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(PrivilegeReport(helperRunning = true))
         session.report(DeviceNameReport("Desk Fold"))
         val owner = RecordingWfdOwner()

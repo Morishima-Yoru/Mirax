@@ -2,17 +2,22 @@ package me.trinitrix.mirax.session
 
 /**
  * Encapsulates WFD ownership and listen-beacon state machine.
+ * Deep module: exposes a small interface (AdvertisingPhase) over a complex lifecycle implementation.
  */
 internal class AdvertisingState(
     initialAdvertisingEnabled: Boolean = false,
 ) {
-    var advertisingEnabled: Boolean = initialAdvertisingEnabled
+    private var _phase: AdvertisingPhase = if (initialAdvertisingEnabled) AdvertisingPhase.ADVERTISING else AdvertisingPhase.IDLE
+    val phase: AdvertisingPhase
+        get() = _phase
+
+    private var advertisingEnabled: Boolean = initialAdvertisingEnabled
         private set
 
-    var beaconListening: Boolean = false
-        private set
+    val advertisingEnabledState: Boolean
+        get() = advertisingEnabled
 
-    var advertiseDeniedByPrivilege: Boolean = false
+    private var beaconListening: Boolean = false
         private set
 
     fun setAdvertising(enabled: Boolean, owner: WfdOwner, wifiEnabled: Boolean): SetAdvertisingResult {
@@ -23,7 +28,13 @@ internal class AdvertisingState(
             return SetAdvertisingResult.WifiDisabled
         }
         advertisingEnabled = enabled
-        beaconListening = false
+        if (!enabled) {
+            _phase = AdvertisingPhase.IDLE
+            beaconListening = false
+        } else {
+            _phase = AdvertisingPhase.ADVERTISING
+            beaconListening = false
+        }
         return SetAdvertisingResult.Applied(turnedOff = !enabled)
     }
 
@@ -32,7 +43,7 @@ internal class AdvertisingState(
             return
         }
         beaconListening = true
-        advertiseDeniedByPrivilege = false
+        _phase = AdvertisingPhase.BEACON_LISTENING
     }
 
     fun onBeaconFailed(): Boolean {
@@ -42,35 +53,19 @@ internal class AdvertisingState(
         }
         advertisingEnabled = false
         beaconListening = false
-        advertiseDeniedByPrivilege = true
+        _phase = AdvertisingPhase.DENIED
         return true
     }
 
     fun onOwnerNone() {
         beaconListening = false
+        if (_phase != AdvertisingPhase.IDLE) {
+            _phase = AdvertisingPhase.IDLE
+        }
     }
 
-    fun resolvePhase(owner: WfdOwner, connected: Boolean, wifiEnabled: Boolean, negotiating: Boolean): ScreenPhase {
-        if (owner == WfdOwner.NONE) {
-            return ScreenPhase.FROZEN
-        }
-        if (connected) {
-            return ScreenPhase.CONNECTED
-        }
-        if (advertisingEnabled && !wifiEnabled) {
-            return ScreenPhase.WIFI_PAUSED
-        }
-        if (advertisingEnabled && negotiating) {
-            return ScreenPhase.CONNECTING
-        }
-        if (!advertisingEnabled) {
-            return ScreenPhase.READY
-        }
-        return if (beaconListening) {
-            ScreenPhase.ADVERTISING
-        } else {
-            ScreenPhase.ARMING
-        }
+    fun isDeniedByPrivilege(): Boolean {
+        return _phase == AdvertisingPhase.DENIED
     }
 
     sealed interface SetAdvertisingResult {
