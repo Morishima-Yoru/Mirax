@@ -187,6 +187,15 @@ object SessionHost {
     }
 
     /**
+     * User dismissed the control panel (tap on scrim).
+     */
+    fun collapseControlPanel(context: Context): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.CollapseControlPanel)
+        return commit(context)
+    }
+
+    /**
      * Persist and apply the bottom-handle setting.
      */
     fun setBottomHandleEnabled(context: Context, enabled: Boolean): SessionSnapshot {

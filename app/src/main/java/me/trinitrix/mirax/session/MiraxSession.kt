@@ -229,6 +229,11 @@ class MiraxSession(
                     activeConnection.setBottomHandleExpanded(false)
                 }
             }
+            SessionAction.CollapseControlPanel -> {
+                if (activeConnection.isConnected) {
+                    display.setControlPanelExpanded(false)
+                }
+            }
             is SessionAction.SetFloatingBallEnabled -> {
                 display.setFloatingBallEnabled(action.enabled)
                 maybeEndHomeStayWithoutBall()
@@ -493,8 +498,10 @@ fun snapshot(): SessionSnapshot {
 
     private fun onSystemBack() {
         if (!activeConnection.isConnected) return
-        when (activeConnection.onSystemBack(display.bottomHandleEnabled)) {
-            ActiveConnectionState.BackResult.ExpandHandle -> Unit
+        when (activeConnection.onSystemBack()) {
+            ActiveConnectionState.BackResult.ExpandHandle -> {
+                display.setControlPanelExpanded(true)
+            }
             ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()
             ActiveConnectionState.BackResult.ArmedSecondBack -> Unit
         }

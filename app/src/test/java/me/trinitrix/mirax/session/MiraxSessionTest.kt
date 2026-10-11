@@ -1173,7 +1173,7 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun connected_firstSystemBack_opensStatusPanel_keepsConnection() {
+    fun connected_firstSystemBack_opensControlPanel_keepsConnection() {
         val session = connectedSession()
         session.handle(SessionAction.SystemBack)
 
@@ -1181,14 +1181,29 @@ class MiraxSessionTest {
         assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
         assertThat(snap.advertisingEnabled).isTrue()
         assertThat(snap.showPicture).isTrue()
-        assertThat(snap.bottomHandleExpanded).isTrue()
+        assertThat(snap.controlPanelExpanded).isTrue()
         assertThat(snap.effects).doesNotContain(SessionEffect.ConfirmEndConnection)
         assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
     }
 
     @Test
-    fun connected_secondSystemBack_requestsEndConfirm_keepsConnectionUntilConfirmed() {
+    fun connected_secondSystemBack_armsForEnd_noConfirmYet() {
         val session = connectedSession()
+        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.SystemBack)
+
+        val snap = session.snapshot()
+        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(snap.effects).doesNotContain(SessionEffect.ConfirmEndConnection)
+        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
+    }
+
+    @Test
+    fun connected_thirdSystemBack_requestsEndConfirm_keepsConnectionUntilConfirmed() {
+        val session = connectedSession()
+        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
         session.handle(SessionAction.SystemBack)
         session.handle(SessionAction.AcknowledgeEffects)
         session.handle(SessionAction.SystemBack)
@@ -1224,6 +1239,8 @@ class MiraxSessionTest {
         session.handle(SessionAction.AcknowledgeEffects)
 
         session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.SystemBack)
         assertThat(session.snapshot().effects).contains(SessionEffect.ConfirmEndConnection)
         session.handle(SessionAction.AcknowledgeEffects)
         session.handle(SessionAction.EndConnection)
@@ -1246,7 +1263,7 @@ class MiraxSessionTest {
 
         session.handle(SessionAction.SystemBack)
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
-        assertThat(session.snapshot().bottomHandleExpanded).isTrue()
+        assertThat(session.snapshot().controlPanelExpanded).isTrue()
         assertThat(session.snapshot().effects).doesNotContain(SessionEffect.ConfirmEndConnection)
     }
 
@@ -1279,7 +1296,7 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun bottomHandle_off_hidesPanel_butSecondBackStillRequestsEndConfirm() {
+    fun bottomHandle_off_hidesPanel_butThirdBackRequestsEndConfirm() {
         val session = MiraxSession(
             SessionSettings(advertisingEnabled = true, bottomHandleEnabled = false),
             TestConnectionHistory(),
@@ -1292,6 +1309,8 @@ class MiraxSessionTest {
         assertThat(session.snapshot().bottomHandleEnabled).isFalse()
         assertThat(session.snapshot().showBottomHandle).isFalse()
 
+        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.AcknowledgeEffects)
         session.handle(SessionAction.SystemBack)
         session.handle(SessionAction.AcknowledgeEffects)
         session.handle(SessionAction.SystemBack)

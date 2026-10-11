@@ -710,6 +710,11 @@ sealed interface SessionAction {
     data object CollapseBottomHandleExpanded : SessionAction
 
     /**
+     * User dismissed the control panel (tap on scrim).
+     */
+    data object CollapseControlPanel : SessionAction
+
+    /**
      * User toggled the floating-ball setting. Persisted; defaults on.
      */
     data class SetFloatingBallEnabled(val enabled: Boolean) : SessionAction
