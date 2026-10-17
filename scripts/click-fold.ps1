@@ -57,6 +57,11 @@ public class CastClick {
     GetClassName(h, sb, 256);
     return sb.ToString();
   }
+  public static void Esc() {
+    keybd_event(0x1B, 0, 0, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(50);
+    keybd_event(0x1B, 0, 2, UIntPtr.Zero);
+  }
   public static void Chord() {
     // Always route Win+K through the shell tray. Cursor / browsers / IDE
     // windows often swallow the chord when they keep foreground focus.
@@ -158,8 +163,9 @@ public class CastWindows {
 function Open-Cast {
     [CastWindows]::Scan()
     if ([CastWindows]::Hits.Count -gt 0) {
-        Write-Host "cast already open"
-        return
+        Write-Host "cast already open, closing to refresh device scan..."
+        [CastClick]::Esc()
+        Start-Sleep -Milliseconds 800
     }
     [CastClick]::Chord()
     for ($i = 0; $i -lt 40; $i++) {
