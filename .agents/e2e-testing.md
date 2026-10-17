@@ -26,7 +26,7 @@ To perform device-side App UI testing, we recommend setting up one of the follow
    ```pwsh
    adb logcat -c
    ```
-   *Core tags to monitor*: `PictureActivity:V`, `MiraxH264:V`, `MiraxSession:V`, `MiraxSink:V`, `MiraxWfdBeacon:V`.
+   * **Output location**: Write every experiment artifact — logcat dumps, probe logs, UI screenshots — into a single per-run directory under the OpenCode temp dir (`C:/Users/User/AppData/Local/Temp/opencode/mirax/<run-name>/`). Never scatter logs or screenshots into `scripts/`, the repo root, or the working tree.
 
 ---
 
