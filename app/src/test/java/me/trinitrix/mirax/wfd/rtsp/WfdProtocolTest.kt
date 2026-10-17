@@ -222,7 +222,17 @@ class WfdProtocolTest {
     }
 
     @Test
-    fun uibcSingleTouchSelection_usesHidTypeTwo_andDisableClearsThePort() {
+    fun uibcCombinedTouchSelection_prefersMultiTouch() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=SingleTouch/USB, MultiTouch/USB; port=50010\r\n",
+        )
+        assertThat(session.uibcHidType).isEqualTo(3)
+    }
+
+    @Test
+    fun uibcSingleTouchSelection_usesHidTypeTwo_andDisableKeepsThePort() {
         val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
         session.handle(
             "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
@@ -234,7 +244,178 @@ class WfdProtocolTest {
             "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 5\r\n\r\n" +
                 "wfd_uibc_setting: disable\r\n",
         )
-        assertThat(session.uibcPort).isEqualTo(-1)
+        assertThat(session.uibcPort).isEqualTo(50010)
+        assertThat(session.uibcEnabled).isFalse()
+    }
+
+    @Test
+    fun disableThenEnablePreservesPort() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; generic_cap_list=none; " +
+                "hidc_cap_list=SingleTouch/USB; port=50123\r\n",
+        )
+        session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 5\r\n\r\nwfd_uibc_setting: disable\r\n")
+        session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 6\r\n\r\nwfd_uibc_setting: enable\r\n")
+        assertThat(session.uibcPort).isEqualTo(50123)
+        assertThat(session.uibcEnabled).isTrue()
+    }
+
+    @Test
+    fun m4CapabilityWithEmbeddedSetting_enablesImmediately() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_uibc_setting: enable\r\n",
+        )
+        assertThat(session.uibcPort).isEqualTo(50123)
+        assertThat(session.uibcHidType).isEqualTo(3)
+        assertThat(session.uibcEnabled).isTrue()
+    }
+
+    @Test
+    fun enableWithoutRepeatedCapability_isIdempotent() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; port=50123\r\n",
+        )
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 5\r\n\r\nwfd_uibc_setting: enable\r\n",
+        )
+        assertThat(session.uibcPort).isEqualTo(50123)
+        assertThat(session.uibcEnabled).isTrue()
+    }
+
+    @Test
+    fun sinkM15EnableAccepted_marksEnabled() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        assertThat(session.state).isEqualTo("PLAYING")
+        val enable = session.requestUibcEnable()
+        val enableCseq = Regex("CSeq: (\\d+)").find(enable)!!.groupValues[1]
+        assertThat(session.uibcEnabled).isFalse()
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $enableCseq\r\n\r\n")
+        assertThat(session.uibcEnabled).isTrue()
+        assertThat(session.state).isEqualTo("PLAYING")
+        assertThat(session.requestUibcEnable()).isEmpty()
+    }
+
+    @Test
+    fun sinkM15EnableRejected_keepsPlayingWithoutTouch() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        val enable = session.requestUibcEnable()
+        val enableCseq = Regex("CSeq: (\\d+)").find(enable)!!.groupValues[1]
+        session.handle("RTSP/1.0 403 Forbidden\r\nCSeq: $enableCseq\r\n\r\n")
+        assertThat(session.uibcEnabled).isFalse()
+        assertThat(session.state).isEqualTo("PLAYING")
+    }
+
+    @Test
+    fun lostIdrReply_exchangeExpiresToError() {
+        var now = 1_000L
+        val session = RtspSinkSession(
+            WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true),
+            clockMs = { now },
+        )
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        assertThat(session.state).isEqualTo("PLAYING")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        session.requestIdr()
+        assertThat(session.requestUibcEnable()).isEmpty()
+        now += 5_000L
+        assertThat(session.requestUibcEnable()).isEmpty()
+        assertThat(session.state).isEqualTo("ERROR")
+    }
+
+    @Test
+    fun lostM15Reply_expiresAndFailsExchange() {
+        var now = 1_000L
+        val session = RtspSinkSession(
+            WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true),
+            clockMs = { now },
+        )
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        assertThat(session.requestUibcEnable()).isNotEmpty()
+        now += 5_000L
+        assertThat(session.checkExchangeTimeout()).isTrue()
+        assertThat(session.state).isEqualTo("ERROR")
+    }
+
+    @Test
+    fun lateMatchingResponse_isAbortedAndStateBecomesError() {
+        var now = 1_000L
+        val session = RtspSinkSession(
+            WfdCapabilityTable(defaults, foldPreferred, "Mirax"),
+            clockMs = { now },
+        )
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        now += 5_000L
+        val out = session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        assertThat(out).isEmpty()
+        assertThat(session.state).isEqualTo("ERROR")
     }
 
     @Test

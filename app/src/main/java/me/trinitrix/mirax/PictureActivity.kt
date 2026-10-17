@@ -613,6 +613,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private fun forwardPictureTouch(event: MotionEvent) {
         val snapshot = MiraxApp.instance.session.snapshot()
         val mode = snapshot.selectedMode
+        Log.d("MiraxTouch", "forwardPictureTouch: action=${event.actionMasked} touchEnabled=${snapshot.touchEnabled} mode=$mode")
         if (!snapshot.touchEnabled || mode == null) {
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL
