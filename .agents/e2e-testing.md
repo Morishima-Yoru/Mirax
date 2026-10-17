@@ -7,7 +7,7 @@ This guide outlines the End-to-End (E2E) testing procedures for the Mirax applic
 ## 1. Core Toolchain & Prerequisites
 
 To perform device-side App UI testing, we recommend setting up one of the following testing frameworks:
-- **Python UIAutomator2 (Recommended for Agentic flow)**: `pip install uiautomator2`
+- **Python UIAutomator2 (Recommended for Agentic flow)**: run a script with `uv run --no-project --python 3.14 --with uiautomator2 python path/to/script.py`.
 - **AndroidX UiAutomator**: `androidx.test.uiautomator:uiautomator` (for native instrumentation tests)
 
 **Key Verification Targets**:

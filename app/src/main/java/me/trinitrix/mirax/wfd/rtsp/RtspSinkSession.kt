@@ -102,8 +102,7 @@ fun handle(message: String?): List<String> {
                         "",
                     ),
                 )
-                out.add(request("OPTIONS", "*", "Require: org.wfa.wfd1.0\r\n", ""))
-                state = "WAIT_M2"
+                state = "READY"
             }
             "GET_PARAMETER" -> {
                 out.add(response(cseq, "Content-Type: text/parameters\r\n", getParameterBody(body)))

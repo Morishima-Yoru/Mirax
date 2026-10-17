@@ -67,21 +67,22 @@ See `.agents/e2e-testing.md` for `adb` + `UiAutomator` verification procedures.
 ## Programming Style
 * Primary considers OOP design pattern.
 
-## Misc (PowerShell Guardrails)
-* Always use Windows PowerShell (`pwsh`) for terminal commands. DO NOT assume a Linux Bash environment.
-* NEVER use `ls -la` (crashes due to unrecognised `-la` parameter). Use `ls` or `Get-ChildItem`.
-* NEVER use `grep`. Use `Select-String` (e.g., `| Select-String "pattern"`).
-* NEVER use `> /dev/null` or `2> /dev/null`. It creates a literal `C:\dev\null` file and crashes. Use `> $null` or `2> $null` instead.
-* NEVER use `export VAR=VALUE`. Use `$env:VAR='VALUE'` to set environment variables.
-* NEVER use `touch file`. Use `New-Item -ItemType File -Path file` instead.
-* NEVER use CMD-style flags (`/s`, `/b`, `/r`, etc.) with `dir`/`Get-ChildItem`/`ls`. PowerShell uses `-Recurse`, `-Name`, `-File`/`-Directory` parameters instead. Example: `Get-ChildItem -Recurse -Name -Filter "*.dll"` not `dir /s /b *.dll`.
+## Python
+* Use `uv` for Python environments, dependencies, and execution; use `uv run`, `uv add`, or `uvx` as appropriate.
+* Use CPython 3.14 or newer and run `flake8` via `uv`.
+
+## Shell Guardrails
+* The `shell` tool runs Git Bash on Windows. Use Bash syntax for its command string; do not assume Linux paths or a PowerShell outer shell.
+* Invoke `pwsh -NoProfile -Command '...'` or `pwsh -NoProfile -File '...'` when PowerShell is needed. Single-quote inline PowerShell code so Bash does not expand `$null`, `$_`, or other PowerShell variables.
+* Use PowerShell syntax such as `$null`, `$env:VAR`, and `Select-String` only inside `pwsh`; use Bash syntax in the outer shell.
+* Git Bash may convert Unix-style path arguments passed to native Windows programs. Check path handling when invoking Windows tools.
 
 ## Windows Path Guardrails (OpenCode bug workaround)
 * **Always use forward slashes `/` for file paths in tool calls.**  
   → `Read("C:/Users/name/project/file.kt")` ✓ | `Read("C:\Users\name\project\file.kt")` ✗  
   Backslashes in JSON/string literals become escape sequences (`	` → tab, `\n` → newline, etc.), breaking path resolution.
 * Prefer built-in tools (Read, Write, Edit, Glob, Grep) over `bash` for file operations — they accept forward-slash paths natively.
-* If you must use `bash`, wrap paths in single quotes: `'C:/Users/name/project/file.kt'`.
+* Quote paths containing spaces; in Bash, use double quotes for variable expansions and single quotes for literals.
 
 ## Build Debugging
 * **Run with `--stacktrace` option to get the stack trace** when Gradle compilation fails:
