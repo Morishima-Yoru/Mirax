@@ -120,6 +120,14 @@ public class MultiTouchProbe {
         }
     }
 
+    static string PointerTypeName(bool recognized, uint pointerType) {
+        if (!recognized) return "UNKNOWN";
+        if (pointerType == PT_TOUCH) return "TOUCH";
+        if (pointerType == PT_PEN) return "PEN";
+        if (pointerType == PT_MOUSE) return "MOUSE";
+        return "OTHER";
+    }
+
     static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) {
         if (msg == WM_POINTERDOWN) {
             uint pId = (uint)((ulong)wParam & 0xFFFF);
@@ -127,7 +135,7 @@ public class MultiTouchProbe {
             bool ok = GetPointerType(pId, out pType);
             int x = (short)((ulong)lParam & 0xFFFF);
             int y = (short)(((ulong)lParam >> 16) & 0xFFFF);
-            string typeName = (pType == PT_TOUCH || !ok) ? "TOUCH" : (pType == PT_PEN ? "PEN" : (pType == PT_MOUSE ? "MOUSE" : "OTHER"));
+            string typeName = PointerTypeName(ok, pType);
             
             lock (lockObj) {
                 totalDowns++;
@@ -146,7 +154,7 @@ public class MultiTouchProbe {
             bool ok = GetPointerType(pId, out pType);
             int x = (short)((ulong)lParam & 0xFFFF);
             int y = (short)(((ulong)lParam >> 16) & 0xFFFF);
-            string typeName = (pType == PT_TOUCH || !ok) ? "TOUCH" : (pType == PT_PEN ? "PEN" : "OTHER");
+            string typeName = PointerTypeName(ok, pType);
             
             lock (lockObj) {
                 activeIds.Remove(pId);
@@ -173,6 +181,9 @@ public class MultiTouchProbe {
 
     public static int Main(string[] args) {
         if (args.Length > 0 && args[0] == "--selfcheck") {
+            if (PointerTypeName(false, PT_TOUCH) != "UNKNOWN" ||
+                PointerTypeName(true, PT_TOUCH) != "TOUCH" ||
+                PointerTypeName(true, PT_PEN) != "PEN") return 1;
             Console.WriteLine("SELFCHECK OK");
             return 0;
         }

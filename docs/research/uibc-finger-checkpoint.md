@@ -28,4 +28,12 @@ All raw logs, packet capture and phone screenshots for **one connection** are in
 
 The same Miracast connection then received `adb shell input tap 400 600`. The Windows click target changed visibly from orange `TOUCH TARGET` (`visible-before.png`) to green `WINDOWS CLICK RECEIVED` (`visible-after.png`); its Windows-side log recorded `2026-10-18T11:46:42.2938300+08:00 WINDOWS_CLICK`. The corresponding Android `forwardPictureTouch` down/up was at `11:46:39.304` / `11:46:39.308` (device and host clocks differ). This proves Windows interaction, not merely packet writing.
 
+The original probe mislabeled `GetPointerType` failures as `TOUCH`. After correcting the probe to report such failures as `UNKNOWN`, a repeat on **this same connection** confirmed the Win32 API's actual pointer type (see `strict-repo-console.log`, verified probe EXE SHA-256 `830ad5ef461ae7cd6212da2a1dd920b70cc38f2ea0d570e5a32b2830531d8bd2`):
+
+```text
+[11:56:20.352] POINTER-DOWN type=TOUCH id=17 x=1279 y=240 active=1
+[11:56:21.135] POINTER-UP type=TOUCH id=17 x=1466 y=240 active=0
+[11:56:30.833] SUMMARY downs=1 maxConcurrent=1 distinctIds=1
+```
+
 Focused JVM tests: `WfdProtocolTest` 22, `UibcPacketsTest` 17, `UibcTouchChannelTest` 8, all passing; `:app:assembleDebug` passed. Multi-pointer, Android stylus/synthetic pen, coexistence and physical S Pen **are not verified by this checkpoint**. No Windows VHF driver/service was added.
