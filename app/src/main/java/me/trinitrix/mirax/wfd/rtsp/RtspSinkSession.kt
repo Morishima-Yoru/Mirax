@@ -413,8 +413,9 @@ fun handle(message: String?): List<String> {
         }
         uibcPort = port
         uibcHidType = when {
-            value.contains("MultiTouch", ignoreCase = true) -> 3
+            // shortcut: prefer single touch until simultaneous Windows pointers are verified; upgrade at the multi-touch checkpoint.
             value.contains("SingleTouch", ignoreCase = true) -> 2
+            value.contains("MultiTouch", ignoreCase = true) -> 3
             else -> 3
         }
         Log.i(TAG, "uibc capability port=$uibcPort hidType=$uibcHidType enabled=$uibcEnabled")
