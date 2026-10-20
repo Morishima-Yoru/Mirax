@@ -13,6 +13,73 @@ import java.util.concurrent.TimeUnit
 class UibcTouchChannelTest {
     private var previousRunner: ((Runnable) -> Unit)? = null
 
+    /** Verifies all-slot wire shape and disable releases; Windows delivery is tested separately. */
+    @Test
+    fun independentTouchCollectionsKeepEveryAllocatedSlotAndDisableReleases() {
+        previousRunner = UibcTouchChannel.writeRunner
+        UibcTouchChannel.writeRunner = { it.run() }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+            listening.accept().use { socket ->
+                socket.soTimeout = 2_000
+                val input = DataInputStream(socket.getInputStream())
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                val descriptor = readPacket(input)
+                assertThat(descriptor[5].toInt()).isEqualTo(UibcPackets.HID_SINGLE_TOUCH)
+                assertThat(descriptor[6].toInt()).isEqualTo(UibcPackets.USAGE_REPORT_DESCRIPTOR)
+                val descriptorSize = ((descriptor[7].toInt() and 0xFF) shl 8) or (descriptor[8].toInt() and 0xFF)
+                assertThat(descriptorSize).isEqualTo(135 * UibcPackets.MAX_CONTACTS + 102)
+                repeat(UibcPackets.MAX_CONTACTS) { slot ->
+                    assertThat(descriptor[9 + slot * 135 + 7].toInt() and 0xFF).isEqualTo(slot + 1)
+                }
+                val penReportId = UibcPackets.MAX_CONTACTS + 1
+                assertThat(descriptor[9 + UibcPackets.MAX_CONTACTS * 135 + 7].toInt() and 0xFF).isEqualTo(penReportId)
+                repeat(UibcPackets.MAX_CONTACTS) { slot ->
+                    val initial = readPacket(input)
+                    assertThat(initial[9].toInt() and 0xFF).isEqualTo(slot + 1)
+                    assertThat(initial[10].toInt()).isEqualTo(0)
+                    assertThat(initial[18].toInt()).isEqualTo(0)
+                }
+                val initialPen = readPacket(input)
+                assertThat(initialPen[9].toInt() and 0xFF).isEqualTo(penReportId)
+                assertThat(initialPen[10].toInt()).isEqualTo(0)
+                val contacts = List(UibcPackets.MAX_CONTACTS) { slot ->
+                    UibcContact(slot, 100 + slot, 200 + slot, tip = true)
+                }
+                UibcTouchChannel.submit(contacts)
+                repeat(UibcPackets.MAX_CONTACTS) { slot ->
+                    val packet = readPacket(input)
+                    val scanTime = (packet[16].toInt() and 0xFF) or ((packet[17].toInt() and 0xFF) shl 8)
+                    val expected = UibcPackets.touchReport(listOf(contacts[slot].copy(id = 0)), 1, scanTime)
+                    expected[0] = (slot + 1).toByte()
+                    assertThat(packet).isEqualTo(UibcPackets.hidcPacket(2, UibcPackets.USAGE_INPUT_REPORT, expected))
+                }
+                val pen = UibcPenContact(500, 600, tip = true, inRange = true, pressure = 2000)
+                UibcTouchChannel.submitPen(pen)
+                val expectedPen = UibcPackets.penReport(pen).apply { this[0] = penReportId.toByte() }
+                assertThat(readPacket(input)).isEqualTo(UibcPackets.hidcPacket(2, UibcPackets.USAGE_INPUT_REPORT, expectedPen))
+                UibcTouchChannel.setEnabled(false)
+                repeat(UibcPackets.MAX_CONTACTS) { slot ->
+                    val released = readPacket(input)
+                    assertThat(released[9].toInt() and 0xFF).isEqualTo(slot + 1)
+                    // The terminal contact remains counted with Tip cleared, not an empty frame.
+                    assertThat(released[10].toInt()).isEqualTo(0x06)
+                    assertThat(released[18].toInt()).isEqualTo(1)
+                }
+                val releasedPen = readPacket(input)
+                assertThat(releasedPen[9].toInt() and 0xFF).isEqualTo(penReportId)
+                assertThat(releasedPen[10].toInt()).isEqualTo(0)
+                assertThat(releasedPen[15].toInt()).isEqualTo(0)
+                assertThat(releasedPen[16].toInt()).isEqualTo(0)
+                UibcTouchChannel.submit(contacts)
+                UibcTouchChannel.submitPen(pen)
+                socket.soTimeout = 200
+                assertNoDataWithinTimeout(socket)
+            }
+        }
+    }
+
     @Test
     fun queuedDescriptorAllowsTouchReportBeforeWriterRuns() {
         val writes = LinkedBlockingQueue<Runnable>()
@@ -27,8 +94,11 @@ class UibcTouchChannelTest {
                 val descriptorWrite = writes.poll(2, TimeUnit.SECONDS)
                 assertThat(descriptorWrite).isNotNull()
                 val contacts = listOf(UibcContact(id = 0, x = 10, y = 20, tip = true))
+                val pen = UibcPenContact(x = 30, y = 40, tip = true, inRange = true, pressure = 500)
                 UibcTouchChannel.submit(contacts)
+                UibcTouchChannel.submitPen(pen)
                 descriptorWrite.run()
+                writes.poll(2, TimeUnit.SECONDS).run()
                 writes.poll(2, TimeUnit.SECONDS).run()
                 writes.poll(2, TimeUnit.SECONDS).run()
                 val input = DataInputStream(socket.getInputStream())
@@ -36,11 +106,18 @@ class UibcTouchChannelTest {
                     UibcPackets.hidcPacket(
                         UibcPackets.HID_MULTI_TOUCH,
                         UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                        UibcPackets.touchDescriptor(1920, 1080, UibcPackets.MAX_CONTACTS),
+                        UibcPackets.touchDescriptor(1920, 1080, UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)),
                     ),
                 )
                 assertTouchReport(input, emptyList())
                 assertTouchReport(input, contacts)
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_INPUT_REPORT,
+                        UibcPackets.penReport(pen),
+                    ),
+                )
             }
         }
     }
@@ -126,27 +203,161 @@ class UibcTouchChannelTest {
     }
 
     @Test
-    fun liftAll_liftsBothTouchAndPen() {
-        val server = ServerSocket(0)
-        server.soTimeout = 3_000
-        val writtenPackets = mutableListOf<ByteArray>()
+    fun typeTwoPreservesRepeatedPenSamplesAndKeepsFirstFingerWorking() {
         previousRunner = UibcTouchChannel.writeRunner
-        UibcTouchChannel.writeRunner = { runnable ->
-            runnable.run()
-        }
-        server.use { listening ->
-            UibcTouchChannel.open(
-                "127.0.0.1",
-                listening.localPort,
-                UibcPackets.HID_MULTI_TOUCH,
-            )
-            val client = listening.accept()
-            client.use { socket ->
+        UibcTouchChannel.writeRunner = { runnable -> runnable.run() }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+            listening.accept().use { socket ->
                 socket.soTimeout = 2_000
                 UibcTouchChannel.setPictureSize(1920, 1080)
-                UibcTouchChannel.submit(listOf(UibcContact(id = 0, x = 10, y = 20, tip = true)))
-                UibcTouchChannel.submitPen(UibcPenContact(x = 30, y = 40, tip = true, inRange = true, pressure = 500))
+                val input = DataInputStream(socket.getInputStream())
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_SINGLE_TOUCH,
+                        UibcPackets.USAGE_REPORT_DESCRIPTOR,
+                        UibcPackets.digitizerDescriptor(1920, 1080, UibcPackets.HID_SINGLE_TOUCH),
+                    ),
+                )
+                assertTypeTwoTouchReports(input, emptyList())
+                assertTypeTwoPenReport(input, UibcPenContact(0, 0, tip = false, inRange = false))
+                val pen = UibcPenContact(30, 40, tip = true, inRange = true)
+                UibcTouchChannel.submitPen(pen)
+                assertTypeTwoPenReport(input, pen)
+                UibcTouchChannel.submitPen(pen)
+                assertTypeTwoPenReport(input, pen)
+                val hover = pen.copy(tip = false)
+                repeat(2) {
+                    UibcTouchChannel.submitPen(hover)
+                    assertTypeTwoPenReport(input, hover)
+                }
+                val outOfRange = hover.copy(inRange = false)
+                UibcTouchChannel.submitPen(outOfRange)
+                assertTypeTwoPenReport(input, outOfRange)
+                UibcTouchChannel.submitPen(outOfRange)
+                socket.soTimeout = 200
+                assertNoDataWithinTimeout(socket)
+                socket.soTimeout = 2_000
+                val finger = listOf(UibcContact(0, 10, 20, tip = true))
+                UibcTouchChannel.submit(finger)
+                assertTypeTwoTouchReports(input, finger)
+            }
+        }
+    }
+
+    @Test
+    fun disablingActiveChannelLiftsTouchAndPenBeforeStoppingWrites() {
+        previousRunner = UibcTouchChannel.writeRunner
+        UibcTouchChannel.writeRunner = { runnable -> runnable.run() }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_MULTI_TOUCH)
+            listening.accept().use { socket ->
+                socket.soTimeout = 2_000
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                val input = DataInputStream(socket.getInputStream())
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_REPORT_DESCRIPTOR,
+                        UibcPackets.touchDescriptor(1920, 1080, 2),
+                    ),
+                )
+                assertTouchReport(input, emptyList())
+                val finger = listOf(UibcContact(0, 10, 20, tip = true))
+                val pen = UibcPenContact(30, 40, tip = true, inRange = true, pressure = 500)
+                UibcTouchChannel.submit(finger)
+                UibcTouchChannel.submitPen(pen)
+                assertTouchReport(input, finger)
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_INPUT_REPORT,
+                        UibcPackets.penReport(pen),
+                    ),
+                )
+                UibcTouchChannel.setEnabled(false)
+                assertTouchReport(input, finger.map { it.copy(tip = false) })
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_INPUT_REPORT,
+                        UibcPackets.penReport(pen.copy(tip = false, inRange = false, pressure = 0)),
+                    ),
+                )
+                UibcTouchChannel.submit(finger)
+                UibcTouchChannel.submitPen(pen)
+                assertNoDataWithinTimeout(socket)
+            }
+        }
+    }
+
+    @Test
+    fun liftAll_liftsBothTouchAndPen() {
+        previousRunner = UibcTouchChannel.writeRunner
+        UibcTouchChannel.writeRunner = { runnable -> runnable.run() }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_MULTI_TOUCH)
+            listening.accept().use { socket ->
+                socket.soTimeout = 2_000
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                val input = DataInputStream(socket.getInputStream())
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_REPORT_DESCRIPTOR,
+                        UibcPackets.touchDescriptor(1920, 1080, 2),
+                    ),
+                )
+                assertTouchReport(input, emptyList())
+
+                val finger = listOf(UibcContact(id = 0, x = 10, y = 20, tip = true))
+                val pen = UibcPenContact(x = 30, y = 40, tip = true, inRange = true, pressure = 500)
+                UibcTouchChannel.submit(finger)
+                UibcTouchChannel.submitPen(pen)
+                assertTouchReport(input, finger)
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_INPUT_REPORT,
+                        UibcPackets.penReport(pen),
+                    ),
+                )
+
+                val hover = pen.copy(tip = false, inRange = true, pressure = 0)
+                UibcTouchChannel.submitPen(hover)
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_INPUT_REPORT,
+                        UibcPackets.penReport(hover),
+                    ),
+                )
+                val movedFinger = finger.map { it.copy(x = 15) }
+                UibcTouchChannel.submit(movedFinger)
+                assertTouchReport(input, movedFinger)
+                UibcTouchChannel.submitPen(pen)
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_INPUT_REPORT,
+                        UibcPackets.penReport(pen),
+                    ),
+                )
+
                 UibcTouchChannel.liftAll()
+                assertTouchReport(input, movedFinger.map { it.copy(tip = false) })
+                assertThat(readPacket(input)).isEqualTo(
+                    UibcPackets.hidcPacket(
+                        UibcPackets.HID_MULTI_TOUCH,
+                        UibcPackets.USAGE_INPUT_REPORT,
+                        UibcPackets.penReport(pen.copy(tip = false, inRange = false, pressure = 0)),
+                    ),
+                )
+                UibcTouchChannel.liftAll()
+                assertNoDataWithinTimeout(socket)
             }
         }
     }
@@ -167,7 +378,7 @@ class UibcTouchChannelTest {
                         UibcPackets.hidcPacket(
                             UibcPackets.HID_MULTI_TOUCH,
                             UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.MAX_CONTACTS),
+                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)),
                         ),
                     )
                     assertTouchReport(input, emptyList())
@@ -212,7 +423,7 @@ class UibcTouchChannelTest {
                         UibcPackets.hidcPacket(
                             UibcPackets.HID_MULTI_TOUCH,
                             UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.MAX_CONTACTS),
+                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)),
                         ),
                     )
                     assertTouchReport(input, emptyList())
@@ -225,9 +436,9 @@ class UibcTouchChannelTest {
                     UibcTouchChannel.submit(contact)
                     assertTouchReport(input, contact)
 
-                    // Disable drops pending/live state and stops writes, but the
-                    // TCP connection stays open.
+                    // Disable lifts live state, stops new writes, and keeps TCP open.
                     UibcTouchChannel.setEnabled(false)
+                    assertTouchReport(input, contact.map { it.copy(tip = false) })
                     UibcTouchChannel.submit(contact)
                     UibcTouchChannel.submitPen(
                         UibcPenContact(x = 30, y = 40, tip = true, inRange = true, pressure = 100),
@@ -241,7 +452,7 @@ class UibcTouchChannelTest {
                         UibcPackets.hidcPacket(
                             UibcPackets.HID_MULTI_TOUCH,
                             UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.MAX_CONTACTS),
+                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)),
                         ),
                     )
                     assertTouchReport(input, emptyList())
@@ -272,7 +483,7 @@ class UibcTouchChannelTest {
                     UibcPackets.hidcPacket(
                         UibcPackets.HID_MULTI_TOUCH,
                         UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                        UibcPackets.touchDescriptor(1920, 1080, UibcPackets.MAX_CONTACTS),
+                        UibcPackets.touchDescriptor(1920, 1080, UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)),
                     ),
                 )
                 assertTouchReport(input, emptyList())
@@ -293,7 +504,7 @@ class UibcTouchChannelTest {
                         UibcPackets.hidcPacket(
                             UibcPackets.HID_MULTI_TOUCH,
                             UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.MAX_CONTACTS),
+                            UibcPackets.touchDescriptor(1920, 1080, UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)),
                         ),
                     )
                 }
@@ -319,26 +530,48 @@ class UibcTouchChannelTest {
                     UibcPackets.hidcPacket(
                         UibcPackets.HID_MULTI_TOUCH,
                         UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                        UibcPackets.touchDescriptor(1920, 1080, UibcPackets.MAX_CONTACTS),
+                        UibcPackets.touchDescriptor(1920, 1080, UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)),
                     ),
                 )
                 assertTouchReport(input, emptyList())
-                // Mid-session type change to single-touch.
+                // Mid-session type change to independent type-2 collections.
                 UibcTouchChannel.setHidType(UibcPackets.HID_SINGLE_TOUCH)
-                // Descriptor re-sent with single-touch max contacts.
+                // Descriptor re-sent with every type-2 collection initialized.
                 assertThat(readPacket(input)).isEqualTo(
                     UibcPackets.hidcPacket(
                         UibcPackets.HID_SINGLE_TOUCH,
                         UibcPackets.USAGE_REPORT_DESCRIPTOR,
-                        UibcPackets.touchDescriptor(1920, 1080, 1),
+                        UibcPackets.digitizerDescriptor(1920, 1080, UibcPackets.HID_SINGLE_TOUCH),
                     ),
                 )
-                assertTouchReport(input, emptyList(), maxContacts = 1, hidType = UibcPackets.HID_SINGLE_TOUCH)
+                assertTypeTwoTouchReports(input, emptyList())
+                assertTypeTwoPenReport(input, UibcPenContact(0, 0, tip = false, inRange = false))
                 // Redundant setHidType is a no-op.
                 UibcTouchChannel.setHidType(UibcPackets.HID_SINGLE_TOUCH)
                 assertNoDataWithinTimeout(socket)
             }
         }
+    }
+
+    /** Checks each independent touch report using the transmitted frame timestamp. */
+    private fun assertTypeTwoTouchReports(input: DataInputStream, contacts: List<UibcContact>) {
+        repeat(UibcPackets.MAX_CONTACTS) { slot ->
+            val packet = readPacket(input)
+            val scanTime = (packet[16].toInt() and 0xFF) or ((packet[17].toInt() and 0xFF) shl 8)
+            val expected = UibcPackets.touchReport(contacts.filter { it.id == slot }.map { it.copy(id = 0) }, 1, scanTime)
+                .apply { this[0] = (slot + 1).toByte() }
+            assertThat(packet).isEqualTo(UibcPackets.hidcPacket(UibcPackets.HID_SINGLE_TOUCH, UibcPackets.USAGE_INPUT_REPORT, expected))
+        }
+    }
+
+    /** Checks pen framing and the report ID reserved after all finger IDs. */
+    private fun assertTypeTwoPenReport(input: DataInputStream, pen: UibcPenContact) {
+        assertThat(readPacket(input)).isEqualTo(
+            UibcPackets.hidcPacket(
+                UibcPackets.HID_SINGLE_TOUCH, UibcPackets.USAGE_INPUT_REPORT,
+                UibcPackets.penReport(pen, UibcPackets.HID_SINGLE_TOUCH),
+            ),
+        )
     }
 
     private fun assertNoDataWithinTimeout(socket: Socket) {
@@ -355,7 +588,7 @@ class UibcTouchChannelTest {
     private fun assertTouchReport(
         input: DataInputStream,
         contacts: List<UibcContact>,
-        maxContacts: Int = UibcPackets.MAX_CONTACTS,
+        maxContacts: Int = UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH),
         hidType: Int = UibcPackets.HID_MULTI_TOUCH,
     ) {
         val packet = readPacket(input)

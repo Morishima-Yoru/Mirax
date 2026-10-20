@@ -74,9 +74,12 @@ object UibcTouchChannel {
             if (current.enabled == enabled) {
                 return
             }
+            epoch.incrementAndGet()
+            if (!enabled) {
+                liftActive(current)
+            }
             current.enabled = enabled
             Log.i(TAG, "setEnabled=$enabled hidType=${current.hidType}")
-            epoch.incrementAndGet()
             if (enabled) {
                 current.pending = null
                 current.pendingPen = null
@@ -128,6 +131,24 @@ object UibcTouchChannel {
         }
     }
 
+    /**
+     * Selects how the contact count maximum is declared and re-sends the
+     * descriptor, so an experiment can compare the two forms.
+     */
+    fun setContactMaximumMode(mode: UibcPackets.ContactMaximumMode) {
+        val current = state.get()
+        synchronized(current) {
+            if (current.maximumMode == mode) {
+                return
+            }
+            current.maximumMode = mode
+            if (current.descriptorSent) {
+                current.descriptorSent = false
+                sendDescriptor(current)
+            }
+        }
+    }
+
     fun submit(contacts: List<UibcContact>) {
         val current = state.get()
         synchronized(current) {
@@ -152,7 +173,15 @@ object UibcTouchChannel {
             if (!current.enabled) {
                 return
             }
-            if (current.lastPen == pen) {
+            if (current.hidType != UibcPackets.HID_MULTI_TOUCH && current.hidType != UibcPackets.HID_SINGLE_TOUCH) {
+                if (!current.penUnsupportedLogged) {
+                    Log.w(TAG, "pen ignored: unsupported HID type ${current.hidType}")
+                    current.penUnsupportedLogged = true
+                }
+                return
+            }
+            // Preserve in-range sample cadence even when pixel quantization leaves the state unchanged.
+            if (current.lastPen == pen && !pen.inRange && !pen.tip) {
                 return
             }
             current.lastPen = pen
@@ -170,26 +199,35 @@ object UibcTouchChannel {
             if (!current.enabled) {
                 return
             }
-            val lifted = current.last.map { it.copy(tip = false) }
-            if (lifted.isNotEmpty()) {
-                current.last = lifted
-                if (current.socket == null || !current.descriptorSent) {
-                    current.pending = lifted
-                } else {
-                    writeContacts(current, lifted)
-                    current.last = emptyList()
-                }
+            liftActive(current)
+        }
+    }
+
+    /**
+     * Enqueues releases after the writer epoch advances so disabling input cannot drop them.
+     *
+     * @param current channel owning the currently active contacts and pen
+     */
+    private fun liftActive(current: Channel) {
+        val lifted = current.last.map { it.copy(tip = false) }
+        if (lifted.isNotEmpty()) {
+            current.last = lifted
+            if (current.socket == null || !current.descriptorSent) {
+                current.pending = lifted
+            } else {
+                writeContacts(current, lifted)
+                current.last = emptyList()
             }
-            val pen = current.lastPen
-            if (pen != null && (pen.tip || pen.inRange)) {
-                val liftedPen = pen.copy(tip = false, inRange = false, pressure = 0)
-                current.lastPen = liftedPen
-                if (current.socket == null || !current.descriptorSent) {
-                    current.pendingPen = liftedPen
-                } else {
-                    writePen(current, liftedPen)
-                    current.lastPen = null
-                }
+        }
+        val pen = current.lastPen
+        if (pen != null && (pen.tip || pen.inRange)) {
+            val liftedPen = pen.copy(tip = false, inRange = false, pressure = 0)
+            current.lastPen = liftedPen
+            if (current.socket == null || !current.descriptorSent) {
+                current.pendingPen = liftedPen
+            } else {
+                writePen(current, liftedPen)
+                current.lastPen = null
             }
         }
     }
@@ -230,10 +268,9 @@ object UibcTouchChannel {
         if (current.descriptorSent || current.pictureWidth <= 0 || current.pictureHeight <= 0) {
             return
         }
-        val descriptor = UibcPackets.touchDescriptor(
-            current.pictureWidth,
-            current.pictureHeight,
-            UibcPackets.maxContacts(current.hidType),
+        val maxContacts = UibcPackets.maxContacts(current.hidType)
+        val descriptor = UibcPackets.digitizerDescriptor(
+            current.pictureWidth, current.pictureHeight, current.hidType, current.maximumMode,
         )
         if (!write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_REPORT_DESCRIPTOR, descriptor)) {
                 current.descriptorSent = false
@@ -243,23 +280,41 @@ object UibcTouchChannel {
             return
         }
         current.descriptorSent = true
-        Log.i(TAG, "descriptor sent ${descriptor.size}B ${current.pictureWidth}x${current.pictureHeight}")
+        Log.i(TAG, "descriptor sent ${descriptor.size}B ${current.pictureWidth}x${current.pictureHeight} hidType=${current.hidType} contacts=$maxContacts")
+        if (current.hidType == UibcPackets.HID_MULTI_TOUCH &&
+            current.maximumMode == UibcPackets.ContactMaximumMode.INPUT_REPORT
+        ) {
+            // The count maximum is an input item, so the source only learns it
+            // from this report and not from a GetFeature answer.
+            write(
+                socket,
+                UibcPackets.hidcPacket(
+                    current.hidType,
+                    UibcPackets.USAGE_INPUT_REPORT,
+                    UibcPackets.contactMaximumReport(maxContacts),
+                ),
+            )
+        }
         // Windows keeps the first input report as the device's initial report.
         // A descriptor alone does not create the virtual touch device, so the
         // reports that follow are dropped until this clear frame has been seen.
         writeContacts(current, emptyList())
+        if (current.hidType == UibcPackets.HID_SINGLE_TOUCH) {
+            writePen(current, UibcPenContact(0, 0, tip = false, inRange = false))
+        }
     }
 
     private fun writeContacts(current: Channel, contacts: List<UibcContact>) {
         val socket = current.socket ?: return
-        val report = UibcPackets.touchReport(contacts, UibcPackets.maxContacts(current.hidType))
-        Log.i(TAG, "writeContacts: ${contacts.size} contacts (reported=${report[report.size - 1]})")
-        write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_INPUT_REPORT, report))
+        Log.i(TAG, "writeContacts: ${contacts.size} contacts")
+        for (report in UibcPackets.touchReports(contacts, current.hidType)) {
+            write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_INPUT_REPORT, report))
+        }
     }
 
     private fun writePen(current: Channel, pen: UibcPenContact) {
         val socket = current.socket ?: return
-        val report = UibcPackets.penReport(pen)
+        val report = UibcPackets.penReport(pen, current.hidType)
         Log.i(TAG, "writePen: tip=${pen.tip} inRange=${pen.inRange} x=${pen.x} y=${pen.y} p=${pen.pressure} barrel=${pen.barrel} eraser=${pen.eraser}")
         write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_INPUT_REPORT, report))
     }
@@ -301,11 +356,13 @@ object UibcTouchChannel {
         var socket: Socket? = null
         var pictureWidth: Int = 0
         var pictureHeight: Int = 0
+        var maximumMode: UibcPackets.ContactMaximumMode = UibcPackets.ContactMaximumMode.FEATURE_REPORT
         @Volatile var descriptorSent: Boolean = false
         var pending: List<UibcContact>? = null
         var pendingPen: UibcPenContact? = null
         var last: List<UibcContact> = emptyList()
         var lastPen: UibcPenContact? = null
+        var penUnsupportedLogged: Boolean = false
         var closed: Boolean = false
     }
 }

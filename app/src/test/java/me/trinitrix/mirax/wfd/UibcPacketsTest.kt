@@ -6,6 +6,114 @@ import org.junit.Test
 
 class UibcPacketsTest {
     @Test
+    fun touchDescriptor_inputMaximum_declaresCountMaximumAsInputWithoutFeature() {
+        val contacts = 2
+        val descriptor = UibcPackets.touchDescriptor(
+            1920,
+            1080,
+            contacts,
+            maximumMode = UibcPackets.ContactMaximumMode.INPUT_REPORT,
+        )
+        assertThat(indexOf(
+            descriptor,
+            byteArrayOf(
+                0x85.toByte(), 0x03, 0x09, 0x55, 0x15, 0x00, 0x25, contacts.toByte(),
+                0x75, 0x08, 0x95.toByte(), 0x01, 0x81.toByte(), 0x02,
+            ),
+        )).isGreaterThan(0)
+        assertThat(reportBits(descriptor, reportId = 3, feature = false)).isEqualTo(8)
+        assertThat(reportBits(descriptor, reportId = 3, feature = true)).isEqualTo(0)
+    }
+
+    @Test
+    fun contactMaximumReport_carriesTheMaximumContactCount() {
+        assertThat(UibcPackets.contactMaximumReport(2)).isEqualTo(byteArrayOf(0x03, 0x02))
+    }
+
+    @Test
+    fun hidTypeContactLimit_coversAllCallerSlotsOnTypeTwo() {
+        assertThat(UibcPackets.maxContacts(UibcPackets.HID_SINGLE_TOUCH)).isEqualTo(UibcPackets.MAX_CONTACTS)
+        assertThat(UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH)).isEqualTo(2)
+    }
+
+    @Test
+    fun typeTwoDescriptor_preservesEverySingleTouchCollectionAndSeparatesPen() {
+        val descriptor = UibcPackets.digitizerDescriptor(1920, 1080, UibcPackets.HID_SINGLE_TOUCH)
+        val single = UibcPackets.touchDescriptor(1920, 1080, 1)
+        assertThat(single.size).isEqualTo(135)
+        assertThat(descriptor.size).isEqualTo(1452)
+        repeat(UibcPackets.MAX_CONTACTS) { slot ->
+            val reportId = slot + 1
+            val expected = single.copyOf().apply { this[7] = reportId.toByte() }
+            assertThat(descriptor.copyOfRange(slot * single.size, (slot + 1) * single.size)).isEqualTo(expected)
+            assertThat(reportBits(descriptor, reportId, feature = false)).isEqualTo(72)
+            assertThat(reportBits(descriptor, reportId, feature = true)).isEqualTo(0)
+        }
+        val penId = UibcPackets.MAX_CONTACTS + 1
+        val expectedPen = UibcPackets.penDescriptor(1920, 1080).apply { this[7] = penId.toByte() }
+        assertThat(descriptor.copyOfRange(single.size * UibcPackets.MAX_CONTACTS, descriptor.size)).isEqualTo(expectedPen)
+        assertThat(reportBits(descriptor, penId, feature = false)).isEqualTo(56)
+        assertThat(reportBits(descriptor, penId, feature = true)).isEqualTo(0)
+        assertThat(UibcPackets.digitizerDescriptor(
+            1920, 1080, UibcPackets.HID_SINGLE_TOUCH, UibcPackets.ContactMaximumMode.INPUT_REPORT,
+        )).isEqualTo(descriptor)
+    }
+
+    @Test
+    fun typeTwoReports_preserveHighSlotsTerminalContactsAndOneFrameTimestamp() {
+        val reports = UibcPackets.touchReports(
+            listOf(UibcContact(9, 300, 400, true), UibcContact(0, 100, 200, false)),
+            UibcPackets.HID_SINGLE_TOUCH,
+            scanTimeUs100 = 0x1234,
+        )
+        assertThat(reports).hasSize(UibcPackets.MAX_CONTACTS)
+        repeat(UibcPackets.MAX_CONTACTS) { slot ->
+            assertThat(reports[slot][0].toInt()).isEqualTo(slot + 1)
+            assertThat(reports[slot][2].toInt()).isEqualTo(0)
+            assertThat(reports[slot][7].toInt()).isEqualTo(0x34)
+            assertThat(reports[slot][8].toInt()).isEqualTo(0x12)
+        }
+        assertThat(reports[0][1].toInt()).isEqualTo(0x06)
+        assertThat(reports[0].last().toInt()).isEqualTo(1)
+        assertThat(reports[9][1].toInt()).isEqualTo(0x07)
+        assertThat(reports[9].last().toInt()).isEqualTo(1)
+        for (slot in 1..8) {
+            assertThat(reports[slot][1].toInt()).isEqualTo(0)
+            assertThat(reports[slot].last().toInt()).isEqualTo(0)
+        }
+        val pen = UibcPenContact(30, 40, true, true, pressure = 100)
+        val expectedPen = UibcPackets.penReport(pen).apply { this[0] = 11 }
+        assertThat(UibcPackets.penReport(pen, UibcPackets.HID_SINGLE_TOUCH)).isEqualTo(expectedPen)
+    }
+
+    @Test
+    fun typeThreeDiagnostic_keepsItsPackedDescriptorAndReports() {
+        assertThat(UibcPackets.digitizerDescriptor(1920, 1080, UibcPackets.HID_MULTI_TOUCH))
+            .isEqualTo(UibcPackets.touchDescriptor(1920, 1080, 2))
+        val contacts = listOf(UibcContact(1, 100, 200, true))
+        val reports = UibcPackets.touchReports(contacts, UibcPackets.HID_MULTI_TOUCH, scanTimeUs100 = 5)
+        assertThat(reports).hasSize(1)
+        assertThat(reports.single()).isEqualTo(UibcPackets.touchReport(contacts, 2, scanTimeUs100 = 5))
+    }
+
+    @Test
+    fun touchReport_twoFingersDown_emitsDistinctIdsAndContactCount() {
+        val report = UibcPackets.touchReport(
+            listOf(
+                UibcContact(id = 0, x = 100, y = 200, tip = true),
+                UibcContact(id = 1, x = 300, y = 400, tip = true),
+            ),
+            maxContacts = UibcPackets.maxContacts(UibcPackets.HID_MULTI_TOUCH),
+        )
+        assertThat(report.size).isEqualTo(1 + 2 * 6 + 3)
+        assertThat(report[1].toInt()).isEqualTo(0x07)
+        assertThat(report[2].toInt()).isEqualTo(0)
+        assertThat(report[7].toInt()).isEqualTo(0x07)
+        assertThat(report[8].toInt()).isEqualTo(1)
+        assertThat(report.last().toInt()).isEqualTo(2)
+    }
+
+    @Test
     fun hidcPacket_isVersionZeroHidc_withLengthOfTheWholeMessage() {
         val packet = UibcPackets.hidcPacket(
             hidType = UibcPackets.HID_MULTI_TOUCH,
@@ -120,24 +228,60 @@ class UibcPacketsTest {
         assertThat(indexOf(descriptor, byteArrayOf(0xC0.toByte(), 0x05, 0x0D, 0x09, 0x22))).isAtLeast(0)
         assertThat(indexOf(descriptor, byteArrayOf(0xC0.toByte(), 0x05, 0x0D, 0x55.toByte(), 0x0C))).isAtLeast(0)
         assertThat(indexOf(descriptor, byteArrayOf(0x09, 0x54, 0x15, 0x00))).isAtLeast(0)
-        assertThat(indexOf(descriptor, byteArrayOf(0x09, 0x02, 0xA1.toByte(), 0x01))).isEqualTo(-1)
+        assertThat(indexOf(descriptor, byteArrayOf(0x05, 0x0D, 0x09, 0x02, 0xA1.toByte(), 0x01))).isGreaterThan(0)
     }
 
     @Test
-    fun touchDescriptor_inputReportMatchesExpectedBits_andHasNoFeatureReport() {
+    fun touchDescriptor_multiContactHasCountMaximumFeatureAndMatchingInputBits() {
         val contacts = 10
         val descriptor = UibcPackets.touchDescriptor(1812, 2176, contacts)
-        assertThat(indexOf(descriptor, byteArrayOf(0x09, 0x02, 0xA1.toByte(), 0x01))).isEqualTo(-1)
+        assertThat(indexOf(descriptor, byteArrayOf(0x05, 0x0D, 0x09, 0x02, 0xA1.toByte(), 0x01))).isGreaterThan(0)
         val touchBits = reportBits(descriptor, reportId = 1, feature = false)
         assertThat(touchBits % 8).isEqualTo(0)
-        // Regression: Report ID 3 must have no feature bits (Contact Count Maximum removed).
-        assertThat(reportBits(descriptor, reportId = 3, feature = true)).isEqualTo(0)
+        assertThat(indexOf(
+            descriptor,
+            byteArrayOf(
+                0x85.toByte(), 0x03, 0x09, 0x55, 0x15, 0x00, 0x25, contacts.toByte(),
+                0x75, 0x08, 0x95.toByte(), 0x01, 0xB1.toByte(), 0x02, 0xC0.toByte(),
+            ),
+        )).isGreaterThan(0)
+        assertThat(reportBits(descriptor, reportId = 3, feature = true)).isEqualTo(8)
         val report = UibcPackets.touchReport(emptyList(), contacts, scanTimeUs100 = 0)
         assertThat(report.size).isEqualTo(1 + touchBits / 8)
     }
 
     @Test
-    fun touchDescriptor_allFingerCoordinatesHaveEdidPhysicalDimensionsInMillimeters() {
+    fun touchDescriptor_multiContactPenReportMatchesSecondTopLevelCollection() {
+        val descriptor = UibcPackets.touchDescriptor(1920, 1080, maxContacts = 2)
+        assertThat(indexOf(descriptor, byteArrayOf(
+            0x05, 0x0D, 0x09, 0x02, 0xA1.toByte(), 0x01,
+            0x85.toByte(), 0x02, 0x09, 0x20, 0xA1.toByte(), 0x00,
+        ))).isGreaterThan(0)
+        assertThat(reportBits(descriptor, reportId = 2, feature = false)).isEqualTo(
+            (UibcPackets.penReport(UibcPenContact(10, 20, tip = true, inRange = true)).size - 1) * 8,
+        )
+        assertThat(descriptor.takeLast(2)).containsExactly(0xC0.toByte(), 0xC0.toByte()).inOrder()
+    }
+
+    @Test
+    fun penDescriptor_hasOnlyPenTopLevelCollectionAndMatchesPenReport() {
+        val descriptor = UibcPackets.penDescriptor(1920, 1080)
+        assertThat(descriptor.take(11)).containsExactly(
+            0x05.toByte(), 0x0D.toByte(), 0x09.toByte(), 0x02.toByte(),
+            0xA1.toByte(), 0x01.toByte(), 0x85.toByte(), 0x02.toByte(),
+            0x09.toByte(), 0x20.toByte(), 0xA1.toByte(),
+        ).inOrder()
+        assertThat(indexOf(descriptor, byteArrayOf(
+            0x05, 0x0D, 0x09, 0x04, 0xA1.toByte(), 0x01,
+        ))).isEqualTo(-1)
+        assertThat(reportBits(descriptor, reportId = 2, feature = false)).isEqualTo(
+            (UibcPackets.penReport(UibcPenContact(10, 20, tip = true, inRange = true)).size - 1) * 8,
+        )
+        assertThat(descriptor.takeLast(2)).containsExactly(0xC0.toByte(), 0xC0.toByte()).inOrder()
+    }
+
+    @Test
+    fun touchDescriptor_allTouchAndPenCoordinatesHaveEdidPhysicalDimensionsInMillimeters() {
         val descriptor = UibcPackets.touchDescriptor(1812, 2176, maxContacts = 10)
         var index = 0
         var page = 0
@@ -170,7 +314,7 @@ class UibcPacketsTest {
                 }
             }
         }
-        assertThat(coordinates).isEqualTo(20)
+        assertThat(coordinates).isEqualTo(22)
     }
 
     @Test
