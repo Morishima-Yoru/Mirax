@@ -21,6 +21,17 @@ class WfdProtocolTest {
     )
 
     @Test
+    fun m3OffersOnly48kStereoLpcmThatTheSinkCanPlay() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax"))
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\n" +
+                "CSeq: 2\r\nContent-Type: text/parameters\r\n\r\nwfd_audio_codecs\r\n",
+        ).single()
+
+        assertThat(response).contains("wfd_audio_codecs: LPCM 00000002 00\r\n")
+    }
+
+    @Test
     fun standardModesAreBitSet_notOrderedList_andCustomIsLiteral() {
         val cea = WfdVideoFormatCodec.ceaMask(
             setOf(
@@ -273,6 +284,70 @@ class WfdProtocolTest {
         assertThat(demux.poll()).isNull()
     }
 
+    @Test
+    fun rtpDeliversLpcmAlongsideVideo() {
+        val wireFrame = byteArrayOf(0x12, 0x34, 0xFE.toByte(), 0xDC.toByte())
+        val pcm = ByteArray(1920) { i -> wireFrame[i % wireFrame.size] }
+        val audioPes = lpcmPes(pcm, stuffing = true)
+        val ts = java.io.ByteArrayOutputStream().apply {
+            write(pat())
+            write(pmt(withLpcm = true))
+            for (start in audioPes.indices step 184) {
+                write(MpegTsDepacketizer.tsPacket(
+                    0x102, start == 0, start / 184,
+                    audioPes.copyOfRange(start, minOf(start + 184, audioPes.size)),
+                ))
+                if (start == 0) {
+                    write(MpegTsDepacketizer.tsPacket(0x101, true, 0, pesPacket(byteArrayOf(0x11, 0x22))))
+                }
+            }
+        }.toByteArray()
+        val demux = MpegTsDepacketizer()
+        val rtp = MpegTsDepacketizer.rtpWrap(ts)
+
+        demux.pushRtp(rtp, rtp.size)
+
+        val expectedFrame = byteArrayOf(0x34, 0x12, 0xDC.toByte(), 0xFE.toByte())
+        val expectedPcm = ByteArray(1920) { i -> expectedFrame[i % expectedFrame.size] }
+        assertThat(Arrays.equals(expectedPcm, demux.pollAudio())).isTrue()
+        assertThat(Arrays.equals(byteArrayOf(0x11, 0x22), demux.poll())).isTrue()
+        assertThat(demux.pollAudio()).isNull()
+    }
+
+    @Test
+    fun missingAudioPacketsDoNotTurnFragmentsFromDifferentPesIntoSound() {
+        val demux = MpegTsDepacketizer()
+        fun deliver(ts: ByteArray) {
+            val rtp = MpegTsDepacketizer.rtpWrap(ts)
+            demux.pushRtp(rtp, rtp.size)
+        }
+
+        deliver(pat() + pmt(withLpcm = true))
+        val firstPes = lpcmPes(ByteArray(1920) { 0x11 })
+        for (start in firstPes.indices step 184) {
+            if (start == 184) continue // One audio TS packet was lost in transit.
+            deliver(MpegTsDepacketizer.tsPacket(
+                0x102, start == 0, start / 184,
+                firstPes.copyOfRange(start, minOf(start + 184, firstPes.size)),
+            ))
+        }
+        // The following PES start was lost too; its continuation must not fill the old PES.
+        deliver(MpegTsDepacketizer.tsPacket(0x102, false, 12, ByteArray(184) { 0x22 }))
+        assertThat(demux.pollAudio()).isNull()
+
+        val recoveredPes = lpcmPes(ByteArray(1920) { 0x33 })
+        for (start in recoveredPes.indices step 184) {
+            deliver(MpegTsDepacketizer.tsPacket(
+                0x102, start == 0, 13 + start / 184,
+                recoveredPes.copyOfRange(start, minOf(start + 184, recoveredPes.size)),
+            ))
+        }
+        deliver(MpegTsDepacketizer.tsPacket(0x101, true, 0, pesPacket(byteArrayOf(0x11))))
+
+        assertThat(Arrays.equals(ByteArray(1920) { 0x33 }, demux.pollAudio())).isTrue()
+        assertThat(Arrays.equals(byteArrayOf(0x11), demux.poll())).isTrue()
+    }
+
     private fun pesPacket(payload: ByteArray): ByteArray {
         val afterLength = 3 + payload.size
         val pes = ByteArray(6 + afterLength)
@@ -285,6 +360,29 @@ class WfdProtocolTest {
         pes[8] = 0x00
         System.arraycopy(payload, 0, pes, 9, payload.size)
         return pes
+    }
+
+    /**
+     * Builds the audio PES shared by video/audio and packet-loss regression fixtures.
+     *
+     * @param pcm big-endian stereo samples carried over WFD.
+     * @param stuffing whether the PES optional header has two stuffing bytes.
+     * @return a private-stream LPCM PES.
+     */
+    private fun lpcmPes(pcm: ByteArray, stuffing: Boolean = false): ByteArray {
+        val payload = byteArrayOf(0xA0.toByte(), 0x06, 0x00, 0x11) + pcm
+        val pes = pesPacket(payload)
+        val result = if (stuffing) {
+            pes.copyOfRange(0, 9) + byteArrayOf(0xFF.toByte(), 0xFF.toByte()) +
+                pes.copyOfRange(9, pes.size)
+        } else {
+            pes
+        }
+        result[3] = 0xBD.toByte()
+        result[4] = ((result.size - 6) shr 8).toByte()
+        result[5] = (result.size - 6).toByte()
+        result[8] = if (stuffing) 2 else 0
+        return result
     }
 
     private fun pat(): ByteArray {
@@ -304,20 +402,23 @@ class WfdProtocolTest {
         return MpegTsDepacketizer.tsPacket(0x000, true, 0, payload)
     }
 
-    private fun pmt(): ByteArray {
+    private fun pmt(withLpcm: Boolean = false): ByteArray {
+        val streams = byteArrayOf(
+            0x1B, 0xE1.toByte(), 0x01, 0xF0.toByte(), 0x00,
+        ) + if (withLpcm) {
+            byteArrayOf(0x83.toByte(), 0xE1.toByte(), 0x02, 0xF0.toByte(), 0x00)
+        } else {
+            byteArrayOf()
+        }
         val section = byteArrayOf(
             0x02,
-            0xB0.toByte(), 0x12,
+            0xB0.toByte(), (0x0D + streams.size).toByte(),
             0x00, 0x01,
             0xC1.toByte(),
             0x00, 0x00,
             0xE1.toByte(), 0x01,
             0xF0.toByte(), 0x00,
-            0x1B,
-            0xE1.toByte(), 0x01,
-            0xF0.toByte(), 0x00,
-            0x00, 0x00, 0x00, 0x00,
-        )
+        ) + streams + byteArrayOf(0x00, 0x00, 0x00, 0x00)
         val payload = ByteArray(1 + section.size)
         payload[0] = 0x00
         System.arraycopy(section, 0, payload, 1, section.size)

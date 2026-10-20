@@ -93,6 +93,7 @@ object SinkConnectionController {
     private var lastLatencyModeSeen: String = ""
     private var serveSelected: VideoMode? = null
     private var rtpSocket: DatagramSocket? = null
+    private val audioPlayer = LpcmAudioPlayer()
     private val rtcpChannel = RtcpChannel()
     private var appContext: Context? = null
 
@@ -538,6 +539,7 @@ object SinkConnectionController {
             }
             P2pNetworkBinder.bind(appContext, socket)
             rtpSocket = socket
+            audioPlayer.start()
             note("RTP listening on $port")
             Thread({
                 val buf = ByteArray(64 * 1024)
@@ -574,10 +576,15 @@ object SinkConnectionController {
                             auSinceGap++
                             decoder.submitAccessUnit(au)
                         }
-                    } catch (_: Exception) {
+                        while (true) {
+                            val pcm = demux.pollAudio() ?: break
+                            audioPlayer.submit(pcm)
+                        }
+                    } catch (err: Exception) {
                         if (socket.isClosed) {
                             break
                         }
+                        noteWarn("RTP receive failed", err)
                     }
                 }
             }, "mirax-rtp").also {
@@ -586,12 +593,14 @@ object SinkConnectionController {
             }
         } catch (err: Exception) {
             noteWarn("RTP bind failed on $port", err)
+            stopRtp()
         }
     }
 
     private fun stopRtp() {
         closeQuietly(rtpSocket)
         rtpSocket = null
+        audioPlayer.stop()
     }
 
     private fun startHardwareCursor() {

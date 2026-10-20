@@ -4,14 +4,20 @@ import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 
-/** Pulls H.264 access units out of Wi-Fi Display RTP (MP2T, payload type 33). */
+/** Pulls H.264 access units and LPCM audio out of Wi-Fi Display RTP (MP2T, payload type 33). */
 public final class MpegTsDepacketizer {
     private int videoPid = -1;
+    private int audioPid = -1;
     private int pmtPid = -1;
     private final ByteArrayOutputStream pes = new ByteArrayOutputStream();
     private int pesNeed = -1;
     private boolean pesOpen = false;
     private final ArrayDeque<byte[]> units = new ArrayDeque<byte[]>();
+    private final ByteArrayOutputStream audioPes = new ByteArrayOutputStream();
+    private int audioPesNeed = -1;
+    private boolean audioPesOpen = false;
+    private int audioContinuity = -1;
+    private final ArrayDeque<byte[]> audioUnits = new ArrayDeque<byte[]>();
 
     public void pushRtp(byte[] packet, int length) {
         if (packet == null || length < 12) {
@@ -51,6 +57,11 @@ public final class MpegTsDepacketizer {
         return units.poll();
     }
 
+    /** @return 48 kHz stereo signed PCM in Android's little-endian byte order, or null. */
+    public byte[] pollAudio() {
+        return audioUnits.poll();
+    }
+
     private void pushTs(byte[] packet, int offset) {
         if ((packet[offset] & 0xFF) != 0x47) {
             return;
@@ -76,6 +87,19 @@ public final class MpegTsDepacketizer {
         }
         if (pid == pmtPid && pusi) {
             parsePsi(packet, payload, packetEnd, false);
+            return;
+        }
+        if (pid == audioPid && audioPid >= 0) {
+            int continuity = packet[offset + 3] & 0x0F;
+            if ((packet[offset + 1] & 0x80) != 0 || (audioContinuity >= 0
+                    && continuity != ((audioContinuity + 1) & 0x0F))) {
+                audioPesOpen = false;
+                audioPes.reset();
+            }
+            audioContinuity = continuity;
+            if ((packet[offset + 1] & 0x80) == 0 && (pusi || audioPesOpen)) {
+                pushAudioTs(packet, payload, packetEnd, pusi);
+            }
             return;
         }
         if (pid != videoPid || videoPid < 0) {
@@ -148,6 +172,58 @@ public final class MpegTsDepacketizer {
         }
     }
 
+    /**
+     * Reassembles one LPCM PES on the advertised audio PID.
+     *
+     * @param packet RTP bytes containing the TS packet
+     * @param payload first byte after the TS header/adaptation field
+     * @param packetEnd exclusive end of the TS packet
+     * @param pusi whether this TS packet starts a new PES
+     */
+    private void pushAudioTs(byte[] packet, int payload, int packetEnd, boolean pusi) {
+        if (pusi) {
+            audioPesOpen = false;
+            audioPes.reset();
+            if (payload + 9 > packetEnd || (packet[payload] & 0xFF) != 0
+                    || (packet[payload + 1] & 0xFF) != 0
+                    || (packet[payload + 2] & 0xFF) != 1
+                    || (packet[payload + 3] & 0xFF) != 0xBD) {
+                return;
+            }
+            int pesLen = ((packet[payload + 4] & 0xFF) << 8) | (packet[payload + 5] & 0xFF);
+            int headerLen = packet[payload + 8] & 0xFF;
+            int data = payload + 9 + headerLen;
+            audioPesNeed = pesLen - 3 - headerLen;
+            if (pesLen == 0 || audioPesNeed <= 0 || data > packetEnd) {
+                return;
+            }
+            audioPesOpen = true;
+            payload = data;
+        }
+        if (audioPesOpen) {
+            int take = Math.min(packetEnd - payload, audioPesNeed - audioPes.size());
+            if (take > 0) {
+                audioPes.write(packet, payload, take);
+            }
+            if (audioPes.size() == audioPesNeed) {
+                byte[] frame = audioPes.toByteArray();
+                audioPesOpen = false;
+                audioPes.reset();
+                if (frame.length < 4 || (frame[0] & 0xFF) != 0xA0
+                        || (frame[1] & 0xFF) == 0 || (frame[3] & 0xFF) != 0x11
+                        || frame.length != 4 + (frame[1] & 0xFF) * 320) {
+                    return;
+                }
+                byte[] pcm = new byte[frame.length - 4];
+                for (int i = 4; i < frame.length; i += 2) {
+                    pcm[i - 4] = frame[i + 1];
+                    pcm[i - 3] = frame[i];
+                }
+                audioUnits.add(pcm);
+            }
+        }
+    }
+
     private void parsePsi(byte[] packet, int payload, int packetEnd, boolean pat) {
         if (payload >= packetEnd) {
             return;
@@ -193,7 +269,8 @@ public final class MpegTsDepacketizer {
             int esLen = ((packet[pos + 3] & 0x0F) << 8) | (packet[pos + 4] & 0xFF);
             if (streamType == 0x1B || streamType == 0x24) {
                 videoPid = pid;
-                return;
+            } else if (streamType == 0x83) {
+                audioPid = pid;
             }
             pos += 5 + esLen;
         }

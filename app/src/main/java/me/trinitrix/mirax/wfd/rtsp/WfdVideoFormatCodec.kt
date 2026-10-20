@@ -172,7 +172,7 @@ object WfdVideoFormatCodec {
     fun clientRtpPorts(): String =
         "RTP/AVP/UDP;unicast $RTP_PORT 0 mode=play"
 
-    fun audioCodecs(): String = "LPCM 00000003 00"
+    fun audioCodecs(): String = "LPCM 00000002 00"
 
     /**
      * Highest-pixel progressive-looking mode whose bit is set in a source M4 value.
