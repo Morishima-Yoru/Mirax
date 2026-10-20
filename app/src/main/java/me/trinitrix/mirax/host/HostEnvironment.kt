@@ -1,10 +1,10 @@
 package me.trinitrix.mirax.host
 
 import android.content.Context
-import android.content.res.Resources
 import android.os.Build
 import android.provider.Settings
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.app.LocaleManagerCompat
 import androidx.core.os.LocaleListCompat
 import me.trinitrix.mirax.session.AppLanguage
 import java.util.Locale
@@ -18,12 +18,12 @@ object HostEnvironment {
      * Whether the primary system locale is Traditional Chinese
      * (not the app-overridden configuration).
      */
-    fun isSystemTraditionalChinese(): Boolean {
-        val locales = Resources.getSystem().configuration.locales
+    fun isSystemTraditionalChinese(context: Context): Boolean {
+        val locales = LocaleManagerCompat.getSystemLocales(context)
         if (locales.isEmpty) {
             return false
         }
-        return isTraditionalChinese(locales[0])
+        return locales[0]?.let(::isTraditionalChinese) ?: false
     }
 
     /**

@@ -111,7 +111,7 @@ object SessionHost {
         BroadcastTileService.requestListening(appContext)
         FloatingBallService.sync(appContext, snapshot)
         applyEffects(appContext, snapshot)
-        // StopHelper runs before advertise so Shizuku takes exclusive ownership.
+        // Apply one-shot effects before the owner receives the advertise command.
         val afterEffects = MiraxApp.instance.session.snapshot()
         WfdOwnerBridge.syncOwner(appContext, afterEffects.wfdOwner)
         val advertiseOk = WfdOwnerBridge.sync(appContext, afterEffects.wfdAdvertise)
@@ -326,10 +326,6 @@ object SessionHost {
 
     private fun applyEffects(context: Context, snapshot: SessionSnapshot) {
         var consumed = false
-        if (SessionEffect.StopHelper in snapshot.effects) {
-            PrivilegeProbe.requestStopHelper()
-            consumed = true
-        }
         if (SessionEffect.ShowShizukuNotOpenToast in snapshot.effects) {
             Toast.makeText(
                 context.applicationContext,

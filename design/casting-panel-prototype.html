@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mirax 投放控制面板｜互動原型</title>
+  <style>
+    :root { font: 14px Roboto, "Noto Sans TC", "Microsoft JhengHei", sans-serif; color: #e8eaed; background: #121418; --surface: #1c1f26; --on-surface: #e8eaed; --muted: #9aa0a6; --hint: #b7bcc3; --accent: #5b9fd4; --on-accent: #081018; --stop: #2a3140; --stroke: #e8eaed1f; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button { font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .stage { min-height: 100dvh; display: grid; place-items: center; overflow: hidden; position: relative; isolation: isolate; padding: 24px 24px 100px; }
+    .stage::before { content: ""; position: absolute; inset: 0; z-index: -2; background: radial-gradient(ellipse at 68% 30%, #273746 0%, transparent 48%), linear-gradient(145deg, #121418, #161920 65%, #1c1f26); }
+    .desktop { width: min(920px, 100%, calc((100dvh - 112px) * 2)); aspect-ratio: 18 / 9; display: flex; flex-direction: column; justify-content: space-between; padding: clamp(20px, 4vw, 44px); background: linear-gradient(125deg, #273746, #1c1f26 52%, #161920); box-shadow: 0 22px 70px #0008; overflow: hidden; }
+    .desktop.portrait { width: min(320px, 100%, calc((100dvh - 112px) / 2)); aspect-ratio: 9 / 18; }
+    .desktop small { color: var(--hint); letter-spacing: .12em; }
+    .desktop strong { font-size: clamp(20px, 3vw, 32px); font-weight: 500; }
+    .open-back { position: absolute; top: 20px; left: 20px; z-index: 2; border: 1px solid var(--stroke); border-radius: 14px; background: var(--surface); color: var(--on-surface); padding: 10px 16px; }
+    .scrim { position: fixed; inset: 0; z-index: 3; background: #121418b2; border: 0; width: 100%; cursor: default; }
+    .panel { position: fixed; z-index: 4; background: var(--surface); color: var(--on-surface); box-shadow: 0 18px 65px #0009; border: 1px solid var(--stroke); max-height: calc(100dvh - 96px); overflow-y: auto; overscroll-behavior: contain; }
+    .panel h1 { margin: 0; font-size: 16px; font-weight: 600; }
+    .panel h2 { margin: 0 0 8px; font-size: 12px; font-weight: 550; color: var(--hint); }
+    .panel p { margin: 0; }
+    .eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+    .status { color: var(--accent); font-size: 13px; }
+    .stats { display: flex; gap: 12px; flex-wrap: wrap; font-variant-numeric: tabular-nums; color: var(--hint); font-size: 12px; }
+    .stats b { color: var(--on-surface); font-size: 14px; font-weight: 520; }
+    .group { display: grid; gap: 10px; }
+    .scales { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .scales button { min-height: 44px; border: 1px solid var(--stroke); border-radius: 14px; background: #ffffff0d; color: var(--on-surface); text-align: left; padding: 10px 13px; }
+    .scales button[aria-pressed="true"] { background: #5b9fd438; border-color: var(--accent); color: #d7ecfa; font-weight: 700; }
+    .row { display: flex; gap: 12px; justify-content: space-between; align-items: center; min-height: 48px; }
+    .row small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
+    .orientation-actions { display: flex; align-items: center; gap: 8px; }
+    .rotate { width: 40px; height: 40px; border: 0; border-radius: 50%; background: #ffffff0d; color: var(--accent); }
+    .toggle { flex: none; width: 52px; height: 32px; padding: 3px; border: 2px solid var(--hint); border-radius: 40px; background: #41454e; }
+    .toggle::before { content: ""; display: block; width: 16px; height: 16px; margin-left: 3px; border-radius: 50%; background: var(--hint); transition: transform .15s ease, width .15s ease; }
+    .toggle[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+    .toggle[aria-checked="true"]::before { width: 24px; height: 24px; margin: -1px 0; background: var(--on-accent); transform: translateX(20px); }
+    .danger { border: 0; background: var(--stop); color: var(--on-surface); border-radius: 14px; padding: 12px 16px; min-height: 48px; }
+    .close { border: 0; background: #ffffff0d; color: var(--on-surface); border-radius: 50%; min-width: 42px; min-height: 42px; }
+    .rule { height: 1px; background: var(--stroke); }
+    .panel-a { left: 50%; bottom: 84px; transform: translateX(-50%); width: min(470px, calc(100vw - 24px)); border-radius: 20px; padding: 22px; display: grid; gap: 18px; }
+    .panel-a .top, .panel-c .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+    .panel-a .actions { display: flex; align-items: center; justify-content: space-between; }
+    .panel-b { top: 12px; right: 12px; bottom: 84px; width: min(360px, calc(100vw - 24px)); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+    .panel-b .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .variant-bar { position: fixed; z-index: 6; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 6px; background: var(--surface); color: var(--on-surface); border: 1px solid var(--stroke); border-radius: 50px; box-shadow: 0 8px 30px #0008; max-width: calc(100vw - 16px); }
+    .variant-bar button { border: 0; border-radius: 50%; width: 38px; height: 38px; background: var(--stop); color: var(--on-surface); }
+    .variant-bar span { font-size: 12px; white-space: nowrap; text-align: center; min-width: 130px; }
+    .panel-b { top: 12px; right: 12px; bottom: 84px; width: min(360px, calc(100vw - 24px)); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+    .panel-b .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .panel-b .stats span { background: #ffffff0d; border-radius: 14px; padding: 12px; }
+    .panel-b .scales { grid-template-columns: 1fr; }
+    .panel-b .bottom { margin-top: auto; display: flex; justify-content: space-between; align-items: center; }
+    .panel-c { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(600px, calc(100vw - 24px)); border-radius: 16px; padding: 20px; display: grid; gap: 14px; }
+    .panel-c .columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 24px; }
+    .panel-c .scales { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .panel-c .summary { display: grid; align-content: start; gap: 12px; padding-right: 22px; border-right: 1px solid var(--stroke); }
+    .panel-c .stats { display: grid; gap: 10px; }
+    .panel-c .bottom { display: flex; justify-content: flex-end; }
+    .projection-portrait .panel-c { width: min(340px, calc(100vw - 24px)); }
+    .projection-portrait .panel-c .columns { grid-template-columns: 1fr; gap: 16px; }
+    .projection-portrait .panel-c .summary { border-right: 0; border-bottom: 1px solid var(--stroke); padding: 0 0 14px; }
+    .confirm { position: fixed; z-index: 7; inset: 0; display: grid; place-items: center; background: #121418b2; padding: 20px; }
+    .confirm section { background: var(--surface); color: var(--on-surface); border: 1px solid var(--stroke); border-radius: 16px; padding: 24px; width: min(340px, 100%); box-shadow: 0 18px 70px #0008; }
+    .confirm button { border: 0; border-radius: 14px; padding: 10px 14px; }
+    .confirm .keep { background: var(--stop); color: var(--on-surface); }
+    .confirm .end { background: var(--accent); color: var(--on-accent); }
+    .confirm h2 { margin: 0 0 10px; }
+    .confirm p { font-size: 14px; line-height: 1.6; }
+    .confirm nav { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+    .panel-b .scales button { min-height: 42px; }
+    .note { position: absolute; top: 20px; right: 20px; font-size: 11px; letter-spacing: .08em; color: var(--hint); }
+    @media (max-width: 560px) { .stage { padding: 80px 16px 100px; } .panel-c .columns { grid-template-columns: 1fr; gap: 16px; } .panel-c .summary { border-right: 0; border-bottom: 1px solid var(--stroke); padding: 0 0 14px; } .panel-c { padding: 18px; } .panel-b { width: min(340px, calc(100vw - 24px)); } }
+    @media (prefers-reduced-motion: reduce) { .toggle::before { transition: none; } }
+    @media (max-height: 520px) { .panel { max-height: calc(100dvh - 78px); } .panel-a { bottom: 72px; } .panel-b { bottom: 72px; } .panel-c { top: 8px; transform: translateX(-50%); } }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <button class="open-back" id="open" type="button">返回鍵 · 開啟控制面板</button>
+    <span class="note">MIRAX · 互動原型 / 非正式功能</span>
+    <div class="desktop" role="img" aria-label="示意投放畫面">
+      <small>WINDOWS DESKTOP</small>
+      <strong>投放畫面示意</strong>
+    </div>
+  </main>
+  <div id="overlay"></div>
+  <nav class="variant-bar" aria-label="原型方案切換">
+    <button id="previous" type="button" aria-label="上一種排版">←</button>
+    <span id="variant-name"></span>
+    <button id="next" type="button" aria-label="下一種排版">→</button>
+  </nav>
+  <div id="dialog"></div>
+  <script>
+    const variants = ['A', 'B', 'C'];
+    const names = { A: 'A · 底部面板', B: 'B · 側邊控制台', C: 'C · 中央資訊台' };
+    const scales = ['等比', '鋪滿', '拉伸', '原寸'];
+    const state = { variant: variants.includes(new URLSearchParams(location.search).get('variant')) ? new URLSearchParams(location.search).get('variant') : 'A', open: true, scale: '等比', locked: false, direction: '橫向', lockedDirection: '', debug: false, confirming: false, connected: true };
+    const overlay = document.getElementById('overlay');
+    const dialog = document.getElementById('dialog');
+    const openButton = document.getElementById('open');
+    function scalesHtml() {
+      return `<section class="group"><h2>畫面縮放</h2><div class="scales" role="group" aria-label="畫面縮放">${scales.map(scale => `<button type="button" data-scale="${scale}" aria-pressed="${state.scale === scale}">${scale}</button>`).join('')}</div></section>`;
+    }
+    function orientationHtml() {
+      return `<div class="row"><div>鎖定轉向<small>${state.locked ? `固定${state.lockedDirection}` : `跟隨裝置 · ${state.direction}`}</small></div><div class="orientation-actions">${state.locked ? `<button type="button" class="rotate" data-action="rotate" aria-label="切換為${state.lockedDirection === '橫向' ? '直向' : '橫向'}" title="切換鎖定方向">↻</button>` : ''}<button type="button" class="toggle" role="switch" data-action="lock" aria-checked="${state.locked}" aria-label="鎖定轉向"></button></div></div>`;
+    }
+    function debugHtml() {
+      return `<div class="row"><span>顯示除錯資訊</span><button type="button" class="toggle" role="switch" data-action="debug" aria-checked="${state.debug}" aria-label="顯示除錯資訊"></button></div>`;
+    }
+    function statsHtml() { return '<div class="stats"><span>解析度<br><b>1920 × 1080</b></span><span>更新率<br><b>60 Hz</b></span></div>'; }
+    function endHtml() { return '<button type="button" class="danger" data-action="end">結束連線</button>'; }
+    function closeHtml() { return '<button type="button" class="close" data-action="close" aria-label="返回投放畫面">✕</button>'; }
+    function panelHtml() {
+      if (state.variant === 'A') return `<section class="panel panel-a" role="dialog" aria-modal="true" aria-label="投放控制面板"><div class="top"><div><span class="eyebrow">投放控制</span><h1>正在投放</h1></div>${closeHtml()}</div>${statsHtml()}<div class="rule"></div>${scalesHtml()}${orientationHtml()}<div class="rule"></div>${debugHtml()}<div class="actions"><span class="status">● 連線中</span>${endHtml()}</div></section>`;
+      if (state.variant === 'B') return `<section class="panel panel-b" role="dialog" aria-modal="true" aria-label="投放控制面板"><div class="row"><div><span class="eyebrow">MIRAX / 控制台</span><h1>正在投放</h1></div>${closeHtml()}</div><span class="status">● 連線中</span>${scalesHtml()}<div class="rule"></div>${orientationHtml()}${debugHtml()}<div class="rule"></div><h2>目前畫面</h2>${statsHtml()}<div class="bottom"><span class="eyebrow">BACK · 返回畫面</span>${endHtml()}</div></section>`;
+      return `<section class="panel panel-c" role="dialog" aria-modal="true" aria-label="投放控制面板"><div class="top"><h1>● 投放中</h1>${closeHtml()}</div><div class="columns"><div class="summary">${statsHtml()}</div><div class="group">${scalesHtml()}${orientationHtml()}${debugHtml()}</div></div><div class="rule"></div><div class="bottom">${endHtml()}</div></section>`;
+    }
+    function render() {
+      document.getElementById('variant-name').textContent = names[state.variant];
+      const portrait = (state.locked ? state.lockedDirection : state.direction) === '直向';
+      document.body.classList.toggle('projection-portrait', portrait);
+      document.querySelector('.desktop').classList.toggle('portrait', portrait);
+      openButton.hidden = state.open || !state.connected;
+      openButton.textContent = state.connected ? '返回鍵 · 開啟控制面板' : '示意連線已結束';
+      overlay.innerHTML = state.open && state.connected ? `<button type="button" class="scrim" data-action="close" aria-label="返回投放畫面"></button>${panelHtml()}` : '';
+      dialog.innerHTML = state.confirming ? '<div class="confirm"><section role="alertdialog" aria-modal="true" aria-labelledby="confirm-title"><h2 id="confirm-title">結束這次連線？</h2><p>投放畫面將停止。這個操作需要再次確認。</p><nav><button type="button" class="keep" data-action="cancel">繼續投放</button><button type="button" class="end" data-action="confirm">結束連線</button></nav></section></div>' : '';
+    }
+    function variant(step) {
+      state.variant = variants[(variants.indexOf(state.variant) + step + variants.length) % variants.length];
+      const url = new URL(location.href);
+      url.searchParams.set('variant', state.variant);
+      history.replaceState(null, '', url);
+      render();
+    }
+    document.getElementById('previous').addEventListener('click', () => variant(-1));
+    document.getElementById('next').addEventListener('click', () => variant(1));
+    openButton.addEventListener('click', () => { state.open = true; render(); overlay.querySelector('.close')?.focus(); });
+    document.addEventListener('click', event => {
+      const target = event.target.closest('[data-action], [data-scale]');
+      if (!target) return;
+      if (target.dataset.scale) state.scale = target.dataset.scale;
+      if (target.dataset.action === 'lock') { state.locked = !state.locked; if (state.locked) state.lockedDirection = state.direction; }
+      if (target.dataset.action === 'rotate' && state.locked) state.lockedDirection = state.lockedDirection === '橫向' ? '直向' : '橫向';
+      if (target.dataset.action === 'debug') state.debug = !state.debug;
+      if (target.dataset.action === 'close') state.open = false;
+      if (target.dataset.action === 'end') state.confirming = true;
+      if (target.dataset.action === 'cancel') state.confirming = false;
+      if (target.dataset.action === 'confirm') { state.confirming = false; state.open = false; state.connected = false; }
+      const selector = target.dataset.scale ? `[data-scale="${target.dataset.scale}"]` : `[data-action="${target.dataset.action}"]`;
+      render();
+      document.querySelector(selector)?.focus();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' || event.key === 'Backspace' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+        event.preventDefault();
+        if (state.confirming) state.confirming = false;
+        else state.open = !state.open && state.connected;
+        render();
+      } else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !event.target.closest('button, input, textarea, select, [contenteditable]')) {
+        variant(event.key === 'ArrowRight' ? 1 : -1);
+      }
+    });
+    render();
+  </script>
+</body>
+</html>

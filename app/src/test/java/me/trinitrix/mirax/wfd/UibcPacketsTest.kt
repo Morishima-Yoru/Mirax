@@ -22,6 +22,23 @@ class UibcPacketsTest {
     }
 
     @Test
+    fun hidcPacket_padsToEvenLength_whenBodyLengthIsOdd() {
+        val payload = ByteArray(64)
+        val packet = UibcPackets.hidcPacket(
+            hidType = UibcPackets.HID_MULTI_TOUCH,
+            usage = UibcPackets.USAGE_INPUT_REPORT,
+            payload = payload,
+        )
+        assertThat(packet.size % 2).isEqualTo(0)
+        assertThat(packet.size).isEqualTo(74)
+        assertThat(packet[2].toInt()).isEqualTo(0)
+        assertThat(packet[3].toInt()).isEqualTo(74)
+        assertThat(packet[7].toInt()).isEqualTo(0)
+        assertThat(packet[8].toInt()).isEqualTo(64)
+        assertThat(packet[73].toInt()).isEqualTo(0)
+    }
+
+    @Test
     fun touchDescriptor_for1080pOneContact_matchesTheDigitizerCollection() {
         val descriptor = UibcPackets.touchDescriptor(1920, 1080, maxContacts = 1)
         assertThat(descriptor).isEqualTo(
@@ -42,7 +59,9 @@ class UibcPacketsTest {
                 0x81.toByte(), 0x02,
                 0x09, 0x32,
                 0x81.toByte(), 0x02,
-                0x95.toByte(), 0x06,
+                0x09, 0x47,
+                0x81.toByte(), 0x02,
+                0x95.toByte(), 0x05,
                 0x81.toByte(), 0x03,
                 0x09, 0x51,
                 0x15, 0x00,
@@ -50,17 +69,24 @@ class UibcPacketsTest {
                 0x75, 0x08,
                 0x95.toByte(), 0x01,
                 0x81.toByte(), 0x02,
+                0xA4.toByte(),
                 0x05, 0x01,
                 0x09, 0x30,
                 0x15, 0x00,
                 0x26, 0x80.toByte(), 0x07,
+                0x35, 0x00,
+                0x46, 0x92.toByte(), 0x00,
+                0x55, 0x0F,
+                0x65, 0x11,
                 0x75, 0x10,
                 0x95.toByte(), 0x01,
                 0x81.toByte(), 0x02,
                 0x09, 0x31,
                 0x15, 0x00,
                 0x26, 0x38, 0x04,
+                0x46, 0x7A, 0x00,
                 0x81.toByte(), 0x02,
+                0xB4.toByte(),
                 0xC0.toByte(),
                 // Scan Time (16-bit LE)
                 0x05, 0x0D,
@@ -72,6 +98,10 @@ class UibcPacketsTest {
                 0x95.toByte(), 0x01,
                 0x09, 0x56,
                 0x81.toByte(), 0x02,
+                0x55, 0x00,
+                0x65, 0x00,
+                0x35, 0x00,
+                0x45, 0x00,
                 // Contact Count
                 0x09, 0x54,
                 0x15, 0x00,
@@ -79,9 +109,6 @@ class UibcPacketsTest {
                 0x75, 0x08,
                 0x95.toByte(), 0x01,
                 0x81.toByte(), 0x02,
-                0x85.toByte(), 0x03,
-                0x09, 0x55,
-                0xB1.toByte(), 0x02,
                 0xC0.toByte(),
             ),
         )
@@ -97,17 +124,67 @@ class UibcPacketsTest {
     }
 
     @Test
-    fun touchDescriptor_contactCountMaximumAndPenUnitsMatchTheInputReport() {
+    fun touchDescriptor_inputReportMatchesExpectedBits_andHasNoFeatureReport() {
         val contacts = 10
         val descriptor = UibcPackets.touchDescriptor(1812, 2176, contacts)
-        assertThat(
-            indexOf(descriptor, byteArrayOf(0x85.toByte(), 0x03, 0x09, 0x55, 0xB1.toByte(), 0x02)),
-        ).isAtLeast(0)
         assertThat(indexOf(descriptor, byteArrayOf(0x09, 0x02, 0xA1.toByte(), 0x01))).isEqualTo(-1)
         val touchBits = reportBits(descriptor, reportId = 1, feature = false)
         assertThat(touchBits % 8).isEqualTo(0)
+        // Regression: Report ID 3 must have no feature bits (Contact Count Maximum removed).
+        assertThat(reportBits(descriptor, reportId = 3, feature = true)).isEqualTo(0)
         val report = UibcPackets.touchReport(emptyList(), contacts, scanTimeUs100 = 0)
         assertThat(report.size).isEqualTo(1 + touchBits / 8)
+    }
+
+    @Test
+    fun touchDescriptor_allFingerCoordinatesHaveEdidPhysicalDimensionsInMillimeters() {
+        val descriptor = UibcPackets.touchDescriptor(1812, 2176, maxContacts = 10)
+        var index = 0
+        var page = 0
+        var usage = 0
+        var physicalMinimum: Int? = null
+        var physicalMaximum: Int? = null
+        var unitExponent: Int? = null
+        var unit: Int? = null
+        var coordinates = 0
+        while (index < descriptor.size) {
+            val prefix = descriptor[index++].toInt() and 0xFF
+            val size = if (prefix and 0x03 == 3) 4 else prefix and 0x03
+            var value = 0
+            for (shift in 0 until size) {
+                value = value or ((descriptor[index++].toInt() and 0xFF) shl (8 * shift))
+            }
+            when (prefix and 0xFC) {
+                0x04 -> page = value
+                0x08 -> usage = value
+                0x34 -> physicalMinimum = value
+                0x44 -> physicalMaximum = value
+                0x54 -> unitExponent = (value and 0x0F).let { if (it >= 8) it - 16 else it }
+                0x64 -> unit = value
+                0x80 -> if (page == 1 && (usage == 0x30 || usage == 0x31)) {
+                    assertThat(physicalMinimum).isEqualTo(0)
+                    assertThat(physicalMaximum).isEqualTo(if (usage == 0x30) 146 else 122)
+                    assertThat(unitExponent).isEqualTo(-1)
+                    assertThat(unit).isEqualTo(0x11)
+                    coordinates++
+                }
+            }
+        }
+        assertThat(coordinates).isEqualTo(20)
+    }
+
+    @Test
+    fun touchReport_packsContactsFirst_andLeavesUnusedEntriesZero() {
+        val report = UibcPackets.touchReport(
+            listOf(UibcContact(id = 0, x = 100, y = 200, tip = true)),
+            maxContacts = 10,
+            scanTimeUs100 = 0x1234,
+        )
+        assertThat(report[2].toInt()).isEqualTo(0)
+        for (slot in 1 until 10) {
+            val offset = 1 + slot * 6
+            assertThat(report.copyOfRange(offset, offset + 6)).isEqualTo(ByteArray(6))
+        }
     }
 
     @Test
@@ -118,7 +195,7 @@ class UibcPacketsTest {
             scanTimeUs100 = 0x1234,
         )
         assertThat(down).isEqualTo(
-            byteArrayOf(0x01, 0x03, 0x00, 0x64, 0x00, 0xC8.toByte(), 0x00, 0x34, 0x12, 0x01),
+            byteArrayOf(0x01, 0x07, 0x00, 0x64, 0x00, 0xC8.toByte(), 0x00, 0x34, 0x12, 0x01),
         )
         val lift = UibcPackets.touchReport(
             listOf(UibcContact(id = 0, x = 100, y = 200, tip = false)),
@@ -126,7 +203,76 @@ class UibcPacketsTest {
             scanTimeUs100 = 0x1234,
         )
         assertThat(lift).isEqualTo(
-            byteArrayOf(0x01, 0x00, 0x00, 0x64, 0x00, 0xC8.toByte(), 0x00, 0x34, 0x12, 0x01),
+            byteArrayOf(0x01, 0x06, 0x00, 0x64, 0x00, 0xC8.toByte(), 0x00, 0x34, 0x12, 0x01),
+        )
+    }
+
+    @Test
+    fun touchReport_mixedDownAndLift_countsAllIncludedContacts() {
+        val report = UibcPackets.touchReport(
+            listOf(
+                UibcContact(id = 0, x = 100, y = 200, tip = true),
+                UibcContact(id = 1, x = 300, y = 400, tip = false),
+            ),
+            maxContacts = 2,
+            scanTimeUs100 = 0x1234,
+        )
+        assertThat(report[report.size - 1].toInt()).isEqualTo(2)
+    }
+
+    @Test
+    fun touchReport_onlyRemainingContactIsPackedIntoTheFirstEntry() {
+        // Regression: id 1 must be packed even though id 0 is absent.
+        val report = UibcPackets.touchReport(
+            listOf(UibcContact(id = 1, x = 300, y = 400, tip = true)),
+            maxContacts = 2,
+            scanTimeUs100 = 0x1234,
+        )
+        assertThat(report).isEqualTo(
+            byteArrayOf(
+                0x01, 0x07, 0x01, 0x2C, 0x01, 0x90.toByte(), 0x01,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x34, 0x12, 0x01,
+            ),
+        )
+    }
+
+    @Test
+    fun touchReport_sparseIdsPackedInOrder_andLiftKeepsItsId() {
+        val report = UibcPackets.touchReport(
+            listOf(
+                UibcContact(id = 1, x = 10, y = 20, tip = true),
+                UibcContact(id = 7, x = 30, y = 40, tip = false),
+            ),
+            maxContacts = 10,
+            scanTimeUs100 = 0x1234,
+        )
+        assertThat(report.copyOfRange(1, 13)).isEqualTo(
+            byteArrayOf(
+                0x07, 0x01, 0x0A, 0x00, 0x14, 0x00,
+                0x06, 0x07, 0x1E, 0x00, 0x28, 0x00,
+            ),
+        )
+        assertThat(report.copyOfRange(13, 61)).isEqualTo(ByteArray(48))
+        assertThat(report[report.size - 1].toInt()).isEqualTo(2)
+    }
+
+    @Test
+    fun touchReport_firstLiftedSecondRemains_keepsIdsStableAcrossEntries() {
+        val report = UibcPackets.touchReport(
+            listOf(
+                UibcContact(id = 0, x = 100, y = 200, tip = false),
+                UibcContact(id = 1, x = 300, y = 400, tip = true),
+            ),
+            maxContacts = 2,
+            scanTimeUs100 = 0x1234,
+        )
+        assertThat(report).isEqualTo(
+            byteArrayOf(
+                0x01, 0x06, 0x00, 0x64, 0x00, 0xC8.toByte(), 0x00,
+                0x07, 0x01, 0x2C, 0x01, 0x90.toByte(), 0x01,
+                0x34, 0x12, 0x02,
+            ),
         )
     }
 

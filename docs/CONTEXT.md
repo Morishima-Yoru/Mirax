@@ -12,6 +12,22 @@ _Avoid_: 面板, 黑邊, 控制項
 疊在畫面上、屬於手機的操作區。在其上按下的接觸歸手機。蓋住畫面上某個接觸的瞬間，該接觸結束。
 _Avoid_: 畫面
 
+**投放控制面板**:
+播放中按返回鍵叫出的暫時控制項，包含目前連線的摘要與投放中可調整的操作；不屬於 Android 狀態列或通知。
+_Avoid_: 狀態欄, 底部把手
+
+**連線摘要**:
+投放控制面板上供使用者辨識目前來源與畫面狀態的簡短資訊；串流效能數值屬於除錯疊層，不屬於連線摘要。
+_Avoid_: 除錯資訊, 串流統計
+
+**來源裝置**:
+將 Windows 畫面投放到這台手機的電腦，與接收畫面的手機不同。連線摘要顯示其裝置名稱；名稱取不到時顯示「來源名稱未知」，不以 IP 位址假稱裝置名稱。
+_Avoid_: 接收端, Mirax 裝置, 來源 IP
+
+**鎖定轉向**:
+投放期間固定接收端當下的方向；解除後接收端重新跟隨裝置轉向，非投放期間不影響 App 的系統轉向行為。
+_Avoid_: 鎖定來源畫面, 鎖定 Windows 方向
+
 **一般觸控**:
 在可觸控的畫面裡按下、歸 Windows 的接觸。面板報上來的都算，含指尖、指節與手掌，不另做手掌排除；每一個只有按下、移動、放開，可同時多個且不設上限，捏合與捲動不是另外的輸入。手機的返回滑動、狀態列與多工不取走畫面上的這些接觸。
 _Avoid_: 基本觸摸, 觸控回傳, 手勢, 手掌排除, S Pen
@@ -23,6 +39,10 @@ _Avoid_: 暫停, 追溯
 **可觸控**:
 觸控通道開着、且使用者允許輸入的狀態。此狀態下，在畫面裡的新按下成為 Windows 的輸入。
 _Avoid_: 只顯示
+
+**觸控開關**:
+使用者是否允許把一般觸控送往 Windows 的持久偏好；投放控制面板中始終顯示，不等同本次連線的 UIBC 通道是否可用。
+_Avoid_: UIBC 通道狀態, 可觸控
 
 **只顯示**:
 沒有觸控通道、使用者未允許輸入、或通道在連線中途關掉。畫面仍在；進入此狀態時尚未結束的一般觸控全部結束，手機也不拿這些接觸操作自己。
@@ -53,3 +73,51 @@ _Avoid_: Scratch, stretch
 **原寸**:
 畫面的一個像素對面板的一個像素，不縮放，左上對齊。畫面大於面板時，右方和下方在面板之外。
 _Avoid_: 1:1, 原始大小, 點對點
+
+## 架構與連線
+
+**視口**:
+面板中實際呈現畫面的有效可見矩形區域，依當前縮放決定邊界。落在視口之外或被控制項覆蓋的面板區域均不屬畫面。
+_Avoid_: 畫布, 顯示層, ViewportContainer
+
+**活動連線**:
+從 Wi-Fi Direct 群組建立（P2P group-up）直到播放結束或中斷期間的暫態實例。其所屬狀態（協商模式、日誌暫存、返回鍵確認）在連線結束時徹底歸零。
+_Avoid_: Session實例, 永久連線
+
+**活動連線階段**:
+活動連線內部的生命週期階段。四種：無、協商中、供給凍結、播放中、已結束。
+_Avoid_: SessionPhase, 階段狀態
+英文代碼術語：`ConnectionPhase { NONE, NEGOTIATING, OFFER_FROZEN, PLAYING, ENDED }`
+
+**廣告階段**:
+WFD 廣告與信標監聽的內部生命週期階段。四種：閒置、廣告中、信標監聽中、被拒絕。
+_Avoid_: AdvertisingState, 廣告狀態
+英文代碼術語：`AdvertisingPhase { IDLE, ADVERTISING, BEACON_LISTENING, DENIED }`
+
+**連線歷程**:
+一次完整連線嘗試的固定快照紀錄，包含來源主機、連線起訖時間、成功與否、協商參數與診斷日誌，最多保留 500 筆，持久化儲存（DataStore），重啟不遺失。進階設定提供一鍵清除。
+_Avoid_: 歷史記錄, LogBuffer
+
+## E2E 測試與驗證
+
+**端到端測試 (E2E Test)**:
+從電腦（Windows 投射端）透過 `click-fold.ps1` 自動化發起 Miracast 投射，在手機端（Mirax 接收端）經 Wi-Fi Direct 連線、RTSP 協商、H.264 解碼串流至 `PictureActivity` 前景顯示，並驗證即時除錯疊層（Debug Overlay）完整呈現的自動化閉環檢驗流程。
+_Avoid_: 單元測試, 局部測試
+
+**UI 階層傾印 (UiAutomator Dump)**:
+透過 `adb shell "uiautomator dump /sdcard/dump.xml"` 取得手機當前畫面節點樹 XML，作為視圖節點（如 `DebugOverlayView`）是否存在與可見的客觀真實依據（Ground Truth）。
+_Avoid_: 純日誌推定, 盲測
+
+**投射自動化腳本 (click-fold.ps1)**:
+位於 `scripts/click-fold.ps1` 的 PowerShell 測試腳本。自動呼叫 Windows 控制中心（Win+K 快速設定），利用 OCR 識別掃描到的裝置名稱正則（`-DeviceMatch`）並點選連線，並留存前後螢幕擷圖。
+_Avoid_: 手動投射, 人工點擊
+
+**除錯疊層 (Debug Overlay)**:
+位於 `PictureActivity` 右上角（邊界約 `[848,24][1256,776]`）的半透明疊層（`DebugOverlayView`）。由 500ms 週期性 Handler 定時觸發 `updateDebugOverlay()`，繪製串流數據（Decoder/Input/Output/Frames/Bitrate）與即時折線圖（FPS, Latency, Bandwidth）。
+_Avoid_: 浮動按鈕, 吐司訊息
+
+**多模態視覺檢驗 (OCR 檢驗)**:
+利用 `click-fold.ps1` 產生的螢幕擷圖與本機 OCR 引擎識別畫面上實際繪製出的文字（如 `DEBUG OVERLAY`, `STREAM INFO`, `1280X720@60`），確認像素層級的正確繪出。
+_Avoid_: 無視覺驗證
+
+

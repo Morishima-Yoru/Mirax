@@ -57,6 +57,11 @@ public class CastClick {
     GetClassName(h, sb, 256);
     return sb.ToString();
   }
+  public static void Esc() {
+    keybd_event(0x1B, 0, 0, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(50);
+    keybd_event(0x1B, 0, 2, UIntPtr.Zero);
+  }
   public static void Chord() {
     // Always route Win+K through the shell tray. Cursor / browsers / IDE
     // windows often swallow the chord when they keep foreground focus.
@@ -122,10 +127,17 @@ public class CastWindows {
   public static List<IntPtr> Hits = new List<IntPtr>();
   delegate bool EnumProc(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, EnumProc cb, IntPtr l);
   [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  public static void EnumChildren(IntPtr parent, List<IntPtr> list) {
+    EnumChildWindows(parent, (c, l) => {
+      if (IsWindowVisible(c)) list.Add(c);
+      return true;
+    }, IntPtr.Zero);
+  }
   static bool IsCast(IntPtr h) {
     var cb = new StringBuilder(256);
     GetClassName(h, cb, 256);
@@ -151,8 +163,9 @@ public class CastWindows {
 function Open-Cast {
     [CastWindows]::Scan()
     if ([CastWindows]::Hits.Count -gt 0) {
-        Write-Host "cast already open"
-        return
+        Write-Host "cast already open, closing to refresh device scan..."
+        [CastClick]::Esc()
+        Start-Sleep -Milliseconds 800
     }
     [CastClick]::Chord()
     for ($i = 0; $i -lt 40; $i++) {
@@ -178,7 +191,7 @@ function Walk-Named($el, $depth, $acc) {
     $r = $el.Current.BoundingRectangle
     if ($name -and $r.Width -gt 8 -and $r.Height -gt 8) {
         $acc.Add([pscustomobject]@{
-            Name = $name; Class = $cls; Depth = $depth
+            Name = $name; Class = $cls; Depth = $depth; Element = $el
             X = [int]$r.X; Y = [int]$r.Y; W = [int]$r.Width; H = [int]$r.Height
         }) | Out-Null
     }
@@ -190,11 +203,18 @@ function Walk-Named($el, $depth, $acc) {
     }
 }
 
-$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
-    $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and
-    $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation``1"
-})[0]
+$asTaskGeneric = $null
+try {
+    $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+        $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and
+        $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation``1"
+    })[0]
+} catch {
+    Write-Host "WinRT Async extensions not available (likely PowerShell 7+). OCR matching skipped."
+}
+
 function Await-WinRT($asyncOp, $resultType) {
+    if (-not $asTaskGeneric) { return $null }
     $method = $asTaskGeneric.MakeGenericMethod($resultType)
     $task = $method.Invoke($null, @($asyncOp))
     $task.Wait(-1) | Out-Null
@@ -202,45 +222,51 @@ function Await-WinRT($asyncOp, $resultType) {
 }
 function Find-FoldInShot($path) {
     $hits = @()
+    if (-not $asTaskGeneric) { return $hits }
     if (-not (Test-Path $path)) { return $hits }
-    $null = [Windows.Storage.StorageFile, Windows.Foundation, ContentType=WindowsRuntime]
-    $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType=WindowsRuntime]
-    $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime]
-    $file = Await-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
-    $stream = Await-WinRT ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
-    $decoder = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
-    $bitmap = Await-WinRT ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-    if (-not $engine) { Write-Host "ocr engine unavailable"; return $hits }
-    $result = Await-WinRT ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-    foreach ($line in $result.Lines) {
-        Write-Host "ocr line: $($line.Text)"
-        if ($line.Text -notmatch $DeviceMatch) { continue }
-        $x1 = [double]::MaxValue
-        $y1 = [double]::MaxValue
-        $x2 = 0.0
-        $y2 = 0.0
-        foreach ($word in $line.Words) {
-            $b = $word.BoundingRect
-            $wx = [double]$b.X
-            $wy = [double]$b.Y
-            $ww = [double]$b.Width
-            $wh = [double]$b.Height
-            if ($wx -lt $x1) { $x1 = $wx }
-            if ($wy -lt $y1) { $y1 = $wy }
-            if (($wx + $ww) -gt $x2) { $x2 = $wx + $ww }
-            if (($wy + $wh) -gt $y2) { $y2 = $wy + $wh }
+    try {
+        $null = [Windows.Storage.StorageFile, Windows.Foundation, ContentType=WindowsRuntime]
+        $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType=WindowsRuntime]
+        $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime]
+        $file = Await-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
+        $stream = Await-WinRT ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+        $decoder = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+        $bitmap = Await-WinRT ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+        $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+        if (-not $engine) { Write-Host "ocr engine unavailable"; return $hits }
+        $result = Await-WinRT ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+        foreach ($line in $result.Lines) {
+            Write-Host "ocr line: $($line.Text)"
+            if ($line.Text -notmatch $DeviceMatch) { continue }
+            $x1 = [double]::MaxValue
+            $y1 = [double]::MaxValue
+            $x2 = 0.0
+            $y2 = 0.0
+            foreach ($word in $line.Words) {
+                $b = $word.BoundingRect
+                $wx = [double]$b.X
+                $wy = [double]$b.Y
+                $ww = [double]$b.Width
+                $wh = [double]$b.Height
+                if ($wx -lt $x1) { $x1 = $wx }
+                if ($wy -lt $y1) { $y1 = $wy }
+                if (($wx + $ww) -gt $x2) { $x2 = $wx + $ww }
+                if (($wy + $wh) -gt $y2) { $y2 = $wy + $wh }
+            }
+            # Prefer mid-list rows (Fold), but still accept Phh/Mirax higher up.
+            $rowTop = [double]$bitmap.PixelHeight * 0.35
+            $rowBottom = [double]$bitmap.PixelHeight * 0.92
+            if ($y1 -lt $rowTop -or $y1 -gt $rowBottom) { continue }
+            $hits += [pscustomobject]@{
+                Text = $line.Text
+                X = [int]$x1
+                Y = [int]$y1
+                W = [int]($x2 - $x1)
+                H = [int]($y2 - $y1)
+            }
         }
-        $rowTop = [double]$bitmap.PixelHeight * 0.62
-        $rowBottom = [double]$bitmap.PixelHeight * 0.80
-        if ($y1 -lt $rowTop -or $y1 -gt $rowBottom) { continue }
-        $hits += [pscustomobject]@{
-            Text = $line.Text
-            X = [int]$x1
-            Y = [int]$y1
-            W = [int]($x2 - $x1)
-            H = [int]($y2 - $y1)
-        }
+    } catch {
+        Write-Host "OCR failed or unsupported in this shell."
     }
     return $hits
 }
@@ -269,41 +295,33 @@ foreach ($h in [CastWindows]::Hits) {
 }
 
 Write-Host "waiting for the device list"
-Start-Sleep -Seconds 6
-[CastWindows]::Scan()
-
 $target = $null
 $shot = Join-Path $PSScriptRoot "after-click.png"
 $shotHwnd = [IntPtr]::Zero
-foreach ($h in [CastWindows]::Hits) {
-    $el = [System.Windows.Automation.AutomationElement]::FromHandle($h)
-    $named = New-Object System.Collections.Generic.List[object]
-    Walk-Named $el 0 $named
-    foreach ($row in $named) {
-        Write-Host ("named d={0} '{1}' [{2}] {3},{4} {5}x{6}" -f $row.Depth, $row.Name, $row.Class, $row.X, $row.Y, $row.W, $row.H)
-        if ($row.Name -match $DeviceMatch) { $target = $row; $shotHwnd = $h }
-    }
-    $saved = Save-Window $h $shot
-    if ($saved) {
-        $shotHwnd = $h
-        Write-Host "saved $shot from $($saved.L),$($saved.T) $($saved.R-$saved.L)x$($saved.B-$saved.T)"
-    }
-    if ($target) { break }
-    $ocrWords = @(Find-FoldInShot $shot)
-    if ($ocrWords.Count -gt 0) {
-        $word = $ocrWords[0]
-        $origin = New-Object CastClick+RECT
-        [void][CastClick]::GetWindowRect($h, [ref]$origin)
-        $target = [pscustomobject]@{
-            Name = $word.Text
-            X = $origin.L + [int]$word.X
-            Y = $origin.T + [int]$word.Y
-            W = [int]$word.W
-            H = [int]$word.H
+
+$deadline = [DateTime]::UtcNow.AddSeconds(20)
+while ([DateTime]::UtcNow -lt $deadline -and -not $target) {
+    Start-Sleep -Seconds 2
+    [CastWindows]::Scan()
+    foreach ($h in [CastWindows]::Hits) {
+        $named = New-Object System.Collections.Generic.List[object]
+        $hwnds = New-Object System.Collections.Generic.List[IntPtr]
+        $hwnds.Add($h)
+        [CastWindows]::EnumChildren($h, $hwnds)
+        foreach ($curH in $hwnds) {
+            $el = [System.Windows.Automation.AutomationElement]::FromHandle($curH)
+            if ($el) { Walk-Named $el 0 $named }
         }
-        $shotHwnd = $h
-        Write-Host "ocr '$($target.Name)' at $($target.X),$($target.Y)"
-        break
+        foreach ($row in $named) {
+            Write-Host ("named d={0} '{1}' [{2}] {3},{4} {5}x{6}" -f $row.Depth, $row.Name, $row.Class, $row.X, $row.Y, $row.W, $row.H)
+            if ($row.Name -match $DeviceMatch) { $target = $row; $shotHwnd = $h; break }
+        }
+        $saved = Save-Window $h $shot
+        if ($saved) {
+            $shotHwnd = $h
+            Write-Host "saved $shot from $($saved.L),$($saved.T) $($saved.R-$saved.L)x$($saved.B-$saved.T)"
+        }
+        if ($target) { break }
     }
 }
 
@@ -316,6 +334,12 @@ $cy = [int]($target.Y + ($target.H / 2))
 Write-Host "click '$($target.Name)' at $cx,$cy"
 $adb = if ($Serial) { @("-s", $Serial) } else { @() }
 & adb @adb shell "echo '--- click ---' > /data/local/tmp/miracast.log" | Out-Null
+if ($target.Element) {
+    try {
+        $inv = $target.Element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern) -as [System.Windows.Automation.InvokePattern]
+        if ($inv) { $inv.Invoke(); Write-Host "Invoked via InvokePattern" }
+    } catch {}
+}
 [CastClick]::Click($cx, $cy)
 Start-Sleep -Seconds 1
 # Refresh the picture after the click so a miss is visible.
@@ -329,3 +353,4 @@ for ($i = 0; $i -lt 18; $i++) {
     $log | Select-String -Pattern "click|group|RTSP|PLAY|source|listen|arm|failed|success|UP |PENDING|DOWN" | Select-Object -Last 8 | ForEach-Object { Write-Host $_ }
     if ($log -match "PLAYING|EnteredPlay|ConnectionEstablished|group down") { break }
 }
+

@@ -1,8 +1,11 @@
 package me.trinitrix.mirax
 
 import android.util.Log
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.SurfaceHolder
@@ -10,27 +13,37 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import kotlin.math.roundToInt
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.graphics.Rect
 import me.trinitrix.mirax.session.PicturePlacement
 import me.trinitrix.mirax.session.PictureTouchMap
-import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.ScreenPhase
+import me.trinitrix.mirax.session.SessionAction
+import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.VideoMode
+import me.trinitrix.mirax.wfd.DebugOverlayView
+import me.trinitrix.mirax.wfd.H264SurfaceDecoder
+import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import me.trinitrix.mirax.wfd.UibcContact
 import me.trinitrix.mirax.wfd.UibcPackets
 import me.trinitrix.mirax.wfd.UibcPenContact
 import me.trinitrix.mirax.wfd.UibcTouchChannel
+import me.trinitrix.mirax.wfd.rtsp.WfdCapabilityTable
 import java.lang.ref.WeakReference
 
 /**
@@ -44,13 +57,16 @@ import java.lang.ref.WeakReference
 class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var stage: FrameLayout
     private lateinit var surfaceView: SurfaceView
+    private lateinit var cursorView: ImageView
     private lateinit var handleRoot: FrameLayout
     private lateinit var handleScrim: View
+    private lateinit var handleScrollView: ScrollView
     private lateinit var handlePanel: LinearLayout
     private var endConnectionDialog: AlertDialog? = null
     private lateinit var handleEndButton: MaterialButton
     private lateinit var handleResolutionValue: TextView
     private lateinit var handleRefreshValue: TextView
+    private lateinit var debugOverlaySwitch: MaterialSwitch
     /** Decoder buffer size for [SurfaceHolder.setFixedSize]; may be padded. */
     private var bufferW: Int = 0
     private var bufferH: Int = 0
@@ -58,6 +74,15 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private var currentFixedH: Int = 0
     /** Pointer id to UIBC contact slot. */
     private val touchSlots = LinkedHashMap<Int, Int>()
+    private var cursorPictureX: Int = 0
+    private var cursorPictureY: Int = 0
+    private var cursorHotspotX: Int = 0
+    private var cursorHotspotY: Int = 0
+    private var cursorBitmapW: Int = 0
+    private var cursorBitmapH: Int = 0
+    private lateinit var debugOverlay: DebugOverlayView
+    private val debugOverlayHandler = Handler(Looper.getMainLooper())
+    private val debugOverlayRunnable = Runnable { updateDebugOverlayPeriodic() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,6 +117,15 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         }
         stage.addView(surfaceView)
+        cursorView = ImageView(this).apply {
+            visibility = View.GONE
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            scaleType = ImageView.ScaleType.FIT_XY
+            layoutParams = FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START)
+        }
+        stage.addView(cursorView)
         stage.setOnClickListener { /* intentionally empty */ }
         stage.setOnLongClickListener { true }
 
@@ -104,6 +138,19 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             ),
         )
         setContentView(stage)
+
+        debugOverlay = DebugOverlayView(this, null).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END,
+            ).apply {
+                rightMargin = MiraxUi.dp(this@PictureActivity, 16)
+                topMargin = MiraxUi.dp(this@PictureActivity, 16)
+            }
+            visibility = View.GONE
+        }
+        stage.addView(debugOverlay)
 
         surfaceView.holder.addCallback(this)
         stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutPicture() }
@@ -119,6 +166,16 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 layoutPicture()
             }
         }
+        if (WfdCapabilityTable.ADVERTISE_HARDWARE_CURSOR) {
+            MicrosoftCursorChannel.onPosition = { x, y ->
+                cursorPictureX = x
+                cursorPictureY = y
+                layoutCursor()
+            }
+            MicrosoftCursorChannel.onBitmap = { bitmap, hotspotX, hotspotY ->
+                applyCursorBitmap(bitmap, hotspotX, hotspotY)
+            }
+        }
 
         installImmersiveBackBridge()
         onBackPressedDispatcher.addCallback(
@@ -132,6 +189,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         hideSystemBars()
         applySession(MiraxApp.instance.session.snapshot())
+        startDebugOverlayUpdates()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -151,6 +209,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         } else {
             applySession(session.snapshot())
         }
+        startDebugOverlayUpdates()
     }
 
     override fun onUserLeaveHint() {
@@ -163,6 +222,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun onStop() {
         super.onStop()
+        stopDebugOverlayUpdates()
         if (isChangingConfigurations || isFinishing) {
             return
         }
@@ -176,10 +236,15 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onDestroy() {
+        stopDebugOverlayUpdates()
         endConnectionDialog?.dismiss()
         endConnectionDialog = null
         if (showing?.get() === this) {
             showing = null
+        }
+        if (WfdCapabilityTable.ADVERTISE_HARDWARE_CURSOR) {
+            MicrosoftCursorChannel.onPosition = null
+            MicrosoftCursorChannel.onBitmap = null
         }
         SinkConnectionController.decoder.attachSurface(null)
         SinkConnectionController.decoder.onFormat = null
@@ -207,6 +272,14 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         renderHandle(snapshot)
         ViewCompat.requestApplyInsets(stage)
         layoutPicture()
+
+        debugOverlay.visibility = if (snapshot.showDebugOverlay) View.VISIBLE else View.GONE
+        if (snapshot.showDebugOverlay) {
+            startDebugOverlayUpdates()
+            updateDebugOverlay(snapshot)
+        } else {
+            stopDebugOverlayUpdates()
+        }
     }
 
     private fun applyProjectionCutoutInsets(view: View, insets: WindowInsetsCompat) {
@@ -237,12 +310,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         }
 
-        handlePanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            isClickable = true
-            setOnClickListener { /* keep taps on the card from dismissing via the scrim */ }
-            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_frame, 16, R.color.mirax_stroke, 1)
-            setPadding(dp(16), dp(18), dp(16), dp(16))
+        handleScrollView = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_surface, 16, R.color.mirax_stroke, 1)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -251,15 +322,26 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 leftMargin = dp(16)
                 rightMargin = dp(16)
                 bottomMargin = dp(16)
+                topMargin = dp(32)
             }
         }
-        ViewCompat.setOnApplyWindowInsetsListener(handlePanel) { view, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(handleScrollView) { view, insets ->
             val nav = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
-            view.setPadding(dp(16), dp(18), dp(16), dp(16) + nav.bottom)
             val params = view.layoutParams as FrameLayout.LayoutParams
             params.bottomMargin = dp(16) + nav.bottom
             view.layoutParams = params
             insets
+        }
+
+        handlePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            setOnClickListener { }
+            setPadding(dp(16), dp(18), dp(16), dp(16))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            )
         }
 
         handleEndButton = MiraxUi.stopActionButton(this, getString(R.string.handle_end_connection)) {
@@ -280,10 +362,31 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         stats.addView(frameLabel(getString(R.string.handle_refresh_label), topPadDp = 14))
         handleRefreshValue = valueText()
         stats.addView(handleRefreshValue)
+
         handlePanel.addView(stats)
 
+        debugOverlaySwitch = MaterialSwitch(this).apply {
+            text = getString(R.string.handle_debug_overlay)
+            isChecked = MiraxApp.instance.session.snapshot().showDebugOverlay
+            textSize = 17f
+            minHeight = dp(56)
+            setTextColor(getColor(R.color.mirax_on_surface))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(12) }
+            setOnCheckedChangeListener { _, isChecked ->
+                val session = MiraxApp.instance.session
+                session.handle(SessionAction.SetShowDebugOverlay(isChecked))
+                val snapshot = SessionHost.commit(this@PictureActivity)
+                applySession(snapshot)
+            }
+        }
+        handlePanel.addView(debugOverlaySwitch)
+
+        handleScrollView.addView(handlePanel)
         handleRoot.addView(handleScrim)
-        handleRoot.addView(handlePanel)
+        handleRoot.addView(handleScrollView)
     }
 
     private fun frameLabel(text: String, topPadDp: Int = 0): TextView {
@@ -343,10 +446,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         } else {
             ""
         }
+        if (::debugOverlaySwitch.isInitialized && debugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
+            debugOverlaySwitch.isChecked = snapshot.showDebugOverlay
+        }
         val expanded = snapshot.bottomHandleExpanded
         handleRoot.visibility = if (expanded) View.VISIBLE else View.GONE
-        if (expanded) {
-            ViewCompat.requestApplyInsets(handlePanel)
+        if (expanded && ::handleScrollView.isInitialized) {
+            ViewCompat.requestApplyInsets(handleScrollView)
         }
     }
 
@@ -392,6 +498,67 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             currentFixedW = fixedW
             currentFixedH = fixedH
             surfaceView.holder.setFixedSize(fixedW, fixedH)
+        }
+        layoutCursor()
+    }
+
+    private fun applyCursorBitmap(bitmap: Bitmap?, hotspotX: Int, hotspotY: Int) {
+        if (bitmap == null) {
+            cursorBitmapW = 0
+            cursorBitmapH = 0
+            cursorView.setImageDrawable(null)
+            cursorView.visibility = View.GONE
+            return
+        }
+        cursorHotspotX = hotspotX
+        cursorHotspotY = hotspotY
+        cursorBitmapW = bitmap.width
+        cursorBitmapH = bitmap.height
+        cursorView.setImageBitmap(bitmap)
+        cursorView.visibility = View.VISIBLE
+        layoutCursor()
+    }
+
+    /**
+     * Place the hardware-cursor overlay in panel space from picture-pixel coords.
+     * Pointer motion arrives on UDP and must not wait for the next H.264 frame.
+     */
+    private fun layoutCursor() {
+        if (!WfdCapabilityTable.ADVERTISE_HARDWARE_CURSOR) {
+            return
+        }
+        if (cursorView.visibility != View.VISIBLE || cursorBitmapW <= 0 || cursorBitmapH <= 0) {
+            return
+        }
+        val mode = MiraxApp.instance.session.snapshot().selectedMode ?: return
+        val pictureW = mode.width
+        val pictureH = mode.height
+        val surfaceW = surfaceView.width
+        val surfaceH = surfaceView.height
+        if (pictureW <= 0 || pictureH <= 0 || surfaceW <= 0 || surfaceH <= 0) {
+            return
+        }
+        val scaleX = surfaceW.toFloat() / pictureW.toFloat()
+        val scaleY = surfaceH.toFloat() / pictureH.toFloat()
+        val width = maxOf(1, (cursorBitmapW * scaleX).roundToInt())
+        val height = maxOf(1, (cursorBitmapH * scaleY).roundToInt())
+        val left = surfaceView.left +
+            (cursorPictureX * scaleX - cursorHotspotX * scaleX).roundToInt()
+        val top = surfaceView.top +
+            (cursorPictureY * scaleY - cursorHotspotY * scaleY).roundToInt()
+        val params = cursorView.layoutParams as? FrameLayout.LayoutParams
+            ?: FrameLayout.LayoutParams(width, height, Gravity.TOP or Gravity.START)
+        if (params.width != width ||
+            params.height != height ||
+            params.leftMargin != left ||
+            params.topMargin != top
+        ) {
+            params.width = width
+            params.height = height
+            params.leftMargin = left
+            params.topMargin = top
+            params.gravity = Gravity.TOP or Gravity.START
+            cursorView.layoutParams = params
         }
     }
 
@@ -446,6 +613,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private fun forwardPictureTouch(event: MotionEvent) {
         val snapshot = MiraxApp.instance.session.snapshot()
         val mode = snapshot.selectedMode
+        Log.d("MiraxTouch", "forwardPictureTouch: action=${event.actionMasked} touchEnabled=${snapshot.touchEnabled} mode=$mode")
         if (!snapshot.touchEnabled || mode == null) {
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL
@@ -638,6 +806,58 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (::stage.isInitialized) {
             ViewCompat.requestApplyInsets(stage)
         }
+    }
+
+    private fun updateDebugOverlay(snapshot: SessionSnapshot) {
+        // Show or hide the overlay view based on the session setting.
+        debugOverlay.visibility = if (snapshot.showDebugOverlay) View.VISIBLE else View.GONE
+
+        val decoder = SinkConnectionController.decoder
+        val outW = if (bufferW > 0) bufferW else decoder.inputWidth
+        val outH = if (bufferH > 0) bufferH else decoder.inputHeight
+        val stats = decoder.getDebugStats(outputWidth = outW, outputHeight = outH)
+        debugOverlay.updateDecoderStats(stats)
+
+        val frameTree = listOf(
+            DebugOverlayView.FrameNode("Decoder", outW, outH, listOf(
+                DebugOverlayView.FrameNode("Input", decoder.inputWidth, decoder.inputHeight),
+                DebugOverlayView.FrameNode("Surface", surfaceView.width, surfaceView.height),
+                DebugOverlayView.FrameNode("Panel", stage.width, stage.height),
+            )),
+        )
+        debugOverlay.updateFrameTree(frameTree)
+        debugOverlay.updateLayout(stage.width, stage.height, snapshot.pictureScale.name)
+
+        // Crop rect from picture placement
+        val picture = snapshot.selectedMode
+        if (picture != null) {
+            val rect = PicturePlacement.place(
+                pictureWidth = picture.width,
+                pictureHeight = picture.height,
+                panelWidth = stage.width - stage.paddingLeft - stage.paddingRight,
+                panelHeight = stage.height - stage.paddingTop - stage.paddingBottom,
+                scale = snapshot.pictureScale,
+            )
+            debugOverlay.updateCrop(rect)
+        }
+    }
+
+    private fun updateDebugOverlayPeriodic() {
+        val snapshot = MiraxApp.instance.session.snapshot()
+        if (snapshot.showDebugOverlay && snapshot.showPicture) {
+            updateDebugOverlay(snapshot)
+            // Schedule next update
+            debugOverlayHandler.postDelayed(debugOverlayRunnable, 500)
+        }
+    }
+
+    private fun startDebugOverlayUpdates() {
+        debugOverlayHandler.removeCallbacks(debugOverlayRunnable)
+        debugOverlayHandler.post(debugOverlayRunnable)
+    }
+
+    private fun stopDebugOverlayUpdates() {
+        debugOverlayHandler.removeCallbacks(debugOverlayRunnable)
     }
 
     companion object {

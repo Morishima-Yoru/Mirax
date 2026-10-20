@@ -1,156 +1,104 @@
 package me.trinitrix.mirax.session
 
+import android.util.Log
+
 /**
- * Mirax product session: the single test seam for screen phase, WFD owner,
- * tile state, widget status, resolved language, effective broadcast name,
- * preferred mode (including visible-picture axes from base `wm size` plus
- * picture rotation), standard-mode checklist, the next advertisement set, the
- * WFD advertise command the privileged owner must apply, connection events
- * through PLAY (selected mode and picture phase), system Back and the picture
- * status panel while connected, overlay-permission reminder,
- * floating-ball visibility when leaving projection for the home screen, and
- * picture scale (how the picture sits on the panel).
- *
- * Activities, the Quick Settings tile, the home-screen widget, and the floating
- * ball only render [snapshot] outputs and forward [SessionAction]s. Privileged
- * work (wm size, WFD advertise) is never performed in the app process; this
- * module only decides who may own WFD, whether wm size may be read, and which
- * name and mode set the owner should receive. RTSP encode/decode stays behind
- * this seam; views never interpret RTSP themselves. Picture placement is the
- * pure [PicturePlacement] function; the session only stores the scale choice.
- *
- * A *stay* is the lifetime of one [MiraxSession] instance (the app process
- * from this open). Shizuku permission is requested at most once per stay.
- *
- * Language, display name, preferred-mode text, standard-mode checks, and the
- * floating-ball switch remain editable while the phase is frozen. Overlay
- * permission is requested only when the user turns the floating ball on. The
- * session does not write the system device name. A group drop before PLAY does
- * not change the next advertisement set and does not latch extra modes.
+ * Mirax product session facade: the single external test seam preserving
+ * [handle] and [snapshot] while delegating domain responsibilities to
+ * focused deep modules:
+ * - [AdvertisingState]: WFD ownership and listen beacon lifecycle.
+ * - [CapsAndProvisioning]: Video mode catalogs, bitrate cap, custom modes, and one-time wm size provisioning.
+ * - [DisplayPreferences]: UI preferences (picture scale, bottom handle, floating ball, debug toggles).
+ * - [ActiveConnectionState]: Ephemeral states of the currently running connection.
+ * - [ConnectionDiagnosticsRepository]: Finished and active connection run logs and facts (in-memory).
+ * - [ConnectionHistory]: Persisted connection history (DataStore, 500 runs).
  */
 class MiraxSession(
     initialSettings: SessionSettings = SessionSettings(),
+    private val connectionHistory: ConnectionHistory,
 ) {
-    private var advertisingEnabled: Boolean = initialSettings.advertisingEnabled
+    private val advertisingState = AdvertisingState(initialSettings.advertisingEnabled)
+    private val caps = CapsAndProvisioning(
+        initialPreferredMode = initialSettings.preferredMode,
+        initialCheckedStandardModes = initialSettings.checkedStandardModes,
+        initialMaxVideoBitrateBps = initialSettings.maxVideoBitrateBps,
+        initialProvisioningConsumed = initialSettings.provisioningConsumed,
+        initialCustomModes = initialSettings.customModes,
+        initialAutoAddWmSizeOnConnect = initialSettings.autoAddWmSizeOnConnect,
+    )
+    private val display = DisplayPreferences(
+        initialBottomHandleEnabled = initialSettings.bottomHandleEnabled,
+        initialFloatingBallEnabled = initialSettings.floatingBallEnabled,
+        initialPictureScale = initialSettings.pictureScale,
+        initialTouchEnabled = initialSettings.touchEnabled,
+        initialShowDebugMessages = initialSettings.showDebugMessages,
+        initialCameraCutoutAffectsLayout = initialSettings.cameraCutoutAffectsLayout,
+        initialBroadcastAutoStopMinutes = initialSettings.broadcastAutoStopMinutes,
+        initialShowDebugOverlay = initialSettings.showDebugOverlay,
+    )
+    private var activeConnection = ActiveConnectionState()
+    private val diagnostics = ConnectionDiagnosticsRepository()
+
     private var languagePreference: LanguagePreference = initialSettings.languagePreference
     private var displayNameOverride: String? = normalizeOverride(initialSettings.displayNameOverride)
-    private var preferredMode: VideoMode? = initialSettings.preferredMode
-    private var checkedStandardModes: Set<VideoMode> =
-        initialSettings.checkedStandardModes.toSet()
-    private var maxVideoBitrateBps: Long =
-        StandardVideoModes.clampMaxBitrateBps(initialSettings.maxVideoBitrateBps)
-    private var provisioningConsumed: Boolean =
-        initialSettings.provisioningConsumed || initialSettings.preferredMode != null
-    private var bottomHandleEnabled: Boolean = initialSettings.bottomHandleEnabled
-    private var floatingBallEnabled: Boolean = initialSettings.floatingBallEnabled
-    private var pictureScale: PictureScale = initialSettings.pictureScale
-    private var customModes: List<VideoMode> = distinctModes(
-        if (initialSettings.customModes.isNotEmpty()) {
-            initialSettings.customModes
-        } else {
-            listOfNotNull(initialSettings.preferredMode)
-        },
-    )
-    private var autoAddWmSizeOnConnect: Boolean = initialSettings.autoAddWmSizeOnConnect
-    private var touchEnabled: Boolean = initialSettings.touchEnabled
-    private var showDebugMessages: Boolean = initialSettings.showDebugMessages
-    private var cameraCutoutAffectsLayout: Boolean = initialSettings.cameraCutoutAffectsLayout
-    private var broadcastAutoStopMinutes: Int = clampAutoStopMinutes(initialSettings.broadcastAutoStopMinutes)
     private var privilege: PrivilegeReport = PrivilegeReport()
     private var wifiEnabled: Boolean = true
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
     private var miraxDisplayId: Int = 0
-    /** Current picture rotation in degrees (0, 90, 180, or 270). */
     private var pictureRotationDegrees: Int = 0
     private var overlayGranted: Boolean = false
     private var overlayCanPrompt: Boolean = true
-    private var connected: Boolean = false
-    private var selectedMode: VideoMode? = null
-    /** Modes frozen for the current connection's RTSP advertisement. */
-    private var connectionAdvertisedModes: Set<VideoMode>? = null
-    /** True after [SessionAction.FreezeConnectionOffer] for this attempt. */
-    private var connectionOfferFrozen: Boolean = false
-    /** Preferred mode for the frozen offer. Not written back to saved settings. */
-    private var connectionPreferredMode: VideoMode? = null
-    /** True from P2P group-up until PLAY or the attempt ends. */
-    private var negotiating: Boolean = false
-    /**
-     * After the first system Back while connected, the next Back ends this
-     * connection. Cleared only by the next Back or when this connection ends.
-     */
-    private var backEndsConnectionPending: Boolean = false
-    private var bottomHandleExpanded: Boolean = false
-    /**
-     * True while connected and the user left projection for the phone home
-     * screen (not Mirax's own dashboard).
-     */
-    private var awayOnHomeScreen: Boolean = false
     private var permissionRequestedThisStay: Boolean = false
     private var pendingPermissionRequest: Boolean = false
     private var pendingEffects: List<SessionEffect> = emptyList()
-    private var provisioningReadRequested: Boolean = false
-    /**
-     * True only after the privileged owner reports listen success for the
-     * current advertise request. Cleared when advertising turns off or arming
-     * fails so the UI cannot claim "Broadcasting" without a live beacon.
-     */
-    private var beaconListening: Boolean = false
-    /** Sticky: last advertise arm failed for privilege / listening reasons. */
-    private var advertiseDeniedByPrivilege: Boolean = false
-    private var openConnectionRun: OpenConnectionRun? = null
-    private val connectionRuns: ArrayDeque<ConnectionRun> = ArrayDeque()
 
-    /**
-     * Feed the latest privilege-path observation from the environment.
-     *
-     * Args:
-     *     report: Current Shizuku and helper availability.
-     */
+    private companion object {
+        private const val TAG = "MiraxSession"
+
+        fun clampAutoStopMinutes(minutes: Int): Int = minutes.coerceIn(1, 180)
+
+        private fun normalizeOverride(value: String?): String? {
+            if (value == null) return null
+            val sanitized = BroadcastNameRules.sanitize(value).trim()
+            return sanitized.ifEmpty { null }
+        }
+    }
+
     fun report(report: PrivilegeReport) {
         val nextOwner = resolveOwner(report)
+        val prevOwner = resolveOwner(privilege)
         privilege = report
         if (nextOwner == WfdOwner.NONE) {
-            connected = false
-            beaconListening = false
-            clearConnectionEphemerals()
-            provisioningReadRequested = false
+            advertisingState.onOwnerNone()
+            activeConnection = ActiveConnectionState()
+            caps.provisioningReadRequested = false
             pendingEffects = pendingEffects.filterNot {
                 it is SessionEffect.ReadPlainWmSizeForProvisioning
             }
         } else {
             maybeRequestProvisioningRead()
+            // If owner changed from NONE to a valid owner and advertising is enabled,
+            // we need to re-apply the advertising state with the new owner
+            if (prevOwner == WfdOwner.NONE && advertisingState.advertisingEnabledState) {
+                advertisingState.setAdvertising(true, nextOwner, wifiEnabled)
+            }
         }
     }
 
-    /**
-     * Feed whether the host system locale is Traditional Chinese.
-     *
-     * Args:
-     *     report: Classification from the activity; tests supply literals.
-     */
     fun report(report: SystemLocaleReport) {
         systemLocale = report
     }
 
-    /**
-     * Feed the phone's current device name. Mirax never writes this value back.
-     *
-     * Args:
-     *     report: Current device name observed by the host.
-     */
     fun report(report: DeviceNameReport) {
         deviceName = report.deviceName
     }
 
-    /**
-     * Feed whether the device Wi-Fi radio is on.
-     */
     fun report(report: WifiReport) {
         val wasEnabled = wifiEnabled
         wifiEnabled = report.enabled
-        if (!report.enabled && advertisingEnabled) {
-            if (connected) {
+        if (!report.enabled && advertisingState.advertisingEnabledState) {
+            if (activeConnection.isConnected) {
                 endConnectionState(emitDrop = true)
             } else if (wasEnabled) {
                 clearConnectionEphemerals()
@@ -158,48 +106,20 @@ class MiraxSession(
         }
     }
 
-    /**
-     * Feed the display id of the window hosting Mirax.
-     *
-     * Args:
-     *     report: Display id from the host; tests supply literals.
-     */
     fun report(report: MiraxDisplayReport) {
         miraxDisplayId = report.displayId
     }
 
-    /**
-     * Feed the current rotation of the picture the user sees.
-     *
-     * Does not rewrite a saved preferred mode. Axis swap applies only on the
-     * next "use this screen" or an unconsumed provisioning write.
-     *
-     * Args:
-     *     report: Rotation in degrees from the host; tests supply literals.
-     */
     fun report(report: PictureRotationReport) {
         pictureRotationDegrees = report.degrees
     }
 
-    /**
-     * Feed overlay ("display over other apps") permission state.
-     *
-     * Args:
-     *     report: Whether overlay is granted and whether the host can still prompt.
-     */
     fun report(report: OverlayPermissionReport) {
         overlayGranted = report.granted
         overlayCanPrompt = report.canPrompt
         maybeEndHomeStayWithoutBall()
     }
 
-    /**
-     * Apply a user or lifecycle action.
-     *
-     * Args:
-     *     action: Open, retry, advertising toggle, language, display name,
-     *     resolution, overlay, floating ball, or connection event.
-     */
     fun handle(action: SessionAction) {
         when (action) {
             SessionAction.OpenApp -> onOpenApp()
@@ -212,20 +132,24 @@ class MiraxSession(
             SessionAction.BeaconFailed -> onBeaconFailed()
             SessionAction.TileTap -> onTileTap()
             SessionAction.AcknowledgeEffects -> {
-                // Keep an outstanding provisioning read until the host applies it.
                 pendingEffects = pendingEffects.filterIsInstance<
                     SessionEffect.ReadPlainWmSizeForProvisioning
                     >()
             }
             SessionAction.BecameDiscoverable -> {
-                freezeConnectionAdvertisedModes()
+                activeConnection.freezeConnectionAdvertisedModes(caps.resolveNextAdvertisementModes())
             }
             SessionAction.PrePlayProgress -> {
-                negotiating = true
-                freezeConnectionAdvertisedModes()
+                activeConnection.onPrePlayProgress(caps.resolveNextAdvertisementModes())
             }
             is SessionAction.SourceSelectedMode -> {
-                onSourceSelectedMode(action.mode)
+                val mode = action.mode
+                // Validate Level 5.1 before accepting; Windows may pick oversized modes.
+                if (!H264Level51.fits(mode)) {
+                    Log.w(TAG, "SourceSelectedMode ${mode.format()} exceeds Level 5.1, rejecting")
+                } else {
+                    activeConnection.onSourceSelectedMode(mode, caps.resolveNextAdvertisementModes())
+                }
             }
             SessionAction.EnteredPlay, SessionAction.ConnectionEstablished -> {
                 enterPlay()
@@ -234,14 +158,19 @@ class MiraxSession(
                 endConnectionState(emitDrop = false)
             }
             is SessionAction.BeginConnectionRun -> {
-                negotiating = true
-                beginConnectionRun(action.remoteHost)
+                activeConnection.onPrePlayProgress(caps.resolveNextAdvertisementModes())
+                diagnostics.beginRun(action.remoteHost, configurationBackup())
+                connectionHistory.start(action.remoteHost, configurationBackup())
             }
-            is SessionAction.AppendConnectionLog -> appendConnectionLog(action.line)
-            is SessionAction.FinishConnectionRun -> finishConnectionRun(action.succeeded, action.metadata)
+            is SessionAction.AppendConnectionLog -> {
+                diagnostics.appendLog(action.line)
+                connectionHistory.log(action.line)
+            }
+            is SessionAction.FinishConnectionRun -> {
+                diagnostics.finishRun(action.succeeded, action.metadata)
+                connectionHistory.finish(action.succeeded, action.metadata)
+            }
             SessionAction.PrePlayGroupDropped -> {
-                // Intentionally no-op for the advertisement set: a pre-PLAY drop
-                // must not latch extra modes or rewrite the saved set.
                 endConnectionState(emitDrop = false)
             }
             is SessionAction.SetLanguagePreference -> {
@@ -254,16 +183,18 @@ class MiraxSession(
                 consumeProvisioning()
             }
             is SessionAction.CommitPreferredModeText -> {
-                commitPreferredModeText(action.text)
+                caps.commitPreferredModeText(action.text)
             }
             is SessionAction.SetStandardModeChecked -> {
-                setStandardModeChecked(action.mode, action.checked)
+                caps.setStandardModeChecked(action.mode, action.checked)
             }
             is SessionAction.SetStandardModesChecked -> {
-                setStandardModesChecked(action.modes, action.checked)
+                caps.setStandardModesChecked(action.modes, action.checked)
             }
             is SessionAction.UseThisScreen -> {
-                useThisScreen(action.reading)
+                if (resolveOwner(privilege) != WfdOwner.NONE) {
+                    caps.useThisScreen(action.reading, pictureRotationDegrees)
+                }
             }
             is SessionAction.ApplyProvisioningWmSize -> {
                 applyProvisioningWmSize(action.reading)
@@ -278,24 +209,27 @@ class MiraxSession(
                 endConnectionFromUser()
             }
             is SessionAction.SetBottomHandleEnabled -> {
-                bottomHandleEnabled = action.enabled
+                display.setBottomHandleEnabled(action.enabled)
                 if (!action.enabled) {
-                    bottomHandleExpanded = false
+                    activeConnection.setBottomHandleExpanded(false)
                 }
             }
             SessionAction.ToggleBottomHandleExpanded -> {
-                if (connected && bottomHandleEnabled) {
-                    bottomHandleExpanded = !bottomHandleExpanded
+                if (activeConnection.isConnected && display.bottomHandleEnabled) {
+                    activeConnection.setBottomHandleExpanded(!activeConnection.bottomHandleExpandedState)
                 }
             }
             SessionAction.CollapseBottomHandleExpanded -> {
-                if (connected && bottomHandleEnabled) {
-                    bottomHandleExpanded = false
+                if (activeConnection.isConnected && display.bottomHandleEnabled) {
+                    activeConnection.setBottomHandleExpanded(false)
                 }
             }
             is SessionAction.SetFloatingBallEnabled -> {
-                floatingBallEnabled = action.enabled
+                display.setFloatingBallEnabled(action.enabled)
                 maybeEndHomeStayWithoutBall()
+            }
+            is SessionAction.SetShowDebugOverlay -> {
+                display.setShowDebugOverlay(action.enabled)
             }
             SessionAction.RequestOverlayPermission -> {
                 onRequestOverlayPermission()
@@ -304,77 +238,78 @@ class MiraxSession(
                 onLeftProjectionToHome()
             }
             SessionAction.OpenedMiraxDashboard -> {
-                awayOnHomeScreen = false
+                activeConnection.setAwayOnHomeScreen(false)
             }
             SessionAction.FloatingBallTapped -> {
                 onFloatingBallTapped()
             }
             is SessionAction.SetPictureScale -> {
-                pictureScale = action.scale
+                display.setPictureScale(action.scale)
             }
-            is SessionAction.AddCustomMode -> addCustomMode(action.width, action.height, action.refreshHz)
-            is SessionAction.RemoveCustomMode -> removeCustomMode(action.mode)
-            is SessionAction.MoveCustomMode -> moveCustomMode(action.from, action.to)
+            is SessionAction.AddCustomMode -> caps.addCustomMode(action.width, action.height, action.refreshHz)
+            is SessionAction.RemoveCustomMode -> caps.removeCustomMode(action.mode)
+            is SessionAction.MoveCustomMode -> caps.moveCustomMode(action.from, action.to)
             is SessionAction.SetAutoAddWmSizeOnConnect -> {
-                autoAddWmSizeOnConnect = action.enabled
+                caps.setAutoAddWmSizeOnConnect(action.enabled)
             }
             is SessionAction.SetTouchEnabled -> {
-                touchEnabled = action.enabled
+                display.setTouchEnabled(action.enabled)
             }
             is SessionAction.SetShowDebugMessages -> {
-                showDebugMessages = action.enabled
+                display.setShowDebugMessages(action.enabled)
             }
             is SessionAction.SetCameraCutoutAffectsLayout -> {
-                cameraCutoutAffectsLayout = action.enabled
+                display.setCameraCutoutAffectsLayout(action.enabled)
             }
             is SessionAction.SetBroadcastAutoStopMinutes -> {
-                broadcastAutoStopMinutes = clampAutoStopMinutes(action.minutes)
+                display.setBroadcastAutoStopMinutes(action.minutes)
             }
             is SessionAction.SetMaxVideoBitrateBps -> {
-                maxVideoBitrateBps = StandardVideoModes.clampMaxBitrateBps(action.bps)
+                caps.setMaxVideoBitrateBps(action.bps)
             }
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
+            SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe()
         }
     }
 
-    /**
-     * Current observable output for the UI and status surfaces.
-     *
-     * Returns:
-     *     A [SessionSnapshot] derived solely from settings, reports, and actions.
-     */
-    fun snapshot(): SessionSnapshot {
+fun snapshot(): SessionSnapshot {
         val owner = resolveOwner(privilege)
-        val phase = resolvePhase(owner)
+        val phase = composeScreenPhase(
+            owner = owner,
+            connected = activeConnection.isConnected,
+            wifiEnabled = wifiEnabled,
+            advertisingPhase = advertisingState.phase,
+            connectionPhase = activeConnection.phase,
+        )
         val followsDevice = displayNameOverride == null
         val effectiveName = if (followsDevice) deviceName else displayNameOverride.orEmpty()
         val canRead = owner != WfdOwner.NONE
-        val nextModes = resolveNextAdvertisementModes()
-        val standardRows = StandardVideoModes.catalog(maxVideoBitrateBps).map { mode ->
-            StandardModeRow(mode = mode, checked = mode in checkedStandardModes)
+        val nextModes = caps.resolveNextAdvertisementModes()
+        val standardRows = StandardVideoModes.catalog(caps.maxVideoBitrateBps).map { mode ->
+            StandardModeRow(mode = mode, checked = mode in caps.checkedStandardModes)
         }
         val resolutionText = when {
-            connected && selectedMode != null -> selectedMode!!.format()
-            else -> preferredMode?.format().orEmpty()
+            activeConnection.isConnected && activeConnection.selectedMode != null -> activeConnection.selectedMode!!.format()
+            else -> caps.preferredMode?.format().orEmpty()
         }
-        val handleResolution = selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
-        val handleRefresh = selectedMode?.refreshHz
-        val showHandle = phase == ScreenPhase.CONNECTED && bottomHandleEnabled
+        val handleResolution = activeConnection.selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
+        val handleRefresh = activeConnection.selectedMode?.refreshHz
+        val showHandle = phase == ScreenPhase.CONNECTED && display.bottomHandleEnabled
         val showBall =
             phase == ScreenPhase.CONNECTED &&
-                awayOnHomeScreen &&
+                activeConnection.awayOnHomeScreenState &&
                 overlayGranted &&
-                floatingBallEnabled
+                display.floatingBallEnabled
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
             tileState = resolveTile(owner, phase),
             widgetStatus = resolveWidget(owner, phase),
-            advertisingEnabled = advertisingEnabled,
+            advertisingEnabled = advertisingState.advertisingEnabledState,
             shouldRequestShizukuPermission = pendingPermissionRequest,
             canReadWmSize = canRead,
             showCompatibilityNotice =
-                phase == ScreenPhase.FROZEN || advertiseDeniedByPrivilege,
+                phase == ScreenPhase.FROZEN || advertisingState.isDeniedByPrivilege(),
             rootAvailable = privilege.rootAvailable,
             effects = pendingEffects,
             languagePreference = languagePreference,
@@ -383,64 +318,63 @@ class MiraxSession(
             displayNameOverride = displayNameOverride,
             displayNameFollowsDevice = followsDevice,
             displayNameFieldHint = if (followsDevice) deviceName else "",
-            preferredMode = preferredMode,
-            preferredModeText = preferredMode?.format().orEmpty(),
+            preferredMode = caps.preferredMode,
+            preferredModeText = caps.preferredMode?.format().orEmpty(),
             canUseThisScreen = canRead,
             standardModes = standardRows,
             nextAdvertisementModes = nextModes,
             currentResolutionText = resolutionText,
             miraxDisplayId = miraxDisplayId,
-            maxVideoBitrateBps = maxVideoBitrateBps,
+            maxVideoBitrateBps = caps.maxVideoBitrateBps,
             wfdAdvertise = resolveWfdAdvertise(owner, effectiveName, nextModes),
-            selectedMode = selectedMode,
+            selectedMode = activeConnection.selectedMode,
             showPicture = phase == ScreenPhase.CONNECTED,
-            bottomHandleEnabled = bottomHandleEnabled,
+            bottomHandleEnabled = display.bottomHandleEnabled,
             showBottomHandle = showHandle,
-            bottomHandleExpanded = showHandle && this.bottomHandleExpanded,
+            bottomHandleExpanded = showHandle && activeConnection.bottomHandleExpandedState,
             handleResolutionText = if (showHandle) handleResolution else "",
             handleRefreshRateHz = if (showHandle) handleRefresh else null,
-            floatingBallEnabled = floatingBallEnabled,
+            floatingBallEnabled = display.floatingBallEnabled,
             showOverlayPermissionReminder = !overlayGranted,
             showFloatingBall = showBall,
-            pictureScale = pictureScale,
-            connectionRuns = connectionRuns.toList(),
-            customModes = customModes,
-            autoAddWmSizeOnConnect = autoAddWmSizeOnConnect,
-            touchEnabled = touchEnabled,
-            showDebugMessages = showDebugMessages,
-            cameraCutoutAffectsLayout = cameraCutoutAffectsLayout,
-            broadcastAutoStopMinutes = broadcastAutoStopMinutes,
-            handshakeLog = if (phase == ScreenPhase.CONNECTING && showDebugMessages) {
-                openConnectionRun?.lines?.joinToString("\n").orEmpty()
+            pictureScale = display.pictureScale,
+            connectionRuns = connectionHistory.runs(),
+            customModes = caps.customModes,
+            autoAddWmSizeOnConnect = caps.autoAddWmSizeOnConnect,
+            touchEnabled = display.touchEnabled,
+            showDebugMessages = display.showDebugMessages,
+            showDebugOverlay = display.showDebugOverlay,
+            cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
+            broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
+            handshakeLog = if (phase == ScreenPhase.CONNECTING && display.showDebugMessages) {
+                diagnostics.currentHandshakeLog()
             } else {
                 ""
             },
-            connectionOfferModes = connectionAdvertisedModes,
-            connectionPreferredMode = if (connectionOfferFrozen) connectionPreferredMode else null,
+            connectionOfferModes = activeConnection.connectionAdvertisedModes,
+            connectionPreferredMode = if (activeConnection.phase == ConnectionPhase.OFFER_FROZEN) activeConnection.connectionPreferredMode else null,
         )
     }
 
-    /**
-     * Settings to persist across process death.
-     */
     fun exportSettings(): SessionSettings {
         return SessionSettings(
-            advertisingEnabled = advertisingEnabled,
+            advertisingEnabled = advertisingState.advertisingEnabledState,
             languagePreference = languagePreference,
             displayNameOverride = displayNameOverride,
-            preferredMode = preferredMode,
-            checkedStandardModes = checkedStandardModes,
-            maxVideoBitrateBps = maxVideoBitrateBps,
-            provisioningConsumed = provisioningConsumed,
-            bottomHandleEnabled = bottomHandleEnabled,
-            floatingBallEnabled = floatingBallEnabled,
-            pictureScale = pictureScale,
-            customModes = customModes,
-            autoAddWmSizeOnConnect = autoAddWmSizeOnConnect,
-            touchEnabled = touchEnabled,
-            showDebugMessages = showDebugMessages,
-            cameraCutoutAffectsLayout = cameraCutoutAffectsLayout,
-            broadcastAutoStopMinutes = broadcastAutoStopMinutes,
+            preferredMode = caps.preferredMode,
+            checkedStandardModes = caps.checkedStandardModes,
+            maxVideoBitrateBps = caps.maxVideoBitrateBps,
+            provisioningConsumed = caps.provisioningConsumed,
+            bottomHandleEnabled = display.bottomHandleEnabled,
+            floatingBallEnabled = display.floatingBallEnabled,
+            pictureScale = display.pictureScale,
+            customModes = caps.customModes,
+            autoAddWmSizeOnConnect = caps.autoAddWmSizeOnConnect,
+            touchEnabled = display.touchEnabled,
+            showDebugMessages = display.showDebugMessages,
+            showDebugOverlay = display.showDebugOverlay,
+            cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
+            broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
         )
     }
 
@@ -459,9 +393,7 @@ class MiraxSession(
     }
 
     private fun onRequestOverlayPermission() {
-        if (overlayGranted) {
-            return
-        }
+        if (overlayGranted) return
         if (overlayCanPrompt) {
             enqueueEffect(SessionEffect.RequestOverlayPermission)
         } else {
@@ -470,30 +402,25 @@ class MiraxSession(
     }
 
     private fun onLeftProjectionToHome() {
-        if (!connected) {
+        if (!activeConnection.isConnected) return
+        if (overlayGranted && display.floatingBallEnabled) {
+            activeConnection.setAwayOnHomeScreen(true)
             return
         }
-        if (overlayGranted && floatingBallEnabled) {
-            awayOnHomeScreen = true
-            return
-        }
-        // No ball available: end immediately, no toast, broadcast stays on.
         endConnectionFromUser()
     }
 
     private fun onFloatingBallTapped() {
-        if (!connected || !awayOnHomeScreen) {
-            return
-        }
-        awayOnHomeScreen = false
-        bottomHandleExpanded = false
-        backEndsConnectionPending = false
+        if (!activeConnection.isConnected || !activeConnection.awayOnHomeScreenState) return
+        activeConnection.setAwayOnHomeScreen(false)
+        activeConnection.setBottomHandleExpanded(false)
+        activeConnection.setBackEndsConnectionPending(false)
         pendingEffects = pendingEffects.filterNot { it is SessionEffect.ConfirmEndConnection }
         enqueueEffect(SessionEffect.BringProjectionToFront)
     }
 
     private fun maybeEndHomeStayWithoutBall() {
-        if (connected && awayOnHomeScreen && (!overlayGranted || !floatingBallEnabled)) {
+        if (activeConnection.isConnected && activeConnection.awayOnHomeScreenState && (!overlayGranted || !display.floatingBallEnabled)) {
             endConnectionFromUser()
         }
     }
@@ -511,90 +438,59 @@ class MiraxSession(
             pendingEffects = pendingEffects + SessionEffect.ShowShizukuNotOpenToast
             return
         }
-        setAdvertising(!advertisingEnabled)
+        setAdvertising(!advertisingState.advertisingEnabledState)
     }
 
     private fun setAdvertising(enabled: Boolean) {
         val owner = resolveOwner(privilege)
-        if (enabled && owner == WfdOwner.NONE) {
-            return
-        }
-        if (enabled && !wifiEnabled) {
-            pendingEffects = pendingEffects + SessionEffect.PromptEnableWifi
-            return
-        }
-        advertisingEnabled = enabled
-        // Never inherit a previous listen confirmation across toggle-on.
-        beaconListening = false
-        if (!enabled) {
-            endConnectionState(emitDrop = true)
+        when (val res = advertisingState.setAdvertising(enabled, owner, wifiEnabled)) {
+            AdvertisingState.SetAdvertisingResult.NoOwner -> Unit
+            AdvertisingState.SetAdvertisingResult.WifiDisabled -> {
+                pendingEffects = pendingEffects + SessionEffect.PromptEnableWifi
+            }
+            is AdvertisingState.SetAdvertisingResult.Applied -> {
+                if (res.turnedOff) {
+                    endConnectionState(emitDrop = true)
+                }
+            }
         }
     }
 
     private fun onBeaconListening() {
-        if (!advertisingEnabled || resolveOwner(privilege) == WfdOwner.NONE) {
-            return
-        }
-        beaconListening = true
-        advertiseDeniedByPrivilege = false
+        advertisingState.onBeaconListening(resolveOwner(privilege))
     }
 
     private fun onBeaconFailed() {
-        if (!advertisingEnabled) {
-            beaconListening = false
-            return
+        if (advertisingState.onBeaconFailed()) {
+            endConnectionState(emitDrop = true)
+            enqueueEffect(SessionEffect.ShowAdvertiseFailedToast)
         }
-        advertisingEnabled = false
-        beaconListening = false
-        advertiseDeniedByPrivilege = true
-        endConnectionState(emitDrop = true)
-        enqueueEffect(SessionEffect.ShowAdvertiseFailedToast)
     }
 
     private fun onSystemBack() {
-        if (!connected) {
-            return
+        if (!activeConnection.isConnected) return
+        when (activeConnection.onSystemBack(display.bottomHandleEnabled)) {
+            ActiveConnectionState.BackResult.ExpandHandle -> Unit
+            ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()
+            ActiveConnectionState.BackResult.ArmedSecondBack -> Unit
         }
-        if (bottomHandleEnabled) {
-            if (!bottomHandleExpanded) {
-                bottomHandleExpanded = true
-                return
-            }
-            requestEndConnectionFromUser()
-            return
-        }
-        if (backEndsConnectionPending) {
-            backEndsConnectionPending = false
-            requestEndConnectionFromUser()
-            return
-        }
-        backEndsConnectionPending = true
     }
 
     private fun requestEndConnectionFromUser() {
-        if (!connected) {
-            return
-        }
+        if (!activeConnection.isConnected) return
         if (SessionEffect.ConfirmEndConnection !in pendingEffects) {
             pendingEffects = pendingEffects + SessionEffect.ConfirmEndConnection
         }
     }
 
     private fun endConnectionFromUser() {
-        if (!connected) {
-            return
-        }
+        if (!activeConnection.isConnected) return
         endConnectionState(emitDrop = true)
     }
 
-    /**
-     * Leave the connected phase. [emitDrop] asks the host to tear down the
-     * active RTSP client while advertising stays as the user left it.
-     */
     private fun endConnectionState(emitDrop: Boolean) {
-        val wasConnected = connected
-        connected = false
-        clearConnectionEphemerals()
+        val wasConnected = activeConnection.isConnected
+        activeConnection = ActiveConnectionState()
         if (emitDrop && wasConnected) {
             if (SessionEffect.DropActiveConnection !in pendingEffects) {
                 pendingEffects = pendingEffects + SessionEffect.DropActiveConnection
@@ -602,240 +498,79 @@ class MiraxSession(
         }
     }
 
-    private fun freezeConnectionAdvertisedModes() {
-        if (connectionAdvertisedModes == null) {
-            connectionAdvertisedModes = resolveNextAdvertisementModes()
-        }
-    }
-
-    /**
-     * Freeze the M3 offer for this attempt. A later call in the same attempt
-     * does not change the offer, so a drop cannot latch extra modes.
-     */
     private fun freezeConnectionOffer(reading: WmSizeReading?) {
-        if (resolveOwner(privilege) == WfdOwner.NONE || !advertisingEnabled || !wifiEnabled || connected) {
+        if (resolveOwner(privilege) == WfdOwner.NONE || !advertisingState.advertisingEnabledState || !wifiEnabled) {
             return
         }
-        negotiating = true
-        if (connectionOfferFrozen) {
-            return
+        val injectedMode = if (caps.autoAddWmSizeOnConnect) {
+            modeFromWmSize(reading, display.touchEnabled, pictureRotationDegrees)
+        } else {
+            null
         }
-        val base = resolveNextAdvertisementModes()
-        val injected = if (autoAddWmSizeOnConnect) modeFromWmSize(reading) else null
-        val savedPreferred = customModes.firstOrNull() ?: preferredMode?.takeIf { it in base }
-        connectionPreferredMode = injected ?: savedPreferred
-        connectionAdvertisedModes = if (injected != null) base + injected else base
-        connectionOfferFrozen = true
+        val finalOfferedModes = if (caps.autoAddWmSizeOnConnect && injectedMode != null) {
+            caps.resolveNextAdvertisementModes() + injectedMode
+        } else {
+            caps.resolveNextAdvertisementModes()
+        }
+        val preferredMode = injectedMode ?: caps.customModes.firstOrNull() ?: caps.preferredMode
+        activeConnection.freezeOffer(
+            offeredModes = finalOfferedModes,
+            preferredMode = preferredMode,
+            touchEnabled = display.touchEnabled,
+            rotationDegrees = pictureRotationDegrees,
+        )
     }
 
-    private fun modeFromWmSize(reading: WmSizeReading?): VideoMode? {
-        if (reading == null) {
-            return null
-        }
-        val (width, height) = visiblePictureAxes(
+    private fun modeFromWmSize(reading: WmSizeReading?, touchEnabled: Boolean, pictureRotationDegrees: Int): VideoMode? {
+        if (reading == null) return null
+        val (width, height) = CapsAndProvisioning.visiblePictureAxes(
             reading.chosenWidth,
             reading.chosenHeight,
             pictureRotationDegrees,
         )
-        return PreferredModeCorrection.correct(width, height, 60)
-    }
-
-    private fun addCustomMode(width: Int, height: Int, refreshHz: Int) {
-        val mode = PreferredModeCorrection.correct(width, height, refreshHz) ?: return
-        if (mode in customModes) {
-            return
-        }
-        customModes = customModes + mode
-    }
-
-    private fun removeCustomMode(mode: VideoMode) {
-        customModes = customModes.filter { it != mode }
-        if (preferredMode == mode) {
-            preferredMode = null
-        }
-    }
-
-    private fun moveCustomMode(from: Int, to: Int) {
-        if (from !in customModes.indices || to !in customModes.indices || from == to) {
-            return
-        }
-        val next = customModes.toMutableList()
-        val moved = next.removeAt(from)
-        next.add(to, moved)
-        customModes = next
-    }
-
-    private fun onSourceSelectedMode(mode: VideoMode) {
-        freezeConnectionAdvertisedModes()
-        val allowed = connectionAdvertisedModes ?: resolveNextAdvertisementModes()
-        if (mode in allowed) {
-            selectedMode = mode
-        }
+        val refreshHz = if (touchEnabled) 30 else 60
+        return PreferredModeCorrection.correct(width, height, refreshHz)
+            ?: run {
+                Log.w(TAG, "wm size $width×$height@$refreshHz exceeds Level 5.1, dropping")
+                null
+            }
     }
 
     private fun enterPlay() {
-        if (resolveOwner(privilege) != WfdOwner.NONE && advertisingEnabled) {
-            connected = true
-            awayOnHomeScreen = false
+        if (resolveOwner(privilege) != WfdOwner.NONE && advertisingState.advertisingEnabledState) {
+            activeConnection.enterPlay()
+            activeConnection.onPlayStarted()
+            enqueueEffect(SessionEffect.BringProjectionToFront)
         }
     }
 
     private fun clearConnectionEphemerals() {
-        selectedMode = null
-        connectionAdvertisedModes = null
-        connectionOfferFrozen = false
-        connectionPreferredMode = null
-        negotiating = false
-        backEndsConnectionPending = false
-        bottomHandleExpanded = false
-        awayOnHomeScreen = false
-    }
-
-    private fun commitPreferredModeText(text: String) {
-        // Leaving the field after any non-default content also consumes provisioning
-        // when the user had typed something (edit already consumes; blank clear too).
-        val fallbackRefresh = preferredMode?.refreshHz ?: 60
-        when (val result = PreferredModeCorrection.parse(text, fallbackRefresh)) {
-            PreferredModeCorrection.ParseResult.Cleared -> {
-                if (preferredMode == null) {
-                    return
-                }
-                preferredMode = null
-                consumeProvisioning()
-            }
-            PreferredModeCorrection.ParseResult.Unparseable -> {
-                // Restore last accepted; field text comes from preferredMode in snapshot.
-            }
-            is PreferredModeCorrection.ParseResult.Accepted -> {
-                preferredMode = result.mode
-                consumeProvisioning()
-            }
-        }
-    }
-
-    private fun setStandardModeChecked(mode: VideoMode, checked: Boolean) {
-        val catalog = StandardVideoModes.catalog(maxVideoBitrateBps)
-        if (mode !in catalog) {
-            return
-        }
-        checkedStandardModes = if (checked) {
-            checkedStandardModes + mode
-        } else {
-            checkedStandardModes - mode
-        }
-    }
-
-    private fun setStandardModesChecked(modes: Collection<VideoMode>, checked: Boolean) {
-        val catalog = StandardVideoModes.catalog(maxVideoBitrateBps)
-        val known = modes.filter { it in catalog }.toSet()
-        if (known.isEmpty()) {
-            return
-        }
-        checkedStandardModes = if (checked) {
-            checkedStandardModes + known
-        } else {
-            checkedStandardModes - known
-        }
-    }
-
-    private fun useThisScreen(reading: WmSizeReading) {
-        if (resolveOwner(privilege) == WfdOwner.NONE) {
-            return
-        }
-        consumeProvisioning()
-        val refresh = preferredMode?.refreshHz ?: 60
-        val (width, height) = visiblePictureAxes(
-            reading.chosenWidth,
-            reading.chosenHeight,
-            pictureRotationDegrees,
-        )
-        val corrected = PreferredModeCorrection.correct(
-            width,
-            height,
-            refresh,
-        )
-        if (corrected != null) {
-            preferredMode = corrected
-        }
+        activeConnection = ActiveConnectionState()
     }
 
     private fun applyProvisioningWmSize(reading: WmSizeReading) {
-        if (provisioningConsumed) {
-            return
-        }
-        if (resolveOwner(privilege) == WfdOwner.NONE) {
-            return
-        }
-        if (preferredMode != null) {
-            consumeProvisioning()
-            return
-        }
-        val (width, height) = visiblePictureAxes(
-            reading.chosenWidth,
-            reading.chosenHeight,
-            pictureRotationDegrees,
-        )
-        val corrected = PreferredModeCorrection.correct(
-            width,
-            height,
-            60,
-        )
-        if (corrected != null) {
-            preferredMode = corrected
-        }
-        consumeProvisioning()
-        pendingEffects = pendingEffects.filterNot {
-            it is SessionEffect.ReadPlainWmSizeForProvisioning
-        }
-        provisioningReadRequested = false
-    }
-
-    /**
-     * Map base `wm size` axes to the picture the user sees.
-     *
-     * Rotation 90 or 270 swaps width and height; 0 and 180 leave them.
-     */
-    private fun visiblePictureAxes(
-        baseWidth: Int,
-        baseHeight: Int,
-        rotationDegrees: Int,
-    ): Pair<Int, Int> {
-        return when (rotationDegrees) {
-            90, 270 -> baseHeight to baseWidth
-            else -> baseWidth to baseHeight
+        if (resolveOwner(privilege) == WfdOwner.NONE) return
+        if (caps.applyProvisioningWmSize(reading, pictureRotationDegrees)) {
+            pendingEffects = pendingEffects.filterNot {
+                it is SessionEffect.ReadPlainWmSizeForProvisioning
+            }
         }
     }
 
     private fun maybeRequestProvisioningRead() {
-        if (provisioningConsumed || preferredMode != null) {
-            return
-        }
-        if (resolveOwner(privilege) == WfdOwner.NONE) {
-            return
-        }
-        if (provisioningReadRequested) {
-            return
-        }
-        if (SessionEffect.ReadPlainWmSizeForProvisioning in pendingEffects) {
-            return
-        }
-        provisioningReadRequested = true
+        if (caps.provisioningConsumed || caps.preferredMode != null) return
+        if (resolveOwner(privilege) == WfdOwner.NONE) return
+        if (caps.provisioningReadRequested) return
+        if (SessionEffect.ReadPlainWmSizeForProvisioning in pendingEffects) return
+        caps.provisioningReadRequested = true
         pendingEffects = pendingEffects + SessionEffect.ReadPlainWmSizeForProvisioning
     }
 
     private fun consumeProvisioning() {
-        provisioningConsumed = true
-        provisioningReadRequested = false
+        caps.consumeProvisioning()
         pendingEffects = pendingEffects.filterNot {
             it is SessionEffect.ReadPlainWmSizeForProvisioning
         }
-    }
-
-    private fun resolveNextAdvertisementModes(): Set<VideoMode> {
-        val checked = checkedStandardModes.intersect(
-            StandardVideoModes.catalog(maxVideoBitrateBps).toSet(),
-        )
-        return checked + customModes.toSet() + listOfNotNull(preferredMode).toSet()
     }
 
     private fun resolveWfdAdvertise(
@@ -843,7 +578,7 @@ class MiraxSession(
         broadcastName: String,
         modes: Set<VideoMode>,
     ): WfdAdvertiseCommand? {
-        if (!advertisingEnabled || !wifiEnabled || owner == WfdOwner.NONE) {
+        if (!advertisingState.advertisingEnabledState || !wifiEnabled || owner == WfdOwner.NONE) {
             return null
         }
         return WfdAdvertiseCommand(
@@ -870,34 +605,9 @@ class MiraxSession(
     private fun resolveOwner(report: PrivilegeReport): WfdOwner {
         val shizukuReady = report.shizukuServiceRunning && report.shizukuAuthorized
         return when {
-            // Root-started helper (UID 0) before Shizuku: works on OEMs that
-            // deny CONFIGURE_WIFI_DISPLAY to shell but allow root.
-            report.helperRunning -> WfdOwner.HELPER
             shizukuReady -> WfdOwner.SHIZUKU
+            report.helperRunning -> WfdOwner.HELPER
             else -> WfdOwner.NONE
-        }
-    }
-
-    private fun resolvePhase(owner: WfdOwner): ScreenPhase {
-        if (owner == WfdOwner.NONE) {
-            return ScreenPhase.FROZEN
-        }
-        if (connected) {
-            return ScreenPhase.CONNECTED
-        }
-        if (advertisingEnabled && !wifiEnabled) {
-            return ScreenPhase.WIFI_PAUSED
-        }
-        if (advertisingEnabled && negotiating) {
-            return ScreenPhase.CONNECTING
-        }
-        if (!advertisingEnabled) {
-            return ScreenPhase.READY
-        }
-        return if (beaconListening) {
-            ScreenPhase.ADVERTISING
-        } else {
-            ScreenPhase.ARMING
         }
     }
 
@@ -925,96 +635,59 @@ class MiraxSession(
         }
     }
 
-    private fun beginConnectionRun(remoteHost: String) {
-        if (openConnectionRun != null) {
-            finishConnectionRun(
-                succeeded = false,
-                metadata = listOf(ConnectionRunFact("outcome", "closed by a newer attempt")),
-            )
-        }
-        openConnectionRun = OpenConnectionRun(
-            remoteHost = remoteHost,
-            startedAtEpochMs = System.currentTimeMillis(),
-            configuration = configurationBackup(),
-        )
-    }
-
-    private fun appendConnectionLog(line: String) {
-        val run = openConnectionRun ?: return
-        val text = line.trim()
-        if (text.isEmpty()) return
-        if (run.lines.size >= MAX_CONNECTION_LOG_LINES) {
-            run.lines.removeAt(0)
-        }
-        run.lines.add(text)
-    }
-
-    private fun finishConnectionRun(succeeded: Boolean, metadata: List<ConnectionRunFact>) {
-        val run = openConnectionRun ?: return
-        openConnectionRun = null
-        connectionRuns.addFirst(
-            ConnectionRun(
-                succeeded = succeeded,
-                startedAtEpochMs = run.startedAtEpochMs,
-                endedAtEpochMs = System.currentTimeMillis(),
-                remoteHost = run.remoteHost,
-                metadata = metadata,
-                configuration = run.configuration,
-                log = run.lines.joinToString("\n"),
-            ),
-        )
-        while (connectionRuns.size > MAX_CONNECTION_RUNS) {
-            connectionRuns.removeLast()
-        }
-    }
-
     private fun configurationBackup(): List<ConnectionRunFact> {
         val name = if (displayNameOverride == null) deviceName else displayNameOverride.orEmpty()
-        val standards = checkedStandardModes
+        val standards = caps.checkedStandardModes
             .sortedWith(compareBy({ it.width * it.height }, { it.refreshHz }))
             .joinToString(", ") { it.format() }
             .ifEmpty { "none" }
-        val customs = distinctModes(customModes + listOfNotNull(preferredMode))
+        val customs = CapsAndProvisioning.distinctModes(caps.customModes + listOfNotNull(caps.preferredMode))
             .joinToString(", ") { it.format() }
             .ifEmpty { "none" }
         return listOf(
             ConnectionRunFact("broadcast name", name.ifEmpty { "none" }),
             ConnectionRunFact("custom resolutions", customs),
             ConnectionRunFact("standard modes", standards),
-            ConnectionRunFact("touch", if (touchEnabled) "on" else "off"),
+            ConnectionRunFact("touch", if (display.touchEnabled) "on" else "off"),
         )
     }
 
-    private class OpenConnectionRun(
-        val remoteHost: String,
-        val startedAtEpochMs: Long,
-        val configuration: List<ConnectionRunFact>,
-        val lines: MutableList<String> = mutableListOf(),
-    )
-
-    companion object {
-        fun clampAutoStopMinutes(minutes: Int): Int = minutes.coerceIn(1, 180)
-
-        private const val MAX_CONNECTION_RUNS: Int = 32
-        private const val MAX_CONNECTION_LOG_LINES: Int = 200
-
-        private fun normalizeOverride(value: String?): String? {
-            if (value == null) {
-                return null
-            }
-            val sanitized = BroadcastNameRules.sanitize(value).trim()
-            return sanitized.ifEmpty { null }
+    private fun composeScreenPhase(
+        owner: WfdOwner,
+        connected: Boolean,
+        wifiEnabled: Boolean,
+        advertisingPhase: AdvertisingPhase,
+        connectionPhase: ConnectionPhase,
+    ): ScreenPhase {
+        if (owner == WfdOwner.NONE) {
+            return ScreenPhase.FROZEN
         }
-
-        private fun distinctModes(modes: List<VideoMode>): List<VideoMode> {
-            val seen = LinkedHashSet<VideoMode>()
-            val ordered = ArrayList<VideoMode>(modes.size)
-            for (mode in modes) {
-                if (seen.add(mode)) {
-                    ordered.add(mode)
-                }
-            }
-            return ordered
+        if (connected) {
+            return ScreenPhase.CONNECTED
+        }
+        if (advertisingPhase == AdvertisingPhase.IDLE) {
+            return ScreenPhase.READY
+        }
+        if (!wifiEnabled && advertisingPhase == AdvertisingPhase.ADVERTISING) {
+            return ScreenPhase.WIFI_PAUSED
+        }
+        // Negotiating or offer frozen = connecting
+        if (connectionPhase == ConnectionPhase.NEGOTIATING 
+            || connectionPhase == ConnectionPhase.OFFER_FROZEN) {
+            return ScreenPhase.CONNECTING
+        }
+        if (advertisingPhase == AdvertisingPhase.BEACON_LISTENING) {
+            return ScreenPhase.ADVERTISING
+        }
+        if (advertisingPhase == AdvertisingPhase.DENIED) {
+            return ScreenPhase.READY
+        }
+        // Default advertising states
+        return when {
+            advertisingPhase == AdvertisingPhase.ADVERTISING -> ScreenPhase.ARMING
+            advertisingPhase == AdvertisingPhase.BEACON_LISTENING -> ScreenPhase.ADVERTISING
+            advertisingPhase == AdvertisingPhase.DENIED -> ScreenPhase.FROZEN
+            else -> ScreenPhase.READY
         }
     }
 }

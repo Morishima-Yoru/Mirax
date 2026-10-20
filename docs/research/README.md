@@ -16,5 +16,6 @@
 | [device-owner-wifi-display.md](device-owner-wifi-display.md) | Device Owner 不能取得或轉授 `CONFIGURE_WIFI_DISPLAY` |
 | [touch.md](touch.md) | 一般觸控可以走 UIBC HIDC；S Pen 不在範圍內 |
 | [large-screen-split.md](large-screen-split.md) | 平行視界的官方對應是 activity embedding，但 Google 限給多 Activity 舊 App；單一 Activity 的 Views 推論以 `SlidingPaneLayout` 最小 |
+| [win11-source-burst-pacing.md](win11-source-burst-pacing.md) | Win11 來源約每秒 30 AU 突發後靜默 ~550 ms；與 High latency ~500 ms 對齊；sink pacing 只能換成穩定延遲 |
 
 現行設計以 [design.md](../design.md) 為準。研究裡若出現「下一步去改 Samsung 播放器」的句子，以 ADR 為準。

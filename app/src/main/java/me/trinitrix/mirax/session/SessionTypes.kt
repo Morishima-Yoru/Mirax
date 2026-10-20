@@ -23,6 +23,31 @@ enum class ScreenPhase {
 }
 
 /**
+ * Internal connection phase for the active connection lifecycle.
+ * This is an internal concept; the UI sees [ScreenPhase] which is composed
+ * from this and [AdvertisingPhase] by [MiraxSession].
+ */
+enum class ConnectionPhase {
+    NONE,
+    NEGOTIATING,
+    OFFER_FROZEN,
+    PLAYING,
+    ENDED,
+}
+
+/**
+ * Internal advertising phase for the WFD advertising lifecycle.
+ * This is an internal concept; the UI sees [ScreenPhase] which is composed
+ * from this and [ConnectionPhase] by [MiraxSession].
+ */
+enum class AdvertisingPhase {
+    IDLE,
+    ADVERTISING,
+    BEACON_LISTENING,
+    DENIED,
+}
+
+/**
  * Who currently owns WFD advertise privileges for Mirax.
  */
 enum class WfdOwner {
@@ -287,14 +312,14 @@ data class SessionSettings(
     val cameraCutoutAffectsLayout: Boolean = false,
     /** Minutes of advertising before it turns itself off. Default one minute. */
     val broadcastAutoStopMinutes: Int = 1,
+    /** Show debug overlay with stream info, frame tree, and crop controls. */
+    val showDebugOverlay: Boolean = false,
 )
 
 /**
  * One-shot effects the host must perform; the session never starts Shizuku or the helper.
  */
 sealed interface SessionEffect {
-    data object StopHelper : SessionEffect
-
     /**
      * Show the shared "Shizuku is not open" toast after a gray tile probe failed.
      * Host must not open the authorization dialog for this effect.
@@ -453,6 +478,10 @@ data class SessionSnapshot(
     val touchEnabled: Boolean = true,
     val showDebugMessages: Boolean = true,
     /**
+     * Show debug overlay with stream info, frame tree, and crop controls.
+     */
+    val showDebugOverlay: Boolean = false,
+    /**
      * When true, dashboard padding clears the punch-hole / notch. Default false
      * so the cutout does not shift the layout.
      */
@@ -513,7 +542,7 @@ sealed interface SessionAction {
      */
     data object TileTap : SessionAction
 
-    /** Host consumed one-shot effects (e.g. StopHelper). */
+    /** Host consumed one-shot effects. */
     data object AcknowledgeEffects : SessionAction
 
     /**
@@ -654,6 +683,12 @@ sealed interface SessionAction {
     data class SetBottomHandleEnabled(val enabled: Boolean) : SessionAction
 
     /**
+     * User toggled the debug overlay switch in the bottom handle panel.
+     * Persisted; defaults off.
+     */
+    data class SetShowDebugOverlay(val enabled: Boolean) : SessionAction
+
+    /**
      * User tapped the thin bottom-handle control to expand or collapse its panel.
      * Only meaningful while [SessionSnapshot.showBottomHandle] is true.
      */
@@ -741,4 +776,9 @@ sealed interface SessionAction {
      * becomes the preferred mode for this connection only.
      */
     data class FreezeConnectionOffer(val reading: WmSizeReading?) : SessionAction
+
+    /**
+     * Clear all persisted connection history from DataStore.
+     */
+    data object ClearConnectionHistory : SessionAction
 }

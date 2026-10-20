@@ -4,6 +4,7 @@ import android.util.Log
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -15,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference
 object UibcTouchChannel {
     private const val TAG = "MiraxUibc"
     private val state = AtomicReference(Channel())
+    private val epoch = AtomicLong(0L)
     private val writer = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mirax-uibc-write").apply { isDaemon = true }
     }
@@ -33,9 +35,10 @@ object UibcTouchChannel {
     /** Optional English status line, for the connection log. */
     var onStatus: ((String) -> Unit)? = null
 
-    fun open(host: String, port: Int, hidType: Int) {
+    fun open(host: String, port: Int, hidType: Int, enabled: Boolean = true) {
+        Log.d(TAG, "open: host=$host port=$port hidType=$hidType enabled=$enabled")
         close()
-        val next = Channel(hidType = hidType)
+        val next = Channel(hidType = hidType, enabled = enabled)
         state.set(next)
         Thread({
             val socket = Socket()
@@ -65,6 +68,32 @@ object UibcTouchChannel {
         }, "mirax-uibc").apply { isDaemon = true }.start()
     }
 
+    fun setEnabled(enabled: Boolean) {
+        val current = state.get()
+        synchronized(current) {
+            if (current.enabled == enabled) {
+                return
+            }
+            current.enabled = enabled
+            Log.i(TAG, "setEnabled=$enabled hidType=${current.hidType}")
+            epoch.incrementAndGet()
+            if (enabled) {
+                current.pending = null
+                current.pendingPen = null
+                current.last = emptyList()
+                current.lastPen = null
+                current.descriptorSent = false
+                sendDescriptor(current)
+                flushPending(current)
+            } else {
+                current.pending = null
+                current.pendingPen = null
+                current.last = emptyList()
+                current.lastPen = null
+            }
+        }
+    }
+
     fun setPictureSize(width: Int, height: Int) {
         val current = state.get()
         synchronized(current) {
@@ -79,9 +108,32 @@ object UibcTouchChannel {
         }
     }
 
+    /**
+     * Propagates a mid-session HID type change.
+     *
+     * Applies the new type to the channel and re-sends the descriptor when one has
+     * already been sent, so the source learns the updated contact limit.
+     */
+    fun setHidType(hidType: Int) {
+        val current = state.get()
+        synchronized(current) {
+            if (current.hidType == hidType) {
+                return
+            }
+            current.hidType = hidType
+            if (current.descriptorSent) {
+                current.descriptorSent = false
+                sendDescriptor(current)
+            }
+        }
+    }
+
     fun submit(contacts: List<UibcContact>) {
         val current = state.get()
         synchronized(current) {
+            if (!current.enabled) {
+                return
+            }
             if (contacts.isEmpty() && current.last.isEmpty()) {
                 return
             }
@@ -97,6 +149,9 @@ object UibcTouchChannel {
     fun submitPen(pen: UibcPenContact) {
         val current = state.get()
         synchronized(current) {
+            if (!current.enabled) {
+                return
+            }
             if (current.lastPen == pen) {
                 return
             }
@@ -112,6 +167,9 @@ object UibcTouchChannel {
     fun liftAll() {
         val current = state.get()
         synchronized(current) {
+            if (!current.enabled) {
+                return
+            }
             val lifted = current.last.map { it.copy(tip = false) }
             if (lifted.isNotEmpty()) {
                 current.last = lifted
@@ -166,6 +224,9 @@ object UibcTouchChannel {
 
     private fun sendDescriptor(current: Channel) {
         val socket = current.socket ?: return
+        if (!current.enabled) {
+            return
+        }
         if (current.descriptorSent || current.pictureWidth <= 0 || current.pictureHeight <= 0) {
             return
         }
@@ -174,8 +235,15 @@ object UibcTouchChannel {
             current.pictureHeight,
             UibcPackets.maxContacts(current.hidType),
         )
-        write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_REPORT_DESCRIPTOR, descriptor))
+        if (!write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_REPORT_DESCRIPTOR, descriptor)) {
+                current.descriptorSent = false
+            }) {
+            current.descriptorSent = false
+            Log.w(TAG, "descriptor write failed; will retry on next picture-size update")
+            return
+        }
         current.descriptorSent = true
+        Log.i(TAG, "descriptor sent ${descriptor.size}B ${current.pictureWidth}x${current.pictureHeight}")
         // Windows keeps the first input report as the device's initial report.
         // A descriptor alone does not create the virtual touch device, so the
         // reports that follow are dropped until this clear frame has been seen.
@@ -185,29 +253,40 @@ object UibcTouchChannel {
     private fun writeContacts(current: Channel, contacts: List<UibcContact>) {
         val socket = current.socket ?: return
         val report = UibcPackets.touchReport(contacts, UibcPackets.maxContacts(current.hidType))
-        Log.d(TAG, "writeContacts: ${contacts.size} contacts (reported=${report[report.size - 1]})")
+        Log.i(TAG, "writeContacts: ${contacts.size} contacts (reported=${report[report.size - 1]})")
         write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_INPUT_REPORT, report))
     }
 
     private fun writePen(current: Channel, pen: UibcPenContact) {
         val socket = current.socket ?: return
         val report = UibcPackets.penReport(pen)
-        Log.d(TAG, "writePen: tip=${pen.tip} inRange=${pen.inRange} x=${pen.x} y=${pen.y} p=${pen.pressure} barrel=${pen.barrel} eraser=${pen.eraser}")
+        Log.i(TAG, "writePen: tip=${pen.tip} inRange=${pen.inRange} x=${pen.x} y=${pen.y} p=${pen.pressure} barrel=${pen.barrel} eraser=${pen.eraser}")
         write(socket, UibcPackets.hidcPacket(current.hidType, UibcPackets.USAGE_INPUT_REPORT, report))
     }
 
-    private fun write(socket: Socket, packet: ByteArray) {
+    private fun write(socket: Socket, packet: ByteArray, onFailure: () -> Unit = {}): Boolean {
         val target = socket
+        val enqueuedEpoch = epoch.get()
+        var inlineResult: Boolean? = null
         writeRunner {
+            // Read the epoch lock-free: a synchronous writeRunner joins while
+            // the caller holds the channel lock, so taking it here deadlocks.
+            if (enqueuedEpoch != epoch.get()) {
+                return@writeRunner
+            }
             try {
                 val output = target.getOutputStream()
                 output.write(packet)
                 output.flush()
-                Log.v(TAG, "wrote ${packet.size} bytes (usage=${packet[6]})")
+                inlineResult = true
+                Log.i(TAG, "wrote ${packet.size} bytes (usage=${packet[6]})")
             } catch (err: Exception) {
+                inlineResult = false
+                onFailure()
                 Log.w(TAG, "UIBC write failed", err)
             }
         }
+        return inlineResult ?: true
     }
 
     private fun status(line: String) {
@@ -216,12 +295,13 @@ object UibcTouchChannel {
     }
 
     private class Channel(
-        val hidType: Int = UibcPackets.HID_MULTI_TOUCH,
+        var hidType: Int = UibcPackets.HID_MULTI_TOUCH,
+        var enabled: Boolean = true,
     ) {
         var socket: Socket? = null
         var pictureWidth: Int = 0
         var pictureHeight: Int = 0
-        var descriptorSent: Boolean = false
+        @Volatile var descriptorSent: Boolean = false
         var pending: List<UibcContact>? = null
         var pendingPen: UibcPenContact? = null
         var last: List<UibcContact> = emptyList()

@@ -1,6 +1,7 @@
 package me.trinitrix.mirax.wfd.rtsp
 
 import me.trinitrix.mirax.session.VideoMode
+import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 
 /**
  * Capability answers for one RTSP connection. Built from the advertisement set
@@ -15,6 +16,13 @@ class WfdCapabilityTable(
     private val touchEnabled: Boolean = false,
     private val maxBitrateBps: Long = 40_000_000L,
 ) {
+    /**
+     * Interactive (UIBC) sessions: M3 should prefer low-latency encode and always
+     * surface [microsoft_max_bitrate], even when Windows omitted those names.
+     */
+    val interactiveHints: Boolean
+        get() = touchEnabled
+
     fun valueFor(name: String): String {
         return when (name) {
             "wfd_video_formats" -> WfdVideoFormatCodec.wfdVideoFormats(modes, preferred)
@@ -35,11 +43,24 @@ class WfdCapabilityTable(
             "wfd_uibc_capability" -> if (touchEnabled) UIBC_HIDC else "none"
             "wfd_idr_request_capability" -> "1"
             "microsoft_format_change_capability",
-            "microsoft_latency_management_capability",
             "microsoft_diagnostics_capability",
+            "microsoft_rtcp_capability",
             -> "supported"
+            // Interactive: advertise none so Win11 does not pick a buffered
+            // high/normal role that batches ~30 AU then ~550 ms silence on this
+            // Phh link. Mid-session role switches still stall encode — do not
+            // fight after PLAY. Resolution stays Settings-owned.
+            "microsoft_latency_management_capability" ->
+                if (touchEnabled) "none" else "supported"
             "microsoft_max_bitrate" -> maxBitrateBps.coerceAtLeast(1L).toString()
             "microsoft_audio_mute" -> "supported"
+            // MS-WDHCE: "none" or "xor-support x-max y-max port" — not the bare token "supported".
+            "microsoft_cursor" ->
+                if (ADVERTISE_HARDWARE_CURSOR) {
+                    MicrosoftCursorChannel.capabilityValue()
+                } else {
+                    "none"
+                }
             "intel_friendly_name" -> friendlyName.ifEmpty { "Mirax" }
             "intel_sink_manufacturer_name" -> "Mirax"
             "intel_sink_model_name" -> "Mirax"
@@ -49,10 +70,8 @@ class WfdCapabilityTable(
             "wfd_content_protection",
             "wfd_3d_video_formats",
             "wfd_presentation_URL",
-            "microsoft_rtcp_capability",
             "microsoft_color_space_conversion",
             "microsoft_multiscreen_projection",
-            "microsoft_cursor",
             "wfd2_rotation_capability",
             "wfd2_video_stream_control",
             -> "none"
@@ -60,8 +79,14 @@ class WfdCapabilityTable(
         }
     }
 
-    private companion object {
-        const val UIBC_HIDC: String =
+    companion object {
+        /**
+         * When true, advertise [MS-WDHCE] hardware cursor so Windows stops burning
+         * the pointer into the H.264 stream (the main mouse-lag feel on local echo).
+         */
+        const val ADVERTISE_HARDWARE_CURSOR: Boolean = true
+
+        private const val UIBC_HIDC: String =
             "input_category_list=HIDC; generic_cap_list=none; " +
                 "hidc_cap_list=SingleTouch/USB, MultiTouch/USB; port=none"
     }

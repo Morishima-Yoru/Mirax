@@ -2,6 +2,8 @@ package me.trinitrix.mirax.wfd;
 
 import android.content.Context;
 import android.net.MacAddress;
+import android.net.wifi.WifiManager;
+import android.net.wifi.WpsInfo;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pGroup;
@@ -200,6 +202,7 @@ public final class PrimarySinkBeacon {
             advertising = false;
             groupFormed = false;
             groupState = GROUP_DOWN;
+            clientConnectAttempted.clear();
             handler.removeCallbacks(poll);
             if (manager == null || channel == null) {
                 return;
@@ -319,6 +322,7 @@ public final class PrimarySinkBeacon {
                 Log.i(TAG, "P2P group down");
                 groupFormed = false;
                 groupState = GROUP_DOWN;
+                clientConnectAttempted.clear();
                 // Do NOT forget saved groups here - preserve persistent group for reinvocation
                 // forgetSavedGroups is only set to true when user explicitly calls forgetAllPairings()
                 armSink();
@@ -381,6 +385,9 @@ public final class PrimarySinkBeacon {
                     if (announce) {
                         Log.i(TAG, "setWfdInfo success");
                     }
+                    // Driver hint: sink mode (2) shortens scan dwell so STA+P2P
+                    // concurrency hurts Miracast less. Hidden WifiManager API.
+                    setMiracastModeSink();
                     admitThenListen(announce);
                 }
 
@@ -425,6 +432,38 @@ public final class PrimarySinkBeacon {
             manager.setWfdInfo(channel, wfd, logged("clearWfdInfo"));
         } catch (Throwable err) {
             Log.w(TAG, "clearWfdInfo failed", err);
+        }
+        setMiracastModeDisabled();
+    }
+
+    /**
+     * Ask the Wi-Fi driver to optimize for Miracast sink (mode 2). No-op when
+     * the hidden {@code WifiManager#setMiracastMode} is missing.
+     */
+    private void setMiracastModeSink() {
+        setMiracastMode(2, "sink");
+    }
+
+    private void setMiracastModeDisabled() {
+        setMiracastMode(0, "off");
+    }
+
+    private void setMiracastMode(int mode, String label) {
+        if (context == null) {
+            return;
+        }
+        try {
+            WifiManager wifi = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+            if (wifi == null) {
+                return;
+            }
+            Method set = WifiManager.class.getMethod("setMiracastMode", int.class);
+            set.invoke(wifi, mode);
+            Log.i(TAG, "setMiracastMode " + label + " (" + mode + ")");
+        } catch (NoSuchMethodException ignored) {
+            // Hidden API absent on this WifiManager (common on GSI).
+        } catch (Throwable err) {
+            Log.w(TAG, "setMiracastMode " + label + " failed: " + err.getMessage());
         }
     }
 
@@ -482,21 +521,12 @@ public final class PrimarySinkBeacon {
     }
 
     /**
-     * Arm the approver based on pairing state, then listen.
-     * - UNPAIRED: Do NOT register approver. Let system dialog + WPS PBC handle pairing.
-     * - PAIRED: Register broadcast approver for reinvocation via persistent group.
+     * Arm the broadcast ExternalApprover (GO intent 0 + WPS on first pair), then
+     * listen. Persistent-group reinvoke still keeps prior GO role until the user
+     * forgets pairings — intent only applies on fresh negotiation.
      */
     private void admitThenListen(boolean announce) {
-        if (pairingState == PairingState.PAIRED) {
-            // For paired state, register broadcast approver for reinvocation
-            armApproverForPairedDevices();
-        } else {
-            // UNPAIRED: Do NOT register broadcast approver.
-            // Let Android show system confirmation dialog, then trigger WPS PBC.
-            // Windows DAF requires WPS PBC completion to populate WifiDirectDisplay
-            // dynamic target and allow inbound RTSP 7236.
-            Log.i(TAG, "UNPAIRED state: allowing system dialog + WPS PBC for Windows trust pairing");
-        }
+        armBroadcastApprover();
         Runnable listen = () -> startListening(announce);
         // Only delete persistent groups if explicitly requested (forgetAllPairings)
         if (forgetSavedGroups) {
@@ -552,20 +582,19 @@ public final class PrimarySinkBeacon {
     }
 
     /**
-     * Register external approver ONLY for PAIRED devices (reinvocation).
-     * For UNPAIRED state, we do NOT register broadcast approver - this allows
-     * the system dialog to show for proper WPS PBC pairing with Windows.
-     * Windows requires WPS PBC completion to populate WifiDirectDisplay
-     * dynamic target and allow inbound RTSP on port 7236.
+     * Always register the broadcast ExternalApprover while advertising so we can
+     * force {@code groupOwnerIntent=0} (prefer Windows as GO). Requires API 33+.
+     * On HA1CSQTM (API 30) this is a no-op; MTK WifiP2pService still rewrites
+     * AUTO (-1) → 14 and the phone stays GO. UNPAIRED still runs WPS PBC from
+     * {@link #onConnectionRequested} when the approver path is live.
      */
     private void armApproverForPairedDevices() {
+        armBroadcastApprover();
+    }
+
+    private void armBroadcastApprover() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || manager == null || channel == null || !wanted) {
-            return;
-        }
-        // Only register broadcast approver for PAIRED state (reinvocation)
-        if (pairingState != PairingState.PAIRED) {
-            Log.d(TAG, "Not PAIRED, skipping broadcast approver to allow WPS PBC flow");
             return;
         }
         String mac = MacAddress.BROADCAST_ADDRESS.toString();
@@ -574,7 +603,7 @@ public final class PrimarySinkBeacon {
         }
         try {
             manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, approver);
-            Log.i(TAG, "addExternalApprover for reinvocation " + mac);
+            Log.i(TAG, "addExternalApprover broadcast pairingState=" + pairingState);
         } catch (Throwable err) {
             approverMacs.remove(mac);
             Log.w(TAG, "addExternalApprover failed for " + mac, err);
@@ -753,8 +782,14 @@ public final class PrimarySinkBeacon {
     }
 
     private void watchPeer(WifiP2pDevice device) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-                || device == null || device.deviceAddress == null) {
+        if (device == null || device.deviceAddress == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            // API 30–32: no ExternalApprover. WifiP2pServiceImpl maps AUTO (-1)
+            // → 14 when STA is on 5 GHz, so listen-only joins leave Phh as GO.
+            // Explicit connect with groupOwnerIntent=0 skips that rewrite.
+            maybeConnectAsClient(device);
             return;
         }
         // Only add external approver for devices in persistent groups (reinvocation).
@@ -774,6 +809,53 @@ public final class PrimarySinkBeacon {
     }
 
     /**
+     * Drive GO negotiation ourselves with {@code groupOwnerIntent=0} so Windows
+     * can become GO. Only Miracast sources (Win+K) are chased.
+     */
+    private void maybeConnectAsClient(WifiP2pDevice device) {
+        if (!wanted || groupFormed || manager == null || channel == null) {
+            return;
+        }
+        WifiP2pWfdInfo wfd = device.getWfdInfo();
+        if (wfd == null || !wfd.isEnabled()) {
+            return;
+        }
+        int type = wfd.getDeviceType();
+        if (type != WifiP2pWfdInfo.DEVICE_TYPE_WFD_SOURCE
+                && type != WifiP2pWfdInfo.DEVICE_TYPE_SOURCE_OR_PRIMARY_SINK) {
+            return;
+        }
+        if (!clientConnectAttempted.add(device.deviceAddress)) {
+            return;
+        }
+        WifiP2pConfig config = new WifiP2pConfig();
+        config.deviceAddress = device.deviceAddress;
+        config.groupOwnerIntent = 0;
+        config.wps = new WpsInfo();
+        config.wps.setup = WpsInfo.PBC;
+        Log.i(TAG, "connect as client → " + device.deviceAddress
+                + " name=\"" + device.deviceName + "\" goIntent=0");
+        try {
+            manager.connect(channel, config, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    Log.i(TAG, "connect-client started for " + device.deviceAddress);
+                }
+
+                @Override
+                public void onFailure(int reason) {
+                    clientConnectAttempted.remove(device.deviceAddress);
+                    Log.w(TAG, "connect-client failed reason=" + reason
+                            + " peer=" + device.deviceAddress);
+                }
+            });
+        } catch (Throwable err) {
+            clientConnectAttempted.remove(device.deviceAddress);
+            Log.w(TAG, "connect as client failed", err);
+        }
+    }
+
+    /**
      * Check if a peer MAC address is in one of our persistent groups.
      * Since we delete persistent groups on startup, this will typically be false.
      */
@@ -782,6 +864,8 @@ public final class PrimarySinkBeacon {
     }
 
     private final Set<String> persistentGroupMacs = new HashSet<>();
+    /** Peers we already issued {@link #maybeConnectAsClient} for (API &lt; 33). */
+    private final Set<String> clientConnectAttempted = new HashSet<>();
 
     private void removeApprovers() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
@@ -829,9 +913,20 @@ public final class PrimarySinkBeacon {
                     if (address == null) {
                         return;
                     }
-                    Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
-                            + (device != null ? " \"" + device.deviceName + "\"" : "")
-                            + " pairingState=" + pairingState);
+                    // Prefer client (Windows as GO). Phh/MTK often wins GO with
+                    // AUTO intent; Fold stays client. AOSP WifiDisplay uses MIN.
+                    if (config != null) {
+                        int before = config.groupOwnerIntent;
+                        config.groupOwnerIntent = 0;
+                        Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
+                                + (device != null ? " \"" + device.deviceName + "\"" : "")
+                                + " pairingState=" + pairingState
+                                + " goIntent " + before + "→0");
+                    } else {
+                        Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
+                                + (device != null ? " \"" + device.deviceName + "\"" : "")
+                                + " pairingState=" + pairingState);
+                    }
 
                     if (!wanted) {
                         setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_REJECT);
@@ -841,12 +936,12 @@ public final class PrimarySinkBeacon {
                     // For first-time pairing (UNPAIRED state), accept connection AND start WPS PBC
                     if (pairingState == PairingState.UNPAIRED) {
                         Log.i(TAG, "First-time connection: accepting + starting WPS PBC for " + address);
-                        setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
+                        setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
                         startWpsPbc(address);
                     } else {
                         // Already paired or reinvoking: accept directly
                         Log.i(TAG, "Reinvoking or paired connection: accepting directly");
-                        setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
+                        setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
                     }
                 }
 
@@ -857,9 +952,39 @@ public final class PrimarySinkBeacon {
             };
 
     private void setConnectionResult(String address, int result) {
+        setConnectionResult(address, null, result);
+    }
+
+    /**
+     * Accept/reject a peer request. Prefer the overload that keeps our mutated
+     * {@link WifiP2pConfig} (groupOwnerIntent=0) so Phh does not always become GO.
+     */
+    private void setConnectionResult(String address, WifiP2pConfig config, int result) {
         try {
+            MacAddress peer = MacAddress.fromString(address);
+            if (config != null) {
+                try {
+                    Method withConfig = WifiP2pManager.class.getMethod(
+                            "setConnectionRequestResult",
+                            WifiP2pManager.Channel.class,
+                            MacAddress.class,
+                            int.class,
+                            WifiP2pConfig.class,
+                            WifiP2pManager.ActionListener.class);
+                    withConfig.invoke(
+                            manager,
+                            channel,
+                            peer,
+                            result,
+                            config,
+                            logged("connection request result+config"));
+                    return;
+                } catch (NoSuchMethodException missing) {
+                    // Older API: mutate config in place and use the 3-arg form.
+                }
+            }
             manager.setConnectionRequestResult(
-                    channel, MacAddress.fromString(address), result, logged("connection request result"));
+                    channel, peer, result, logged("connection request result"));
         } catch (Throwable err) {
             Log.w(TAG, "setConnectionRequestResult failed", err);
         }

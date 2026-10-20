@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
+import android.net.wifi.WifiManager
 import android.util.Log
 import me.trinitrix.mirax.helper.Helper
 import me.trinitrix.mirax.session.PrivilegeReport
@@ -28,6 +29,27 @@ object PrivilegeProbe {
      */
     @Suppress("UNUSED_PARAMETER")
     fun probe(context: Context): PrivilegeReport {
+        // Skip privilege probing when hotspot is active - Wi-Fi Direct conflicts with hotspot
+        val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
+        var hotspotActive = false
+        try {
+            val method = wifiManager?.javaClass?.getDeclaredMethod("isWifiApEnabled")
+            val isApEnabled = method?.invoke(wifiManager) as? Boolean
+            hotspotActive = isApEnabled == true
+        } catch (e: Exception) {
+            Log.d(TAG, "Cannot check hotspot state via reflection", e)
+        }
+        
+        if (hotspotActive) {
+            Log.d(TAG, "Hotspot active, skipping privilege probe")
+            return PrivilegeReport(
+                shizukuServiceRunning = false,
+                shizukuAuthorized = false,
+                helperRunning = false,
+                rootAvailable = RootHelper.availableCached(),
+            )
+        }
+        
         val shizuku = probeShizuku()
         return PrivilegeReport(
             shizukuServiceRunning = shizuku.serviceRunning,
@@ -39,6 +61,23 @@ object PrivilegeProbe {
 
     /** Whether the privileged helper socket is accepting connections. */
     fun isHelperRunning(): Boolean = probeHelper()
+
+    /** UID reported by the process currently bound to the helper socket. */
+    fun helperUid(): Int? {
+        return try {
+            LocalSocket().use { socket ->
+                socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
+                socket.outputStream.write("UID\n".toByteArray(Charsets.UTF_8))
+                socket.outputStream.flush()
+                socket.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    reader.readLine()?.toIntOrNull()
+                }
+            }
+        } catch (err: IOException) {
+            Log.d(TAG, "Helper UID query failed", err)
+            null
+        }
+    }
 
     /**
      * Ask Shizuku for permission when the session says this stay should request once.
@@ -64,11 +103,7 @@ object PrivilegeProbe {
         }
     }
 
-    /**
-     * Ask a running helper to stop after Shizuku takes exclusive WFD ownership.
-     *
-     * Does not start a replacement helper if the socket is already gone.
-     */
+    /** Stop the currently listening helper process. */
     fun requestStopHelper() {
         try {
             LocalSocket().use { socket ->

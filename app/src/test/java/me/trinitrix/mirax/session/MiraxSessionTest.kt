@@ -20,7 +20,7 @@ class MiraxSessionTest {
         settings: SessionSettings = SessionSettings(advertisingEnabled = true),
         privilege: PrivilegeReport = PrivilegeReport(helperRunning = true),
     ): MiraxSession {
-        val session = MiraxSession(settings)
+        val session = MiraxSession(settings, TestConnectionHistory())
         session.report(privilege)
         if (settings.advertisingEnabled && session.snapshot().wfdOwner != WfdOwner.NONE) {
             session.handle(SessionAction.BeaconListening)
@@ -28,16 +28,18 @@ class MiraxSessionTest {
         return session
     }
 
+    private fun freshSession(): MiraxSession = MiraxSession(SessionSettings(), TestConnectionHistory())
+
 
     @Test
     fun freshInstall_advertisingIsOff() {
-        val session = MiraxSession()
+        val session = freshSession()
         assertThat(session.snapshot().advertisingEnabled).isFalse()
     }
 
     @Test
     fun noOwner_phaseIsFrozen_tileGray_widgetUnavailable() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         val snap = session.snapshot()
         assertThat(snap.phase).isEqualTo(ScreenPhase.FROZEN)
@@ -48,7 +50,7 @@ class MiraxSessionTest {
 
     @Test
     fun frozen_cannotTurnAdvertisingOn_andCannotReadWmSize() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         session.handle(SessionAction.SetAdvertising(true))
         val snap = session.snapshot()
@@ -59,7 +61,7 @@ class MiraxSessionTest {
 
     @Test
     fun openApp_shizukuRunningUnauthorized_requestsPermissionOnce() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(
             PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = false),
         )
@@ -75,7 +77,7 @@ class MiraxSessionTest {
 
     @Test
     fun openApp_shizukuNotRunning_doesNotRequestPermission() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         session.handle(SessionAction.OpenApp)
         assertThat(session.snapshot().shouldRequestShizukuPermission).isFalse()
@@ -83,7 +85,7 @@ class MiraxSessionTest {
 
     @Test
     fun newStay_canRequestPermissionAgain() {
-        val first = MiraxSession()
+        val first = freshSession()
         first.report(
             PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = false),
         )
@@ -92,7 +94,7 @@ class MiraxSessionTest {
         first.handle(SessionAction.Retry)
         assertThat(first.snapshot().shouldRequestShizukuPermission).isFalse()
 
-        val second = MiraxSession()
+        val second = freshSession()
         second.report(
             PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = false),
         )
@@ -102,7 +104,7 @@ class MiraxSessionTest {
 
     @Test
     fun helperOnly_ownerIsHelper_readyWhenAdvertisingOff() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         val snap = session.snapshot()
         assertThat(snap.wfdOwner).isEqualTo(WfdOwner.HELPER)
@@ -123,27 +125,26 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun helperRunning_takesPriorityOverShizuku() {
-        val session = sessionWithBroadcast()
-        assertThat(session.snapshot().wfdOwner).isEqualTo(WfdOwner.HELPER)
-
+    fun shizukuReady_takesPriorityOverHelper() {
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(
             PrivilegeReport(
                 shizukuServiceRunning = true,
                 shizukuAuthorized = true,
                 helperRunning = true,
+                rootAvailable = true,
             ),
         )
         val snap = session.snapshot()
-        assertThat(snap.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(snap.wfdOwner).isEqualTo(WfdOwner.SHIZUKU)
+        assertThat(snap.wfdAdvertise?.owner).isEqualTo(WfdOwner.SHIZUKU)
         assertThat(snap.advertisingEnabled).isTrue()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
-        assertThat(snap.effects).doesNotContain(SessionEffect.StopHelper)
+        assertThat(snap.phase).isEqualTo(ScreenPhase.ARMING)
     }
 
     @Test
     fun advertisingOn_withoutBeaconListening_isArmingNotBroadcasting() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(PrivilegeReport(helperRunning = true))
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ARMING)
         assertThat(session.snapshot().advertisingEnabled).isTrue()
@@ -152,7 +153,7 @@ class MiraxSessionTest {
 
     @Test
     fun beaconListening_promotesArmingToAdvertising() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.BeaconListening)
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
@@ -161,7 +162,7 @@ class MiraxSessionTest {
 
     @Test
     fun beaconFailed_clearsSwitch_andToasts() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.BeaconFailed)
         val snap = session.snapshot()
@@ -185,10 +186,10 @@ class MiraxSessionTest {
 
     @Test
     fun frozen_orBeaconFailed_showsCompatibilityNotice() {
-        val frozen = MiraxSession()
+        val frozen = freshSession()
         assertThat(frozen.snapshot().showCompatibilityNotice).isTrue()
 
-        val denied = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val denied = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         denied.report(PrivilegeReport(helperRunning = true))
         denied.handle(SessionAction.BeaconFailed)
         assertThat(denied.snapshot().showCompatibilityNotice).isTrue()
@@ -197,7 +198,7 @@ class MiraxSessionTest {
 
     @Test
     fun shizukuServiceUpButUnauthorized_withHelper_ownerRemainsHelper() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(
             PrivilegeReport(
                 shizukuServiceRunning = true,
@@ -211,7 +212,7 @@ class MiraxSessionTest {
 
     @Test
     fun shizukuReady_meansServiceAndAuthorized() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(
             PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = false),
         )
@@ -226,7 +227,7 @@ class MiraxSessionTest {
 
     @Test
     fun unfrozen_userCanToggleAdvertising() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.SetAdvertising(true))
         session.handle(SessionAction.BeaconListening)
@@ -239,7 +240,7 @@ class MiraxSessionTest {
 
     @Test
     fun followSystem_traditionalChineseSystem_resolvesTraditionalChinese() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(SystemLocaleReport(isTraditionalChinese = true))
         val snap = session.snapshot()
         assertThat(snap.languagePreference).isEqualTo(LanguagePreference.FOLLOW_SYSTEM)
@@ -248,14 +249,14 @@ class MiraxSessionTest {
 
     @Test
     fun followSystem_nonTraditionalSystem_includingSimplified_resolvesEnglish() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(SystemLocaleReport(isTraditionalChinese = false))
         assertThat(session.snapshot().appLanguage).isEqualTo(AppLanguage.ENGLISH)
     }
 
     @Test
     fun pinTraditionalChinese_overridesSystemLocale() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(SystemLocaleReport(isTraditionalChinese = false))
         session.handle(SessionAction.SetLanguagePreference(LanguagePreference.TRADITIONAL_CHINESE))
         val snap = session.snapshot()
@@ -265,7 +266,7 @@ class MiraxSessionTest {
 
     @Test
     fun pinEnglish_overridesTraditionalChineseSystem() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(SystemLocaleReport(isTraditionalChinese = true))
         session.handle(SessionAction.SetLanguagePreference(LanguagePreference.ENGLISH))
         val snap = session.snapshot()
@@ -277,6 +278,7 @@ class MiraxSessionTest {
     fun returnToFollowSystem_usesLatestLocaleReport() {
         val session = MiraxSession(
             SessionSettings(languagePreference = LanguagePreference.ENGLISH),
+            TestConnectionHistory(),
         )
         session.report(SystemLocaleReport(isTraditionalChinese = true))
         session.handle(SessionAction.SetLanguagePreference(LanguagePreference.FOLLOW_SYSTEM))
@@ -285,7 +287,7 @@ class MiraxSessionTest {
 
     @Test
     fun withoutOverride_effectiveNameFollowsDeviceNameReports() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(DeviceNameReport("Fold-One"))
         assertThat(session.snapshot().effectiveBroadcastName).isEqualTo("Fold-One")
         assertThat(session.snapshot().displayNameFollowsDevice).isTrue()
@@ -298,7 +300,7 @@ class MiraxSessionTest {
 
     @Test
     fun savedNonEmptyOverride_stopsFollowing_evenIfEqualToDeviceName() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(DeviceNameReport("Phone-A"))
         session.handle(SessionAction.SetDisplayNameOverride("Phone-A"))
         var snap = session.snapshot()
@@ -316,6 +318,7 @@ class MiraxSessionTest {
     fun emptyOrWhitespaceOverride_clearsAndResumesFollowing() {
         val session = MiraxSession(
             SessionSettings(displayNameOverride = "Custom"),
+            TestConnectionHistory(),
         )
         session.report(DeviceNameReport("Device-X"))
         assertThat(session.snapshot().effectiveBroadcastName).isEqualTo("Custom")
@@ -334,7 +337,7 @@ class MiraxSessionTest {
 
     @Test
     fun following_fieldHintIsDeviceName_notVariableToken() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(DeviceNameReport("Living Room Fold"))
         val snap = session.snapshot()
         assertThat(snap.displayNameFollowsDevice).isTrue()
@@ -345,7 +348,7 @@ class MiraxSessionTest {
 
     @Test
     fun frozen_languageAndDisplayNameRemainEditable() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         session.report(SystemLocaleReport(isTraditionalChinese = false))
         session.report(DeviceNameReport("Frozen-Phone"))
@@ -364,7 +367,7 @@ class MiraxSessionTest {
 
     @Test
     fun tileAndWidget_coverGrayOffAdvertisingConnectedAndUnavailable() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         assertThat(session.snapshot().tileState).isEqualTo(TileState.GRAY)
         assertThat(session.snapshot().widgetStatus).isEqualTo(WidgetStatus.UNAVAILABLE)
@@ -387,7 +390,7 @@ class MiraxSessionTest {
 
     @Test
     fun tileTap_withOwner_togglesAdvertising() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.TileTap)
         session.handle(SessionAction.BeaconListening)
@@ -401,7 +404,7 @@ class MiraxSessionTest {
 
     @Test
     fun tileTap_withoutOwner_showsShizukuNotOpen_keepsSwitchOff_doesNotRequestPermission() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(
             PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = false),
         )
@@ -415,7 +418,7 @@ class MiraxSessionTest {
 
     @Test
     fun tileTap_shizukuDown_sameToast_switchUnchanged() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         session.handle(SessionAction.TileTap)
         val snap = session.snapshot()
@@ -427,7 +430,7 @@ class MiraxSessionTest {
     @Test
     fun grayTileProbeSuccess_hostTurnsAdvertisingOn_viaSetAdvertising() {
         // Tile host: report privilege first, then SetAdvertising(true) when owner appears.
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         assertThat(session.snapshot().tileState).isEqualTo(TileState.GRAY)
 
@@ -445,7 +448,7 @@ class MiraxSessionTest {
 
     @Test
     fun advertisingOn_ownerAppears_phaseBecomesAdvertising() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(PrivilegeReport())
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
 
@@ -485,7 +488,7 @@ class MiraxSessionTest {
 
     @Test
     fun tileTap_whileConnected_turnsOffAndEndsConnection() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(
             PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = true),
         )
@@ -500,7 +503,7 @@ class MiraxSessionTest {
 
     @Test
     fun preferredMode_keepsLegalSizes_includingNonMultipleOf16_andFoldSizes() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
         assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
 
@@ -513,7 +516,7 @@ class MiraxSessionTest {
 
     @Test
     fun preferredMode_2112x1760at60_staysItsOwnMode() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("2112×1760@60"))
         assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(2112, 1760, 60))
         assertThat(session.snapshot().preferredMode).isNotEqualTo(VideoMode(2176, 1812, 60))
@@ -526,14 +529,14 @@ class MiraxSessionTest {
         assertThat(PreferredModeCorrection.snapRefreshHz(55.0)).isEqualTo(60)
         assertThat(PreferredModeCorrection.snapRefreshHz(42.0)).isEqualTo(50)
 
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("1280×720@55"))
         assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
     }
 
     @Test
     fun preferredMode_overLevel51_shrinksAlongAspect() {
-        val session = MiraxSession()
+        val session = freshSession()
         // Far beyond level 5.1 at 60 Hz; must shrink, not swap to a table mode.
         session.handle(SessionAction.CommitPreferredModeText("7680×4320@60"))
         val mode = session.snapshot().preferredMode
@@ -547,7 +550,7 @@ class MiraxSessionTest {
 
     @Test
     fun preferredMode_unparseable_restoresLastAccepted_orStaysEmpty() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("not-a-mode"))
         assertThat(session.snapshot().preferredMode).isNull()
         assertThat(session.snapshot().preferredModeText).isEmpty()
@@ -564,6 +567,7 @@ class MiraxSessionTest {
     fun preferredMode_blankClearsPreferredMode() {
         val session = MiraxSession(
             SessionSettings(preferredMode = VideoMode(1280, 720, 60), provisioningConsumed = true),
+            TestConnectionHistory(),
         )
         session.handle(SessionAction.CommitPreferredModeText("   "))
         assertThat(session.snapshot().preferredMode).isNull()
@@ -574,7 +578,7 @@ class MiraxSessionTest {
 
     @Test
     fun freshInstall_defaultStandardChecks_andNoPreferred_advertisesOnlyChecked() {
-        val session = MiraxSession()
+        val session = freshSession()
         val snap = session.snapshot()
         assertThat(snap.preferredMode).isNull()
         assertThat(snap.nextAdvertisementModes)
@@ -590,7 +594,7 @@ class MiraxSessionTest {
 
     @Test
     fun withPreferredMode_advertisementSetIsPreferredPlusChecked_deduped() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
         var set = session.snapshot().nextAdvertisementModes
         assertThat(set).contains(VideoMode(2176, 1812, 60))
@@ -605,7 +609,7 @@ class MiraxSessionTest {
 
     @Test
     fun prePlayGroupDrop_doesNotChangeNextSet_andDoesNotAddExtraModes() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.AcknowledgeEffects)
@@ -623,7 +627,7 @@ class MiraxSessionTest {
 
     @Test
     fun useThisScreen_unavailableWhileFrozen_usesOverrideOrPhysical_keepsRefresh() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("1280×720@30"))
         assertThat(session.snapshot().canUseThisScreen).isFalse()
         session.handle(
@@ -653,7 +657,7 @@ class MiraxSessionTest {
 
     @Test
     fun useThisScreen_withoutOverride_keepsPhysicalAxes_noSwap() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.AcknowledgeEffects)
         session.handle(SessionAction.CommitPreferredModeText("1280×720@60"))
@@ -669,7 +673,7 @@ class MiraxSessionTest {
 
     @Test
     fun useThisScreen_base1812x2176_rotation90_writes2176x1812_keepsRefresh() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.AcknowledgeEffects)
         session.handle(SessionAction.CommitPreferredModeText("1280×720@30"))
@@ -684,7 +688,7 @@ class MiraxSessionTest {
 
     @Test
     fun useThisScreen_rotation270_swapsAxes_rotation0And180_doNot() {
-        val at270 = MiraxSession()
+        val at270 = freshSession()
         at270.report(PrivilegeReport(helperRunning = true))
         at270.handle(SessionAction.AcknowledgeEffects)
         at270.report(PictureRotationReport(degrees = 270))
@@ -695,7 +699,7 @@ class MiraxSessionTest {
         )
         assertThat(at270.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
 
-        val at0 = MiraxSession()
+        val at0 = freshSession()
         at0.report(PrivilegeReport(helperRunning = true))
         at0.handle(SessionAction.AcknowledgeEffects)
         at0.report(PictureRotationReport(degrees = 0))
@@ -706,7 +710,7 @@ class MiraxSessionTest {
         )
         assertThat(at0.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
 
-        val at180 = MiraxSession()
+        val at180 = freshSession()
         at180.report(PrivilegeReport(helperRunning = true))
         at180.handle(SessionAction.AcknowledgeEffects)
         at180.report(PictureRotationReport(degrees = 180))
@@ -720,7 +724,7 @@ class MiraxSessionTest {
 
     @Test
     fun provisioning_rotation90_writesSwappedAxes_refresh60_sameRuleAsButton() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         assertThat(session.snapshot().effects)
             .contains(SessionEffect.ReadPlainWmSizeForProvisioning)
@@ -737,7 +741,7 @@ class MiraxSessionTest {
 
     @Test
     fun preferredMode_saved_laterRotationReport_doesNotRewrite() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.AcknowledgeEffects)
         session.report(PictureRotationReport(degrees = 0))
@@ -762,7 +766,7 @@ class MiraxSessionTest {
 
     @Test
     fun provisioning_stillOnlyOnce_andOnlyWhilePreferredUntouched() {
-        val afterProvision = MiraxSession()
+        val afterProvision = freshSession()
         afterProvision.report(PrivilegeReport(helperRunning = true))
         afterProvision.report(PictureRotationReport(degrees = 90))
         afterProvision.handle(
@@ -778,7 +782,7 @@ class MiraxSessionTest {
             .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
         assertThat(afterProvision.snapshot().preferredMode).isEqualTo(VideoMode(2176, 1812, 60))
 
-        val editedFirst = MiraxSession()
+        val editedFirst = freshSession()
         editedFirst.handle(SessionAction.PreferredModeFieldEdited)
         editedFirst.report(PrivilegeReport(helperRunning = true))
         editedFirst.report(PictureRotationReport(degrees = 90))
@@ -789,7 +793,7 @@ class MiraxSessionTest {
 
     @Test
     fun provisioning_waitsWithoutShell_readsOnceWhenOwnerAppears() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         assertThat(session.snapshot().canReadWmSize).isFalse()
         assertThat(session.snapshot().effects)
@@ -817,14 +821,14 @@ class MiraxSessionTest {
 
     @Test
     fun provisioning_editOrUseThisScreen_consumesChance_standardToggleDoesNot() {
-        val edited = MiraxSession()
+        val edited = freshSession()
         edited.handle(SessionAction.PreferredModeFieldEdited)
         edited.report(PrivilegeReport(helperRunning = true))
         assertThat(edited.snapshot().effects)
             .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
         assertThat(edited.snapshot().preferredMode).isNull()
 
-        val usedButton = MiraxSession()
+        val usedButton = freshSession()
         usedButton.report(PrivilegeReport(helperRunning = true))
         usedButton.handle(SessionAction.AcknowledgeEffects)
         usedButton.handle(
@@ -838,7 +842,7 @@ class MiraxSessionTest {
         assertThat(usedButton.snapshot().effects)
             .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
 
-        val toggled = MiraxSession()
+        val toggled = freshSession()
         toggled.handle(
             SessionAction.SetStandardModeChecked(VideoMode(1280, 720, 30), checked = true),
         )
@@ -849,7 +853,7 @@ class MiraxSessionTest {
 
     @Test
     fun provisioning_leavingUntouchedEmptyField_doesNotConsumeChance() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText(""))
         session.handle(SessionAction.CommitPreferredModeText("   "))
         session.report(PrivilegeReport(helperRunning = true))
@@ -866,7 +870,7 @@ class MiraxSessionTest {
 
     @Test
     fun frozen_canEditPreferredTextAndStandardChecks() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport())
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
 
@@ -885,7 +889,7 @@ class MiraxSessionTest {
 
     @Test
     fun setStandardModesChecked_togglesEveryRefreshForOneSize() {
-        val session = MiraxSession()
+        val session = freshSession()
         val modes = listOf(
             VideoMode(1920, 1080, 60),
             VideoMode(1920, 1080, 50),
@@ -910,7 +914,7 @@ class MiraxSessionTest {
 
     @Test
     fun standardCatalog_includesCeaVesaHhWithinLevelAndBitrate_oneRowPerMode() {
-        val session = MiraxSession()
+        val session = freshSession()
         val modes = session.snapshot().standardModes.map { it.mode }
         assertThat(modes).contains(VideoMode(1280, 720, 60))
         assertThat(modes).contains(VideoMode(1920, 1200, 60))
@@ -932,6 +936,7 @@ class MiraxSessionTest {
                 provisioningConsumed = true,
                 checkedStandardModes = emptySet(),
             ),
+            TestConnectionHistory(),
         )
         // Floor clamp still leaves the catalog empty vs preferred-mode-only offer.
         assertThat(session.snapshot().maxVideoBitrateBps)
@@ -944,7 +949,7 @@ class MiraxSessionTest {
 
     @Test
     fun setMaxVideoBitrate_clampsAndExports() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.handle(SessionAction.SetMaxVideoBitrateBps(12_000_000L))
         assertThat(session.snapshot().maxVideoBitrateBps).isEqualTo(12_000_000L)
         assertThat(session.exportSettings().maxVideoBitrateBps).isEqualTo(12_000_000L)
@@ -961,7 +966,7 @@ class MiraxSessionTest {
 
     @Test
     fun advertisingOff_withOwner_emitsNoWfdAdvertiseCommand() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.report(DeviceNameReport("Pixel Fold"))
         assertThat(session.snapshot().wfdAdvertise).isNull()
@@ -969,7 +974,7 @@ class MiraxSessionTest {
 
     @Test
     fun advertisingOn_withoutOwner_emitsNoWfdAdvertiseCommand() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         session.report(PrivilegeReport())
         session.report(DeviceNameReport("Pixel Fold"))
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
@@ -1014,6 +1019,7 @@ class MiraxSessionTest {
                 advertisingEnabled = true,
                 displayNameOverride = "Mirax Desk",
             ),
+            TestConnectionHistory(),
         )
         session.report(
             PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = true),
@@ -1089,7 +1095,7 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun sourceSelectedMode_mustBelongToAdvertisedSet_rejectsOthers() {
+    fun sourceSelectedMode_alwaysAcceptsNegotiatedMode_andLatchesOffer() {
         val session = sessionWithBroadcast()
         session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))
         val advertised = session.snapshot().nextAdvertisementModes
@@ -1097,8 +1103,11 @@ class MiraxSessionTest {
         assertThat(advertised).doesNotContain(VideoMode(2560, 1440, 60))
 
         session.handle(SessionAction.BecameDiscoverable)
+        // Windows may pick a mode outside the saved checklist (interactive remap);
+        // still accept so UIBC/picture axes stay valid.
         session.handle(SessionAction.SourceSelectedMode(VideoMode(2560, 1440, 60)))
-        assertThat(session.snapshot().selectedMode).isNull()
+        assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2560, 1440, 60))
+        assertThat(session.snapshot().connectionOfferModes).contains(VideoMode(2560, 1440, 60))
 
         session.handle(SessionAction.SourceSelectedMode(VideoMode(2176, 1812, 60)))
         assertThat(session.snapshot().selectedMode).isEqualTo(VideoMode(2176, 1812, 60))
@@ -1199,6 +1208,7 @@ class MiraxSessionTest {
     fun backConfirmPromise_survivesOtherActions_untilNextBackOrConnectionEnd() {
         val session = MiraxSession(
             SessionSettings(advertisingEnabled = true, bottomHandleEnabled = false),
+            TestConnectionHistory(),
         )
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.BeaconListening)
@@ -1272,6 +1282,7 @@ class MiraxSessionTest {
     fun bottomHandle_off_hidesPanel_butSecondBackStillRequestsEndConfirm() {
         val session = MiraxSession(
             SessionSettings(advertisingEnabled = true, bottomHandleEnabled = false),
+            TestConnectionHistory(),
         )
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.BeaconListening)
@@ -1334,7 +1345,7 @@ class MiraxSessionTest {
 
     @Test
     fun floatingBall_defaultsOn_andPersistsInExport() {
-        val session = MiraxSession()
+        val session = freshSession()
         assertThat(session.snapshot().floatingBallEnabled).isTrue()
         assertThat(session.exportSettings().floatingBallEnabled).isTrue()
 
@@ -1348,7 +1359,7 @@ class MiraxSessionTest {
 
     @Test
     fun overlayReminder_shownOnlyWhenPermissionMissing() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(OverlayPermissionReport(granted = false))
         assertThat(session.snapshot().showOverlayPermissionReminder).isTrue()
 
@@ -1359,7 +1370,7 @@ class MiraxSessionTest {
 
     @Test
     fun openApp_doesNotLeaveTheDashboardForOverlayPermission() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(OverlayPermissionReport(granted = false))
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.FROZEN)
 
@@ -1369,7 +1380,7 @@ class MiraxSessionTest {
 
     @Test
     fun requestOverlayPermission_promptsWhenAllowed_elseOpensSettings() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(OverlayPermissionReport(granted = false, canPrompt = true))
         session.handle(SessionAction.RequestOverlayPermission)
         assertThat(session.snapshot().effects).contains(SessionEffect.RequestOverlayPermission)
@@ -1415,6 +1426,7 @@ class MiraxSessionTest {
     fun connected_leftToHome_withBallOff_endsImmediately_noToast_keepsBroadcast() {
         val session = MiraxSession(
             SessionSettings(advertisingEnabled = true, floatingBallEnabled = false),
+            TestConnectionHistory(),
         )
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.BeaconListening)
@@ -1472,6 +1484,7 @@ class MiraxSessionTest {
                 advertisingEnabled = true,
                 bottomHandleEnabled = false,
             ),
+            TestConnectionHistory(),
         )
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.BeaconListening)
@@ -1508,14 +1521,14 @@ class MiraxSessionTest {
 
     @Test
     fun pictureScale_freshInstall_isProportional_andPersistsInExport() {
-        val session = MiraxSession()
+        val session = freshSession()
         assertThat(session.snapshot().pictureScale).isEqualTo(PictureScale.PROPORTIONAL)
         assertThat(session.exportSettings().pictureScale).isEqualTo(PictureScale.PROPORTIONAL)
     }
 
     @Test
     fun pictureScale_allFourModes_selectable_andExported() {
-        val session = MiraxSession()
+        val session = freshSession()
         for (scale in PictureScale.entries) {
             session.handle(SessionAction.SetPictureScale(scale))
             assertThat(session.snapshot().pictureScale).isEqualTo(scale)
@@ -1527,6 +1540,7 @@ class MiraxSessionTest {
     fun pictureScale_change_doesNotAlterNextAdvertisementSet() {
         val session = MiraxSession(
             SessionSettings(preferredMode = VideoMode(1812, 2176, 60)),
+            TestConnectionHistory(),
         )
         session.report(PrivilegeReport(helperRunning = true))
         val before = session.snapshot().nextAdvertisementModes
@@ -1578,6 +1592,7 @@ class MiraxSessionTest {
     fun connecting_hidesHandshakeLogWhenDebugMessagesAreOff() {
         val session = MiraxSession(
             SessionSettings(advertisingEnabled = true, showDebugMessages = false),
+            TestConnectionHistory(),
         )
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.PrePlayProgress)
@@ -1628,11 +1643,12 @@ class MiraxSessionTest {
 
         val snap = session.snapshot()
         assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTING)
-        assertThat(snap.connectionPreferredMode).isEqualTo(VideoMode(720, 1280, 60))
-        assertThat(snap.connectionOfferModes).contains(VideoMode(720, 1280, 60))
+        // Touch on → wm inject prefers 30 Hz (keeps panel axes).
+        assertThat(snap.connectionPreferredMode).isEqualTo(VideoMode(720, 1280, 30))
+        assertThat(snap.connectionOfferModes).contains(VideoMode(720, 1280, 30))
         assertThat(snap.preferredMode).isNull()
         assertThat(snap.customModes).isEmpty()
-        assertThat(snap.nextAdvertisementModes).doesNotContain(VideoMode(720, 1280, 60))
+        assertThat(snap.nextAdvertisementModes).doesNotContain(VideoMode(720, 1280, 30))
     }
 
     @Test
@@ -1644,6 +1660,7 @@ class MiraxSessionTest {
                 autoAddWmSizeOnConnect = false,
                 customModes = listOf(fold),
             ),
+            TestConnectionHistory(),
         )
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(
@@ -1683,7 +1700,7 @@ class MiraxSessionTest {
 
     @Test
     fun broadcastName_stripsEmojiAndWindowsPathCharacters() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(DeviceNameReport("Phone"))
         session.handle(SessionAction.SetDisplayNameOverride("Fold😀/Desk:A"))
         assertThat(session.snapshot().displayNameOverride).isEqualTo("FoldDeskA")
@@ -1692,7 +1709,7 @@ class MiraxSessionTest {
 
     @Test
     fun finishedRun_configurationKeepsConnectionSettingsOnly() {
-        val session = MiraxSession(SessionSettings(advertisingEnabled = true, touchEnabled = false))
+        val session = MiraxSession(SessionSettings(advertisingEnabled = true, touchEnabled = false), TestConnectionHistory())
         session.report(PrivilegeReport(helperRunning = true))
         session.report(DeviceNameReport("Z Fold5"))
         session.handle(SessionAction.AddCustomMode(2176, 1812, 60))
@@ -1718,7 +1735,7 @@ class MiraxSessionTest {
 
     @Test
     fun freshInstall_waitsToBroadcast_andAutoStopDefaultsToOneMinute() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         val snap = session.snapshot()
         assertThat(snap.advertisingEnabled).isFalse()
@@ -1729,7 +1746,7 @@ class MiraxSessionTest {
 
     @Test
     fun setAdvertising_wifiOff_showsPromptAndDoesNotEnable() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.report(WifiReport(enabled = false))
         session.handle(SessionAction.SetAdvertising(true))
@@ -1740,7 +1757,7 @@ class MiraxSessionTest {
 
     @Test
     fun advertising_wifiDropped_entersWifiPaused_keepsUserIntent() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.SetAdvertising(true))
         assertThat(session.snapshot().wfdAdvertise).isNotNull()
@@ -1753,7 +1770,7 @@ class MiraxSessionTest {
 
     @Test
     fun wifiPaused_wifiReturns_resumesAdvertise() {
-        val session = MiraxSession()
+        val session = freshSession()
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.SetAdvertising(true))
         session.handle(SessionAction.BeaconListening)
