@@ -14,8 +14,9 @@
 | [app-entrypoints.md](app-entrypoints.md) | 普通 App 沒有已證實的免 ADB Sink 入口；這台韌體拒絕 `pm enable` tile |
 | [privileged-entrypoints.md](privileged-entrypoints.md) | Knox 只能嘗試打開 Samsung 自己的元件，而且尚未實測、會改裝置管理前提 |
 | [device-owner-wifi-display.md](device-owner-wifi-display.md) | Device Owner 不能取得或轉授 `CONFIGURE_WIFI_DISPLAY` |
-| [touch.md](touch.md) | 一般觸控可以走 UIBC HIDC；S Pen 不在範圍內 |
-| [uibc-multitouch-investigation.md](uibc-multitouch-investigation.md) | 正式 type2 同 socket：run87 確認 Windows 十指，run86 確認筆及 UI 指筆共存；run82 找到 Cast 視窗遮擋，probe 已加前景門檻。歷史負面保留、未倒推原因；不保證每次重連、穩定 pointer ID 或實體 S Pen |
+| [touch.md](touch.md) | 早期一般觸控研究；當時 S Pen 不在範圍內，非現行功能限制 |
+| [uibc-multitouch-investigation.md](uibc-multitouch-investigation.md) | 正式 type2 同 socket：run87 確認 Windows 十指，run86 確認筆及 UI 指筆共存；run82 找到 Cast 視窗遮擋。歷史負面保留，不保證每次重連或穩定 pointer ID |
+| [uibc-pen-release-conclusion.md](uibc-pen-release-conclusion.md) | 最終筆分支整合、清理範圍、證據保留與使用者實體 S Pen 體驗的驗收界線 |
 | [large-screen-split.md](large-screen-split.md) | 平行視界的官方對應是 activity embedding，但 Google 限給多 Activity 舊 App；單一 Activity 的 Views 推論以 `SlidingPaneLayout` 最小 |
 | [win11-source-burst-pacing.md](win11-source-burst-pacing.md) | Win11 來源約每秒 30 AU 突發後靜默 ~550 ms；與 High latency ~500 ms 對齊；sink pacing 只能換成穩定延遲 |
 
