@@ -222,13 +222,13 @@ class WfdProtocolTest {
     }
 
     @Test
-    fun uibcCombinedTouchSelection_prefersMultiTouch() {
+    fun uibcCombinedTouchSelection_usesSingleTouchForFingerCheckpoint() {
         val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
         session.handle(
             "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
                 "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=SingleTouch/USB, MultiTouch/USB; port=50010\r\n",
         )
-        assertThat(session.uibcHidType).isEqualTo(3)
+        assertThat(session.uibcHidType).isEqualTo(2)
     }
 
     @Test
