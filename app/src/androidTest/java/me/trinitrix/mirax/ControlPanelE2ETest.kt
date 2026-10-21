@@ -430,7 +430,7 @@ class ControlPanelE2ETest {
         }
     }
 
-    /** Verify landscape actions and status stay visible independently of the scrollable controls. */
+    /** Verify landscape settings replace the right pane while the source and actions stay visible. */
     @Test
     fun testMockSession_landscapeEndActionStaysVisible() {
         val originalRotation = device.executeShellCommand("cmd window user-rotation").trim()
@@ -486,7 +486,7 @@ class ControlPanelE2ETest {
                 waitForObject(By.text(settingsLabel), launchTimeoutMs).click()
                 waitForObject(By.text(debugLabel), launchTimeoutMs)
                 waitForObject(By.text(sourceLabel), launchTimeoutMs)
-                waitForObject(By.text(scaleLabel), launchTimeoutMs)
+                assertThat(device.findObject(By.text(scaleLabel))).isNull()
                 assertThat(waitForObject(By.text(endLabel), launchTimeoutMs).visibleBounds).isEqualTo(buttonBounds)
                 assertThat(scrollView.parent.visibleBounds).isEqualTo(panelBounds)
                 if (scrollView.isScrollable) {
@@ -495,6 +495,10 @@ class ControlPanelE2ETest {
                 waitForObject(By.text(touchLabel), launchTimeoutMs)
                 waitForObject(By.text(cutoutLabel), launchTimeoutMs)
                 assertThat(waitForObject(By.text(endLabel), launchTimeoutMs).visibleBounds).isEqualTo(buttonBounds)
+                device.pressBack()
+                waitForObject(By.text(scaleLabel), launchTimeoutMs)
+                waitForObject(By.text(sourceLabel), launchTimeoutMs)
+                assertThat(scrollView.parent.visibleBounds).isEqualTo(panelBounds)
             } finally {
                 scenario.close()
             }

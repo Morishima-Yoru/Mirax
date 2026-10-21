@@ -782,17 +782,21 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
+        controlsColumn.addView(primarySettings)
         if (!isLandscape) {
-            controlsColumn.addView(primarySettings)
+            columnsLayout.addView(controlsColumn)
         }
-        columnsLayout.addView(controlsColumn)
         val pages = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
+            layoutParams = if (isLandscape) {
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.35f)
+            } else {
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                )
+            }
         }
-        controlPanelPrimaryPage = if (isLandscape) primarySettings else columnsLayout
+        controlPanelPrimaryPage = if (isLandscape) controlsColumn else columnsLayout
         pages.addView(
             controlPanelPrimaryPage,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
@@ -802,7 +806,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
         )
         if (isLandscape) {
-            controlsColumn.addView(pages)
+            columnsLayout.addView(pages)
             controlPanelCard.addView(columnsLayout)
         } else {
             controlPanelCard.addView(pages)
@@ -993,7 +997,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         controlPanelRoot.visibility = if (snapshot.controlPanelExpanded) View.VISIBLE else View.GONE
     }
 
-    /** Switch the lower-right pane in landscape, or the whole body in portrait. */
+    /** Switch the right-hand pane in landscape, or the whole body in portrait. */
     private fun showSettingsPage(show: Boolean) {
         controlPanelCardScrollView.scrollTo(0, 0)
         showingSettingsPage = show
