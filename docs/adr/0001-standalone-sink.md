@@ -22,6 +22,8 @@ Windows 不安裝驅動、背景服務、應用程式或轉接器。
 
 S Pen 不在範圍內。
 
+後續增補（2026-10-20）：這是本 ADR 的初始交付範圍，不是現行功能限制；後續以同一條 UIBC socket 支援獨立筆報告，詳見[指筆交付結論](../research/uibc-pen-release-conclusion.md)。自製 sink 與不在 Windows 安裝額外驅動的決定不變。
+
 ## 後果
 
 - 解析度必須在 sink 自己的 RTSP 能力裡廣告，並由 Windows 在 M4 選定。手機排版改不了來源比例。

@@ -8,7 +8,7 @@ import android.util.Log
  * focused deep modules:
  * - [AdvertisingState]: WFD ownership and listen beacon lifecycle.
  * - [CapsAndProvisioning]: Video mode catalogs, bitrate cap, custom modes, and one-time wm size provisioning.
- * - [DisplayPreferences]: UI preferences (picture scale, bottom handle, floating ball, debug toggles).
+ * - [DisplayPreferences]: UI preferences (picture scale, control panel, floating ball, debug toggles).
  * - [ActiveConnectionState]: Ephemeral states of the currently running connection.
  * - [ConnectionDiagnosticsRepository]: Finished and active connection run logs and facts (in-memory).
  * - [ConnectionHistory]: Persisted connection history (DataStore, 500 runs).
@@ -278,7 +278,10 @@ class MiraxSession(
                 caps.setMaxVideoBitrateBps(action.bps)
             }
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
-            SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe()
+            SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe(
+                {},
+                { err -> Log.w(TAG, "Failed to clear connection history", err) },
+            )
             SessionAction.ToggleControlPanel -> {
                 val next = !display.controlPanelExpanded
                 display.setControlPanelExpanded(next)
@@ -309,10 +312,8 @@ fun snapshot(): SessionSnapshot {
         val standardRows = StandardVideoModes.catalog(caps.maxVideoBitrateBps).map { mode ->
             StandardModeRow(mode = mode, checked = mode in caps.checkedStandardModes)
         }
-        val resolutionText = when {
-            activeConnection.isConnected && activeConnection.selectedMode != null -> activeConnection.selectedMode!!.format()
-            else -> caps.preferredMode?.format().orEmpty()
-        }
+        val resolutionText = (if (activeConnection.isConnected) activeConnection.selectedMode else null)
+            ?.format() ?: caps.preferredMode?.format().orEmpty()
         val handleResolution = activeConnection.selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
         val handleRefresh = activeConnection.selectedMode?.refreshHz
         val showBall =

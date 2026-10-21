@@ -266,10 +266,11 @@ class RtcpChannel {
                         }
                     } catch (_: java.net.SocketTimeoutException) {
                         // Fall through to paced RR sends.
-                    } catch (_: Exception) {
+                    } catch (err: Exception) {
                         if (sock.isClosed || !running.get()) {
                             break
                         }
+                        Log.w(TAG, "RTCP packet receive failed", err)
                     }
                     active.maybeSend(sock)
                 }
@@ -304,7 +305,8 @@ class RtcpChannel {
         running.set(false)
         try {
             socket?.close()
-        } catch (_: Exception) {
+        } catch (err: Exception) {
+            Log.w(TAG, "RTCP socket close failed", err)
         }
         socket = null
         thread = null

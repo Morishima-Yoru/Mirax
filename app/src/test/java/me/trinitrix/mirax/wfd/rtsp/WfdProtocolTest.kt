@@ -21,6 +21,17 @@ class WfdProtocolTest {
     )
 
     @Test
+    fun m3OffersOnly48kStereoLpcmThatTheSinkCanPlay() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax"))
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\n" +
+                "CSeq: 2\r\nContent-Type: text/parameters\r\n\r\nwfd_audio_codecs\r\n",
+        ).single()
+
+        assertThat(response).contains("wfd_audio_codecs: LPCM 00000002 00\r\n")
+    }
+
+    @Test
     fun standardModesAreBitSet_notOrderedList_andCustomIsLiteral() {
         val cea = WfdVideoFormatCodec.ceaMask(
             setOf(
@@ -139,7 +150,7 @@ class WfdProtocolTest {
         assertThat(session.state).isEqualTo("PLAYING")
         assertThat(afterPlay[0]).contains("wfd_idr_request")
 
-        val startupIdrCseq = Regex("CSeq: (\\d+)").find(afterPlay[0])!!.groupValues[1]
+        val startupIdrCseq = extractCSeq(afterPlay[0])
         assertThat(session.requestIdr()).isEmpty()
         session.handle("RTSP/1.0 200 OK\r\nCSeq: $startupIdrCseq\r\n\r\n")
         val refresh = session.requestIdr()
@@ -222,7 +233,17 @@ class WfdProtocolTest {
     }
 
     @Test
-    fun uibcSingleTouchSelection_usesHidTypeTwo_andDisableClearsThePort() {
+    fun uibcCombinedTouchSelection_usesSingleTouchForFingerCheckpoint() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=SingleTouch/USB, MultiTouch/USB; port=50010\r\n",
+        )
+        assertThat(session.uibcHidType).isEqualTo(2)
+    }
+
+    @Test
+    fun uibcSingleTouchSelection_usesHidTypeTwo_andDisableKeepsThePort() {
         val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
         session.handle(
             "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
@@ -234,7 +255,179 @@ class WfdProtocolTest {
             "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 5\r\n\r\n" +
                 "wfd_uibc_setting: disable\r\n",
         )
-        assertThat(session.uibcPort).isEqualTo(-1)
+        assertThat(session.uibcPort).isEqualTo(50010)
+        assertThat(session.uibcEnabled).isFalse()
+    }
+
+    @Test
+    fun disableThenEnablePreservesPort() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; generic_cap_list=none; " +
+                "hidc_cap_list=SingleTouch/USB; port=50123\r\n",
+        )
+        session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 5\r\n\r\nwfd_uibc_setting: disable\r\n")
+        session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 6\r\n\r\nwfd_uibc_setting: enable\r\n")
+        assertThat(session.uibcPort).isEqualTo(50123)
+        assertThat(session.uibcEnabled).isTrue()
+    }
+
+    @Test
+    fun m4CapabilityWithEmbeddedSetting_enablesImmediately() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_uibc_setting: enable\r\n",
+        )
+        assertThat(session.uibcPort).isEqualTo(50123)
+        assertThat(session.uibcHidType).isEqualTo(3)
+        assertThat(session.uibcEnabled).isTrue()
+    }
+
+    @Test
+    fun enableWithoutRepeatedCapability_isIdempotent() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; port=50123\r\n",
+        )
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 5\r\n\r\nwfd_uibc_setting: enable\r\n",
+        )
+        assertThat(session.uibcPort).isEqualTo(50123)
+        assertThat(session.uibcEnabled).isTrue()
+    }
+
+    @Test
+    fun sinkM15AfterPlayAndSourcePortDoesNotRequireUibcSocketToBeConnected() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = extractCSeq(setupOut.last())
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = extractCSeq(playOut.last())
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = extractCSeq(idrOut.last())
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        assertThat(session.state).isEqualTo("PLAYING")
+        val enable = session.requestUibcEnable()
+        assertThat(enable).contains("wfd_uibc_setting: enable")
+        val enableCseq = extractCSeq(enable)
+        assertThat(session.uibcEnabled).isFalse()
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $enableCseq\r\n\r\n")
+        assertThat(session.uibcEnabled).isTrue()
+        assertThat(session.state).isEqualTo("PLAYING")
+        assertThat(session.requestUibcEnable()).isEmpty()
+    }
+
+    @Test
+    fun sinkM15EnableRejected_keepsPlayingWithoutTouch() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = extractCSeq(setupOut.last())
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = extractCSeq(playOut.last())
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = extractCSeq(idrOut.last())
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        val enable = session.requestUibcEnable()
+        val enableCseq = extractCSeq(enable)
+        session.handle("RTSP/1.0 403 Forbidden\r\nCSeq: $enableCseq\r\n\r\n")
+        assertThat(session.uibcEnabled).isFalse()
+        assertThat(session.state).isEqualTo("PLAYING")
+    }
+
+    @Test
+    fun lostIdrReply_exchangeExpiresToError() {
+        var now = 1_000L
+        val session = RtspSinkSession(
+            WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true),
+            clockMs = { now },
+        )
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = extractCSeq(setupOut.last())
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = extractCSeq(playOut.last())
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = extractCSeq(idrOut.last())
+        assertThat(session.state).isEqualTo("PLAYING")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        session.requestIdr()
+        assertThat(session.requestUibcEnable()).isEmpty()
+        now += 5_000L
+        assertThat(session.requestUibcEnable()).isEmpty()
+        assertThat(session.state).isEqualTo("ERROR")
+    }
+
+    @Test
+    fun lostM15Reply_expiresAndFailsExchange() {
+        var now = 1_000L
+        val session = RtspSinkSession(
+            WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true),
+            clockMs = { now },
+        )
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        val setupOut = session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
+                "wfd_trigger_method: SETUP\r\n",
+        )
+        val setupCseq = extractCSeq(setupOut.last())
+        val playOut = session.handle(
+            "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
+                "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
+        )
+        val playCseq = extractCSeq(playOut.last())
+        val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
+        val idrCseq = extractCSeq(idrOut.last())
+        session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
+        assertThat(session.requestUibcEnable()).isNotEmpty()
+        now += 5_000L
+        assertThat(session.checkExchangeTimeout()).isTrue()
+        assertThat(session.state).isEqualTo("ERROR")
+    }
+
+    @Test
+    fun lateMatchingResponse_isAbortedAndStateBecomesError() {
+        var now = 1_000L
+        val session = RtspSinkSession(
+            WfdCapabilityTable(defaults, foldPreferred, "Mirax"),
+            clockMs = { now },
+        )
+        session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
+        now += 5_000L
+        val out = session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
+        assertThat(out).isEmpty()
+        assertThat(session.state).isEqualTo("ERROR")
     }
 
     @Test
@@ -273,6 +466,79 @@ class WfdProtocolTest {
         assertThat(demux.poll()).isNull()
     }
 
+    @Test
+    fun rtpDeliversLpcmAlongsideVideo() {
+        val wireFrame = byteArrayOf(0x12, 0x34, 0xFE.toByte(), 0xDC.toByte())
+        val pcm = ByteArray(1920) { i -> wireFrame[i % wireFrame.size] }
+        val audioPes = lpcmPes(pcm, stuffing = true)
+        val ts = java.io.ByteArrayOutputStream().apply {
+            write(pat())
+            write(pmt(withLpcm = true))
+            for (start in audioPes.indices step 184) {
+                write(MpegTsDepacketizer.tsPacket(
+                    0x102, start == 0, start / 184,
+                    audioPes.copyOfRange(start, minOf(start + 184, audioPes.size)),
+                ))
+                if (start == 0) {
+                    write(MpegTsDepacketizer.tsPacket(0x101, true, 0, pesPacket(byteArrayOf(0x11, 0x22))))
+                }
+            }
+        }.toByteArray()
+        val demux = MpegTsDepacketizer()
+        val rtp = MpegTsDepacketizer.rtpWrap(ts)
+
+        demux.pushRtp(rtp, rtp.size)
+
+        val expectedFrame = byteArrayOf(0x34, 0x12, 0xDC.toByte(), 0xFE.toByte())
+        val expectedPcm = ByteArray(1920) { i -> expectedFrame[i % expectedFrame.size] }
+        assertThat(Arrays.equals(expectedPcm, demux.pollAudio())).isTrue()
+        assertThat(Arrays.equals(byteArrayOf(0x11, 0x22), demux.poll())).isTrue()
+        assertThat(demux.pollAudio()).isNull()
+    }
+
+    @Test
+    fun missingAudioPacketsDoNotTurnFragmentsFromDifferentPesIntoSound() {
+        val demux = MpegTsDepacketizer()
+        fun deliver(ts: ByteArray) {
+            val rtp = MpegTsDepacketizer.rtpWrap(ts)
+            demux.pushRtp(rtp, rtp.size)
+        }
+
+        deliver(pat() + pmt(withLpcm = true))
+        val firstPes = lpcmPes(ByteArray(1920) { 0x11 })
+        for (start in firstPes.indices step 184) {
+            if (start == 184) continue // One audio TS packet was lost in transit.
+            deliver(MpegTsDepacketizer.tsPacket(
+                0x102, start == 0, start / 184,
+                firstPes.copyOfRange(start, minOf(start + 184, firstPes.size)),
+            ))
+        }
+        // The following PES start was lost too; its continuation must not fill the old PES.
+        deliver(MpegTsDepacketizer.tsPacket(0x102, false, 12, ByteArray(184) { 0x22 }))
+        assertThat(demux.pollAudio()).isNull()
+
+        val recoveredPes = lpcmPes(ByteArray(1920) { 0x33 })
+        for (start in recoveredPes.indices step 184) {
+            deliver(MpegTsDepacketizer.tsPacket(
+                0x102, start == 0, 13 + start / 184,
+                recoveredPes.copyOfRange(start, minOf(start + 184, recoveredPes.size)),
+            ))
+        }
+        deliver(MpegTsDepacketizer.tsPacket(0x101, true, 0, pesPacket(byteArrayOf(0x11))))
+
+        assertThat(Arrays.equals(ByteArray(1920) { 0x33 }, demux.pollAudio())).isTrue()
+        assertThat(Arrays.equals(byteArrayOf(0x11), demux.poll())).isTrue()
+    }
+
+    /**
+     * Extract the CSeq from a generated RTSP request.
+     *
+     * @param message generated RTSP request
+     * @return decimal CSeq value, or fail the test if none is present
+     */
+    private fun extractCSeq(message: String): String =
+        Regex("CSeq: (\\d+)").find(message)?.groupValues?.get(1) ?: error("missing CSeq in $message")
+
     private fun pesPacket(payload: ByteArray): ByteArray {
         val afterLength = 3 + payload.size
         val pes = ByteArray(6 + afterLength)
@@ -285,6 +551,29 @@ class WfdProtocolTest {
         pes[8] = 0x00
         System.arraycopy(payload, 0, pes, 9, payload.size)
         return pes
+    }
+
+    /**
+     * Builds the audio PES shared by video/audio and packet-loss regression fixtures.
+     *
+     * @param pcm big-endian stereo samples carried over WFD.
+     * @param stuffing whether the PES optional header has two stuffing bytes.
+     * @return a private-stream LPCM PES.
+     */
+    private fun lpcmPes(pcm: ByteArray, stuffing: Boolean = false): ByteArray {
+        val payload = byteArrayOf(0xA0.toByte(), 0x06, 0x00, 0x11) + pcm
+        val pes = pesPacket(payload)
+        val result = if (stuffing) {
+            pes.copyOfRange(0, 9) + byteArrayOf(0xFF.toByte(), 0xFF.toByte()) +
+                pes.copyOfRange(9, pes.size)
+        } else {
+            pes
+        }
+        result[3] = 0xBD.toByte()
+        result[4] = ((result.size - 6) shr 8).toByte()
+        result[5] = (result.size - 6).toByte()
+        result[8] = if (stuffing) 2 else 0
+        return result
     }
 
     private fun pat(): ByteArray {
@@ -304,20 +593,23 @@ class WfdProtocolTest {
         return MpegTsDepacketizer.tsPacket(0x000, true, 0, payload)
     }
 
-    private fun pmt(): ByteArray {
+    private fun pmt(withLpcm: Boolean = false): ByteArray {
+        val streams = byteArrayOf(
+            0x1B, 0xE1.toByte(), 0x01, 0xF0.toByte(), 0x00,
+        ) + if (withLpcm) {
+            byteArrayOf(0x83.toByte(), 0xE1.toByte(), 0x02, 0xF0.toByte(), 0x00)
+        } else {
+            byteArrayOf()
+        }
         val section = byteArrayOf(
             0x02,
-            0xB0.toByte(), 0x12,
+            0xB0.toByte(), (0x0D + streams.size).toByte(),
             0x00, 0x01,
             0xC1.toByte(),
             0x00, 0x00,
             0xE1.toByte(), 0x01,
             0xF0.toByte(), 0x00,
-            0x1B,
-            0xE1.toByte(), 0x01,
-            0xF0.toByte(), 0x00,
-            0x00, 0x00, 0x00, 0x00,
-        )
+        ) + streams + byteArrayOf(0x00, 0x00, 0x00, 0x00)
         val payload = ByteArray(1 + section.size)
         payload[0] = 0x00
         System.arraycopy(section, 0, payload, 1, section.size)

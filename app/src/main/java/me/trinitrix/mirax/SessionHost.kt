@@ -300,7 +300,7 @@ object SessionHost {
     }
 
     /**
-     * User tapped the floating ball to toggle the control panel.
+     * Toggle the control panel from the projection activity.
      */
     fun toggleControlPanel(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session

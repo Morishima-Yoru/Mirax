@@ -93,6 +93,7 @@ object SinkConnectionController {
     private var lastLatencyModeSeen: String = ""
     private var serveSelected: VideoMode? = null
     private var rtpSocket: DatagramSocket? = null
+    private val audioPlayer = LpcmAudioPlayer()
     private val rtcpChannel = RtcpChannel()
     private var appContext: Context? = null
 
@@ -221,6 +222,9 @@ object SinkConnectionController {
                             val reachedPlay = serve(socket, command, gen)
                             finishConnectionRun(reachedPlay, serveSelected)
                             if (alive(gen)) {
+                                if (!endedByUser.get()) {
+                                    WfdOwnerBridge.endSession()
+                                }
                                 postAction(
                                     if (reachedPlay) SessionAction.ConnectionEnded
                                     else SessionAction.PrePlayGroupDropped,
@@ -372,6 +376,8 @@ object SinkConnectionController {
         var sawData = false
         var poked = false
         var uibcNoted = false
+        var uibcEnableSent = false
+        var lastUibcHidType = 0
         idrNeeded.set(false)
         lastLatencyModeSeen = ""
         try {
@@ -395,7 +401,24 @@ object SinkConnectionController {
                         note("P2P group gone during RTSP")
                         break@loop
                     }
+                    if (session.state == "ERROR" || session.checkExchangeTimeout()) {
+                        note("RTSP session ERROR")
+                        break@loop
+                    }
                     writeIdrIfNeeded(session, output)
+                    if (!uibcEnableSent) {
+                        val m15 = session.requestUibcEnable()
+                        if (m15.isNotEmpty()) {
+                            try {
+                                output.write(m15.toByteArray(StandardCharsets.US_ASCII))
+                                output.flush()
+                                uibcEnableSent = true
+                                note("RTSP >> M15 wfd_uibc_setting: enable")
+                            } catch (err: Exception) {
+                                noteWarn("M15 UIBC enable failed", err)
+                            }
+                        }
+                    }
                     continue@loop
                 }
                 if (n < 0) {
@@ -428,11 +451,14 @@ object SinkConnectionController {
                         lastLatencyModeSeen = latencyMode
                         note("source latency mode $latencyMode")
                     }
-                    if (uibcNoted && session.uibcPort <= 0) {
-                        UibcTouchChannel.close()
-                        uibcNoted = false
-                        note("UIBC disabled by source")
+                    if (uibcNoted) {
+                        UibcTouchChannel.setEnabled(session.uibcEnabled)
+                        if (session.uibcHidType != lastUibcHidType) {
+                            lastUibcHidType = session.uibcHidType
+                            UibcTouchChannel.setHidType(lastUibcHidType)
+                        }
                     }
+                    Log.d("MiraxUibc", "UIBC decision: uibcNoted=$uibcNoted uibcPort=${session.uibcPort} uibcEnabled=${session.uibcEnabled} touchEnabled=${offer.touchEnabled}")
                     if (!uibcNoted && session.uibcPort > 0 && offer.touchEnabled) {
                         uibcNoted = true
                         val host = (socket.remoteSocketAddress as? java.net.InetSocketAddress)
@@ -441,7 +467,7 @@ object SinkConnectionController {
                         note("UIBC port ${session.uibcPort} type ${session.uibcHidType}")
                         if (host != null) {
                             UibcTouchChannel.onStatus = { line -> note(line) }
-                            UibcTouchChannel.open(host, session.uibcPort, session.uibcHidType)
+                            UibcTouchChannel.open(host, session.uibcPort, session.uibcHidType, enabled = session.uibcEnabled)
                             session.selectedMode?.let {
                                 UibcTouchChannel.setPictureSize(it.width, it.height)
                             }
@@ -538,6 +564,7 @@ object SinkConnectionController {
             }
             P2pNetworkBinder.bind(appContext, socket)
             rtpSocket = socket
+            audioPlayer.start()
             note("RTP listening on $port")
             Thread({
                 val buf = ByteArray(64 * 1024)
@@ -574,10 +601,15 @@ object SinkConnectionController {
                             auSinceGap++
                             decoder.submitAccessUnit(au)
                         }
-                    } catch (_: Exception) {
+                        while (true) {
+                            val pcm = demux.pollAudio() ?: break
+                            audioPlayer.submit(pcm)
+                        }
+                    } catch (err: Exception) {
                         if (socket.isClosed) {
                             break
                         }
+                        noteWarn("RTP receive failed", err)
                     }
                 }
             }, "mirax-rtp").also {
@@ -586,12 +618,14 @@ object SinkConnectionController {
             }
         } catch (err: Exception) {
             noteWarn("RTP bind failed on $port", err)
+            stopRtp()
         }
     }
 
     private fun stopRtp() {
         closeQuietly(rtpSocket)
         rtpSocket = null
+        audioPlayer.stop()
     }
 
     private fun startHardwareCursor() {

@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wfd.rtsp
 
+import android.util.Log
 import me.trinitrix.mirax.session.VideoMode
 import java.nio.charset.StandardCharsets
 import java.util.Locale
@@ -13,10 +14,13 @@ import java.util.Locale
 class RtspSinkSession(
     private val capabilities: WfdCapabilityTable,
     private val rtpPort: Int = WfdVideoFormatCodec.RTP_PORT,
+    private val clockMs: () -> Long = System::currentTimeMillis,
 ) {
     private var localCseq: Int = 1
     private var outstandingCseq: Int = -1
     private var outstandingMethod: String = ""
+    private var outstandingAtMs: Long = -1L
+    private var outstandingKind: String = ""
     private var presentationUrl: String = ""
     private var sessionId: String = ""
     var state: String = "INIT"
@@ -26,7 +30,9 @@ class RtspSinkSession(
     var formatChosen: Boolean = false
         private set
     /** TCP port the source asked this sink to dial for UIBC, or -1. */
-    var uibcPort: Int = -1
+var uibcPort: Int = -1
+        private set
+    var uibcEnabled: Boolean = false
         private set
 
     /**
@@ -62,7 +68,7 @@ class RtspSinkSession(
     fun sessionId(): String = sessionId
 
     /** Messages to write, in order, after receiving one complete RTSP message. */
-    fun handle(message: String?): List<String> {
+fun handle(message: String?): List<String> {
         val out = ArrayList<String>()
         if (message == null) {
             return out
@@ -144,10 +150,27 @@ class RtspSinkSession(
     }
 
     fun requestIdr(): String {
-        if (state != "PLAYING" || outstandingCseq != -1) {
+        if (state != "PLAYING" || hasOutstandingTransaction()) {
             return ""
         }
         return idrRequest()
+    }
+
+    /** WFD v2.1 section 6.5: exchange expiry terminates the session. */
+    fun checkExchangeTimeout(): Boolean {
+        if (outstandingCseq < 0) {
+            return false
+        }
+        if (outstandingAtMs < 0 || clockMs() - outstandingAtMs < TRANSACTION_TIMEOUT_MS) {
+            return false
+        }
+        outstandingCseq = -1
+        outstandingMethod = ""
+        outstandingKind = ""
+        outstandingAtMs = -1L
+        state = "ERROR"
+        Log.w(TAG, "RTSP exchange timeout")
+        return true
     }
 
     /**
@@ -157,7 +180,7 @@ class RtspSinkSession(
      * best-effort nudge toward interactive encode when UIBC is active.
      */
     fun requestLatencyMode(mode: String): String {
-        if (state != "PLAYING" || outstandingCseq != -1) {
+        if (state != "PLAYING" || hasOutstandingTransaction()) {
             return ""
         }
         val normalized = mode.trim().lowercase(Locale.US)
@@ -173,18 +196,65 @@ class RtspSinkSession(
         )
     }
 
+    /**
+     * Send the M15 request (WFD §6.4.15) telling the source UIBC is enabled.
+     *
+     * Windows only sends this itself when the user toggles the Win+K checkbox
+     * mid-session; when it is already checked at cast time neither side sends
+     * it, and the source never activates HIDC processing. The sink sends it
+     * once PLAY is active and the source has advertised its UIBC port. The
+     * channel dials asynchronously; a TCP connection is not an M15 precondition.
+     */
+    fun requestUibcEnable(): String {
+        if (state != "PLAYING" || hasOutstandingTransaction() || uibcPort <= 0 || uibcEnabled) {
+            return ""
+        }
+        val url = presentationUrl.ifEmpty { "rtsp://localhost/wfd1.0" }
+        Log.i(TAG, "requesting sink M15 enable port=$uibcPort")
+        return request(
+            "SET_PARAMETER",
+            url,
+            "Content-Type: text/parameters\r\n",
+            "wfd_uibc_setting: enable\r\n",
+            kind = "uibc-enable",
+        )
+    }
+
     private fun handleResponse(start: String, lines: List<String>, out: MutableList<String>) {
         val code = statusCode(start)
         val cseq = headerInt(lines, "CSeq")
         if (cseq != outstandingCseq) {
             return
         }
+        if (clockMs() - outstandingAtMs >= TRANSACTION_TIMEOUT_MS) {
+            // WFD 6.5: late matching response — abort exchange, treat as timeout.
+            outstandingCseq = -1
+            outstandingMethod = ""
+            outstandingKind = ""
+            outstandingAtMs = -1L
+            state = "ERROR"
+            Log.w(TAG, "RTSP late response timeout")
+            return
+        }
         outstandingCseq = -1
         val method = outstandingMethod
+        val kind = outstandingKind
         outstandingMethod = ""
+        outstandingKind = ""
+        outstandingAtMs = -1L
         if (code < 200 || code >= 300) {
+            // A rejected sink M15 enable must not kill PLAY; the source simply
+            // declined UIBC and the session keeps streaming without touch.
+            if (kind == "uibc-enable") {
+                Log.i(TAG, "sink M15 enable rejected code=$code")
+                return
+            }
             state = "ERROR"
             return
+        }
+        if (kind == "uibc-enable") {
+            uibcEnabled = true
+            Log.i(TAG, "sink M15 enable accepted port=$uibcPort")
         }
         when (method) {
             "OPTIONS" -> state = "READY"
@@ -308,6 +378,13 @@ class RtspSinkSession(
                         presentationUrl = tokens[0]
                     }
                 }
+                "wfd_uibc_setting" -> {
+                    when (value) {
+                        "enable" -> uibcEnabled = true
+                        "disable" -> uibcEnabled = false
+                    }
+                    Log.i(TAG, "uibc setting=$value enabled=$uibcEnabled port=$uibcPort")
+                }
                 "wfd_client_rtp_ports" -> {
                     val port = firstPort(value)
                     if (port > 0) {
@@ -316,11 +393,6 @@ class RtspSinkSession(
                 }
                 "wfd_trigger_method" -> trigger = value.trim().uppercase(Locale.US)
                 "wfd_uibc_capability" -> applyUibc(value)
-                "wfd_uibc_setting" -> {
-                    if (value.contains("disable", ignoreCase = true)) {
-                        uibcPort = -1
-                    }
-                }
                 "microsoft_latency_management_capability" -> {
                     latencyMode = value.lowercase(Locale.US).ifEmpty { "supported" }
                 }
@@ -335,20 +407,27 @@ class RtspSinkSession(
     }
 
     private fun applyUibc(value: String) {
-        if (value.contains("disable", ignoreCase = true)) {
-            uibcPort = -1
-            return
-        }
         val port = portField(value)
         if (port <= 0) {
             return
         }
         uibcPort = port
         uibcHidType = when {
-            value.contains("MultiTouch", ignoreCase = true) -> 3
+            // shortcut: prefer single touch until simultaneous Windows pointers are verified; upgrade at the multi-touch checkpoint.
             value.contains("SingleTouch", ignoreCase = true) -> 2
+            value.contains("MultiTouch", ignoreCase = true) -> 3
             else -> 3
         }
+        Log.i(TAG, "uibc capability port=$uibcPort hidType=$uibcHidType enabled=$uibcEnabled")
+    }
+
+    /**
+     * True while a sink-initiated RTSP request still owns the control slot.
+     *
+     * An expired exchange must not free the slot for another request.
+     */
+    private fun hasOutstandingTransaction(): Boolean {
+        return checkExchangeTimeout() || outstandingCseq >= 0
     }
 
     private fun portField(value: String): Int {
@@ -357,10 +436,18 @@ class RtspSinkSession(
         return if (port in 1..65535) port else -1
     }
 
-    private fun request(method: String, url: String, extraHeaders: String, body: String): String {
+    private fun request(
+        method: String,
+        url: String,
+        extraHeaders: String,
+        body: String,
+        kind: String = "",
+    ): String {
         val cseq = localCseq++
         outstandingCseq = cseq
         outstandingMethod = method
+        outstandingKind = kind
+        outstandingAtMs = clockMs()
         val sb = StringBuilder()
         sb.append(method).append(' ').append(url).append(" RTSP/1.0\r\n")
         sb.append("CSeq: ").append(cseq).append("\r\n")
@@ -376,6 +463,8 @@ class RtspSinkSession(
     }
 
     companion object {
+        private const val TRANSACTION_TIMEOUT_MS = 5_000L
+        private const val TAG = "MiraxUibc"
         private fun appendParam(sb: StringBuilder, name: String, value: String) {
             sb.append(name).append(": ").append(value).append("\r\n")
         }

@@ -91,10 +91,11 @@ object MicrosoftCursorChannel {
                             lastStatsMs = now
                             Log.i(TAG, "stats pkts=$packets parsed=$parsed")
                         }
-                    } catch (_: Exception) {
+                    } catch (err: Exception) {
                         if (sock.isClosed || !running.get()) {
                             break
                         }
+                        Log.w(TAG, "cursor packet receive failed", err)
                     }
                 }
             }, "mirax-cursor").also {
@@ -113,7 +114,8 @@ object MicrosoftCursorChannel {
         running.set(false)
         try {
             socket?.close()
-        } catch (_: Exception) {
+        } catch (err: Exception) {
+            Log.w(TAG, "cursor socket close failed", err)
         }
         socket = null
         thread = null
@@ -189,7 +191,8 @@ object MicrosoftCursorChannel {
         }
         val bitmap = try {
             BitmapFactory.decodeByteArray(buf, 0, shapeExpected)
-        } catch (_: Exception) {
+        } catch (err: Exception) {
+            Log.w(TAG, "cursor shape decode failed", err)
             null
         } ?: return
         val hx = lastHotspotX

@@ -338,6 +338,33 @@ class ControlPanelE2ETest {
         }
     }
 
+    /** A display-only picture tap must not become a phone control-panel action. */
+    @Test
+    fun testMockSession_displayOnlyTouchDoesNotOpenPanel() {
+        val session = (context as MiraxApp).session
+        val originalTouchEnabled = session.snapshot().touchEnabled
+        val intent = Intent(context, PictureActivity::class.java).apply {
+            putExtra("mirax_mock_session", true)
+        }
+        val scenario = ActivityScenario.launch<PictureActivity>(intent)
+        try {
+            scenario.onActivity { activity ->
+                session.handle(me.trinitrix.mirax.session.SessionAction.SetTouchEnabled(false))
+                SessionHost.commit(activity)
+            }
+            device.pressBack()
+            scenario.onActivity { assertThat(session.snapshot().controlPanelExpanded).isFalse() }
+            device.click(device.displayWidth / 2, device.displayHeight / 2)
+            scenario.onActivity { assertThat(session.snapshot().controlPanelExpanded).isFalse() }
+        } finally {
+            scenario.onActivity { activity ->
+                session.handle(me.trinitrix.mirax.session.SessionAction.SetTouchEnabled(originalTouchEnabled))
+                SessionHost.commit(activity)
+            }
+            scenario.close()
+        }
+    }
+
     /** Verify landscape actions and status stay visible independently of the scrollable controls. */
     @Test
     fun testMockSession_landscapeEndActionStaysVisible() {
