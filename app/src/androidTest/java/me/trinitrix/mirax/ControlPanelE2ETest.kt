@@ -2,6 +2,7 @@ package me.trinitrix.mirax
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -15,6 +16,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.Locale
 
 /**
  * End-to-end integration tests for the control panel (issue #22).
@@ -305,11 +307,23 @@ class ControlPanelE2ETest {
             val scenario = ActivityScenario.launch<PictureActivity>(intent)
             try {
                 device.waitForIdle()
-                val endButton = waitForObject(By.text("結束連線"), launchTimeoutMs)
-                val status = waitForObject(By.text("投放中"), launchTimeoutMs)
+                lateinit var endLabel: String
+                lateinit var statusLabel: String
+                lateinit var sourceLabel: String
+                lateinit var scaleLabel: String
+                scenario.onActivity { activity ->
+                    endLabel = activity.getString(R.string.end_connection_confirm_action)
+                    statusLabel = activity.getString(R.string.control_panel_casting_status)
+                    sourceLabel = activity.getString(R.string.control_panel_source_device)
+                    scaleLabel = activity.getString(R.string.control_panel_scale_title)
+                }
+                val endButton = waitForObject(By.text(endLabel), launchTimeoutMs)
+                val status = waitForObject(By.text(statusLabel), launchTimeoutMs)
+                waitForObject(By.text(sourceLabel), launchTimeoutMs)
+                waitForObject(By.text(scaleLabel), launchTimeoutMs)
                 val scrollView = waitForObject(By.clazz("android.widget.ScrollView"), launchTimeoutMs)
-                assertThat(scrollView.findObject(By.text("結束連線"))).isNull()
-                assertThat(scrollView.findObject(By.text("投放中"))).isNull()
+                assertThat(scrollView.findObject(By.text(endLabel))).isNull()
+                assertThat(scrollView.findObject(By.text(statusLabel))).isNull()
                 val buttonBounds = endButton.visibleBounds
                 val statusBounds = status.visibleBounds
                 assertThat(buttonBounds.height()).isGreaterThan(0)
@@ -317,9 +331,9 @@ class ControlPanelE2ETest {
                 assertThat(buttonBounds.bottom).isAtMost(device.displayHeight)
                 if (scrollView.isScrollable) {
                     scrollView.scroll(Direction.DOWN, 1f)
-                    assertThat(waitForObject(By.text("結束連線"), launchTimeoutMs).visibleBounds)
+                    assertThat(waitForObject(By.text(endLabel), launchTimeoutMs).visibleBounds)
                         .isEqualTo(buttonBounds)
-                    assertThat(waitForObject(By.text("投放中"), launchTimeoutMs).visibleBounds)
+                    assertThat(waitForObject(By.text(statusLabel), launchTimeoutMs).visibleBounds)
                         .isEqualTo(statusBounds)
                 }
             } finally {
@@ -331,6 +345,23 @@ class ControlPanelE2ETest {
             }
             device.executeShellCommand("cmd window user-rotation $originalRotation")
         }
+    }
+
+    /** Verify the panel resources are available in both supported app languages. */
+    @Test
+    fun testControlPanel_stringsInBothLanguages() {
+        val english = context.createConfigurationContext(
+            Configuration(context.resources.configuration).apply { setLocale(Locale.ENGLISH) },
+        )
+        val chinese = context.createConfigurationContext(
+            Configuration(context.resources.configuration).apply { setLocale(Locale.TAIWAN) },
+        )
+        assertThat(english.getString(R.string.control_panel_casting_status)).isEqualTo("Projection active")
+        assertThat(chinese.getString(R.string.control_panel_casting_status)).isEqualTo("投放中")
+        assertThat(english.getString(R.string.control_panel_scale_fit)).isEqualTo("Fit")
+        assertThat(chinese.getString(R.string.control_panel_scale_fit)).isEqualTo("等比")
+        assertThat(english.getString(R.string.end_connection_confirm_action)).isEqualTo("End connection")
+        assertThat(chinese.getString(R.string.end_connection_confirm_action)).isEqualTo("結束連線")
     }
 
     private fun findViewByIdSafely(activity: android.app.Activity, viewIdName: String): android.view.View? {

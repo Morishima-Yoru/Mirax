@@ -437,7 +437,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_accent, 4)
         }
         val titleText = TextView(this).apply {
-            text = "投放中"
+            text = getString(R.string.control_panel_casting_status)
             textSize = 17f
             typeface = MiraxUi.weight(700)
             setTextColor(getColor(R.color.mirax_on_surface))
@@ -496,15 +496,15 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             )
         }
-        statsBox.addView(frameLabel("來源裝置"))
+        statsBox.addView(frameLabel(getString(R.string.control_panel_source_device)))
         controlPanelSourceName = valueText()
         statsBox.addView(controlPanelSourceName)
 
-        statsBox.addView(frameLabel("解析度", topPadDp = 12))
+        statsBox.addView(frameLabel(getString(R.string.display_card_resolution_label), topPadDp = 12))
         controlPanelResolutionValue = valueText()
         statsBox.addView(controlPanelResolutionValue)
 
-        statsBox.addView(frameLabel("更新率", topPadDp = 12))
+        statsBox.addView(frameLabel(getString(R.string.control_panel_refresh_rate), topPadDp = 12))
         controlPanelRefreshValue = valueText()
         statsBox.addView(controlPanelRefreshValue)
 
@@ -538,7 +538,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
 
         val scaleHeader = TextView(this).apply {
-            text = "畫面縮放"
+            text = getString(R.string.control_panel_scale_title)
             textSize = 12f
             typeface = MiraxUi.weight(600)
             setTextColor(getColor(R.color.mirax_muted))
@@ -557,10 +557,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             ).apply { bottomMargin = dp(10) }
         }
         val scaleList = listOf(
-            "等比" to PictureScale.PROPORTIONAL,
-            "鋪滿" to PictureScale.CENTER_CROP,
-            "拉伸" to PictureScale.MATCH_EDGES,
-            "原寸" to PictureScale.ACTUAL,
+            getString(R.string.control_panel_scale_fit) to PictureScale.PROPORTIONAL,
+            getString(R.string.control_panel_scale_crop) to PictureScale.CENTER_CROP,
+            getString(R.string.control_panel_scale_stretch) to PictureScale.MATCH_EDGES,
+            getString(R.string.control_panel_scale_original) to PictureScale.ACTUAL,
         )
         val scaleRows = if (isLandscape && cardWidth >= dp(800)) listOf(scaleList) else scaleList.chunked(2)
         scaleButtons.clear()
@@ -624,13 +624,11 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         val orientationTitle = TextView(this).apply {
-            text = "鎖定轉向"
+            text = getString(R.string.control_panel_lock_orientation)
             textSize = 15f
             setTextColor(getColor(R.color.mirax_on_surface))
         }
         controlPanelOrientationSubtitle = TextView(this).apply {
-            val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            text = "跟隨裝置 · " + (if (isLand) "橫向" else "直向")
             textSize = 11f
             setTextColor(getColor(R.color.mirax_muted))
             layoutParams = LinearLayout.LayoutParams(
@@ -679,7 +677,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         orientationRow.addView(orientationActions)
         controlsColumn.addView(orientationRow)
 
-        controlsColumn.addView(createSwitchRow("顯示除錯資訊") { switch ->
+        controlsColumn.addView(createSwitchRow(getString(R.string.control_panel_debug_overlay)) { switch ->
             controlPanelDebugOverlaySwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -689,7 +687,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
-        controlsColumn.addView(createSwitchRow("觸控輸入") { switch ->
+        controlsColumn.addView(createSwitchRow(getString(R.string.control_panel_touch_input)) { switch ->
             controlPanelTouchEnabledSwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -699,7 +697,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
-        controlsColumn.addView(createSwitchRow("避開螢幕開孔") { switch ->
+        controlsColumn.addView(createSwitchRow(getString(R.string.control_panel_avoid_cutout)) { switch ->
             controlPanelCameraCutoutSwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -712,7 +710,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         columnsLayout.addView(controlsColumn)
         controlPanelCard.addView(columnsLayout)
 
-        controlPanelEndButton = MiraxUi.stopActionButton(this, "結束連線") {
+        controlPanelEndButton = MiraxUi.stopActionButton(this, getString(R.string.end_connection_confirm_action)) {
             applySession(SessionHost.requestEndConnection(this@PictureActivity))
         }
         if (!isLandscape) {
@@ -836,7 +834,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             controlPanelRoot.visibility = View.GONE
             return
         }
-        val sourceName = snapshot.sourceDeviceName ?: "來源名稱未知"
+        val sourceName = snapshot.sourceDeviceName ?: getString(R.string.control_panel_unknown_source)
         controlPanelSourceName.text = sourceName
         controlPanelResolutionValue.text = snapshot.handleResolutionText
         val refresh = snapshot.handleRefreshRateHz
@@ -853,12 +851,21 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             button.setTextColor(getColor(fg))
         }
         if (::controlPanelOrientationSubtitle.isInitialized) {
-            val isLand = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            controlPanelOrientationSubtitle.text = if (snapshot.orientationLockEnabled) {
-                "已鎖定 · " + (if (lockedDirectionIsLandscape) "橫向" else "直向")
+            val isLandscape = if (snapshot.orientationLockEnabled) {
+                lockedDirectionIsLandscape
             } else {
-                "跟隨裝置 · " + (if (isLand) "橫向" else "直向")
+                resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             }
+            val direction = if (isLandscape) {
+                getString(R.string.control_panel_landscape)
+            } else {
+                getString(R.string.control_panel_portrait)
+            }
+            controlPanelOrientationSubtitle.text = getString(
+                if (snapshot.orientationLockEnabled) R.string.control_panel_orientation_locked
+                else R.string.control_panel_orientation_following,
+                direction,
+            )
         }
         if (::controlPanelRotateButton.isInitialized) {
             controlPanelRotateButton.visibility =
