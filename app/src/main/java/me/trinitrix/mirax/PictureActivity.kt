@@ -21,12 +21,9 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -45,7 +42,6 @@ import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.VideoMode
-import me.trinitrix.mirax.session.connectionRunHtml
 import me.trinitrix.mirax.wfd.DebugOverlayView
 import me.trinitrix.mirax.wfd.H264SurfaceDecoder
 import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
@@ -56,11 +52,7 @@ import me.trinitrix.mirax.wfd.UibcPenContact
 import me.trinitrix.mirax.wfd.UibcTouchChannel
 import me.trinitrix.mirax.wfd.rtsp.WfdCapabilityTable
 import java.lang.ref.WeakReference
-import java.io.IOException
 import kotlin.math.roundToInt
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Fullscreen Miracast picture. Placement follows the session [me.trinitrix.mirax.session.PictureScale]
@@ -126,33 +118,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var debugOverlay: DebugOverlayView
     private val debugOverlayHandler = Handler(Looper.getMainLooper())
     private val debugOverlayRunnable = Runnable { updateDebugOverlayPeriodic() }
-    private var pendingDiagnosticsHtml: String? = null
-    private val diagnosticsExport = registerForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
-        if (uri == null) {
-            pendingDiagnosticsHtml = null
-            return@registerForActivityResult
-        }
-        val html = pendingDiagnosticsHtml
-        pendingDiagnosticsHtml = null
-        if (html == null) {
-            // shortcut: process death during the picker loses the export; persist it if that becomes common.
-            Log.w("PictureActivity", "Diagnostics export lost while choosing a document")
-            Toast.makeText(this, R.string.control_panel_export_failed, Toast.LENGTH_SHORT).show()
-            return@registerForActivityResult
-        }
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val output = contentResolver.openOutputStream(uri)
-                    ?: throw IOException("No output stream for diagnostics export")
-                output.bufferedWriter(Charsets.UTF_8).use { it.write(html) }
-            } catch (e: Exception) {
-                Log.e("PictureActivity", "Failed to export connection diagnostics", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@PictureActivity, R.string.control_panel_export_failed, Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -530,12 +495,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         val closeButton = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
             text = "✕"
+            contentDescription = getString(R.string.control_panel_close)
             textSize = 15f
-            minWidth = dp(36)
-            minHeight = dp(36)
+            minWidth = dp(48)
+            minHeight = dp(48)
             setPadding(0, 0, 0, 0)
             setTextColor(getColor(R.color.mirax_muted))
-            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
             setOnClickListener {
                 applySession(SessionHost.collapseControlPanel(this@PictureActivity))
             }
@@ -725,13 +691,14 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
         controlPanelRotateButton = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
             text = "↻"
+            contentDescription = getString(R.string.control_panel_rotate)
             textSize = 18f
-            minWidth = dp(36)
-            minHeight = dp(36)
+            minWidth = dp(48)
+            minHeight = dp(48)
             setPadding(0, 0, 0, 0)
             setTextColor(getColor(R.color.mirax_accent))
             visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
                 rightMargin = dp(6)
             }
             setOnClickListener {
@@ -743,6 +710,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         orientationActions.addView(controlPanelRotateButton)
 
         controlPanelOrientationLockSwitch = MaterialSwitch(this).apply {
+            contentDescription = getString(R.string.control_panel_lock_orientation)
             setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) {
                     lockedDirectionIsLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -756,7 +724,25 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         orientationRow.addView(orientationActions)
         controlsColumn.addView(orientationRow)
 
-        controlsColumn.addView(createSwitchRow(getString(R.string.control_panel_debug_overlay)) { switch ->
+        val advancedControls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        controlsColumn.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = getString(R.string.control_panel_more_controls)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            setOnClickListener {
+                val expanded = advancedControls.visibility != View.VISIBLE
+                advancedControls.visibility = if (expanded) View.VISIBLE else View.GONE
+                text = getString(if (expanded) R.string.control_panel_less_controls else R.string.control_panel_more_controls)
+            }
+        })
+        controlsColumn.addView(advancedControls)
+
+        advancedControls.addView(createSwitchRow(getString(R.string.control_panel_debug_overlay)) { switch ->
             controlPanelDebugOverlaySwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -766,7 +752,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
-        controlsColumn.addView(createSwitchRow(getString(R.string.control_panel_touch_input)) { switch ->
+        advancedControls.addView(createSwitchRow(getString(R.string.control_panel_touch_input)) { switch ->
             controlPanelTouchEnabledSwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -776,32 +762,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
-        controlsColumn.addView(createSwitchRow(getString(R.string.control_panel_avoid_cutout)) { switch ->
+        advancedControls.addView(createSwitchRow(getString(R.string.control_panel_avoid_cutout)) { switch ->
             controlPanelCameraCutoutSwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
                 session.handle(SessionAction.SetCameraCutoutAffectsLayout(isChecked))
                 val snapshot = SessionHost.commit(this@PictureActivity)
                 applySession(snapshot)
-            }
-        })
-
-        controlsColumn.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-            text = getString(R.string.control_panel_export_html)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
-            setOnClickListener {
-                val session = MiraxApp.instance.session
-                val activeRun = session.activeConnectionRun()
-                val run = activeRun ?: session.snapshot().connectionRuns.firstOrNull()
-                if (run == null) {
-                    Toast.makeText(this@PictureActivity, R.string.control_panel_no_diagnostics, Toast.LENGTH_SHORT).show()
-                    return@setOnClickListener
-                }
-                pendingDiagnosticsHtml = connectionRunHtml(run, active = activeRun != null)
-                diagnosticsExport.launch("mirax-diagnostics.html")
             }
         })
 
@@ -877,6 +844,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
             val switch = MaterialSwitch(this@PictureActivity)
+            switch.contentDescription = label
             onInit(switch)
             addView(switch)
         }

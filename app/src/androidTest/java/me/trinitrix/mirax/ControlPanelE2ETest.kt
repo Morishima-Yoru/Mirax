@@ -90,12 +90,46 @@ class ControlPanelE2ETest {
         }
         val scenario = ActivityScenario.launch<PictureActivity>(intent)
 
+        lateinit var closeLabel: String
+        var minTouchSize = 0
         scenario.onActivity { activity ->
             assertThat((activity.application as MiraxApp).session.snapshot().controlPanelExpanded).isTrue()
+            closeLabel = activity.getString(R.string.control_panel_close)
+            minTouchSize = (48 * activity.resources.displayMetrics.density).toInt()
         }
         waitForObject(By.text("Mock Device"), launchTimeoutMs)
+        val closeButton = waitForObject(By.desc(closeLabel), launchTimeoutMs)
+        assertThat(closeButton.visibleBounds.width()).isAtLeast(minTouchSize)
+        assertThat(closeButton.visibleBounds.height()).isAtLeast(minTouchSize)
 
         scenario.close()
+    }
+
+    /** Verify less-frequent controls are exposed only in the secondary menu. */
+    @Test
+    fun testMockSession_secondaryControlsExpandAndCollapse() {
+        val intent = Intent(context, PictureActivity::class.java).apply {
+            putExtra("mirax_mock_session", true)
+        }
+        val scenario = ActivityScenario.launch<PictureActivity>(intent)
+        try {
+            lateinit var moreLabel: String
+            lateinit var lessLabel: String
+            lateinit var debugLabel: String
+            scenario.onActivity { activity ->
+                moreLabel = activity.getString(R.string.control_panel_more_controls)
+                lessLabel = activity.getString(R.string.control_panel_less_controls)
+                debugLabel = activity.getString(R.string.control_panel_debug_overlay)
+            }
+            assertThat(device.findObject(By.text(debugLabel))).isNull()
+            waitForObject(By.text(moreLabel), launchTimeoutMs).click()
+            waitForObject(By.text(debugLabel), launchTimeoutMs)
+            waitForObject(By.desc(debugLabel), launchTimeoutMs)
+            waitForObject(By.text(lessLabel), launchTimeoutMs).click()
+            assertThat(device.findObject(By.text(debugLabel))).isNull()
+        } finally {
+            scenario.close()
+        }
     }
 
     /** Verify the panel toggle closes and reopens the debug mock session. */
@@ -431,8 +465,12 @@ class ControlPanelE2ETest {
         assertThat(chinese.getString(R.string.control_panel_casting_status)).isEqualTo("投放中")
         assertThat(english.getString(R.string.control_panel_scale_fit)).isEqualTo("Fit")
         assertThat(chinese.getString(R.string.control_panel_scale_fit)).isEqualTo("等比")
-        assertThat(english.getString(R.string.control_panel_export_html)).isEqualTo("Export diagnostics (HTML)")
-        assertThat(chinese.getString(R.string.control_panel_export_html)).isEqualTo("匯出除錯資訊 (HTML)")
+        assertThat(english.getString(R.string.control_panel_more_controls)).isEqualTo("More controls")
+        assertThat(chinese.getString(R.string.control_panel_more_controls)).isEqualTo("更多控制項")
+        assertThat(english.getString(R.string.control_panel_close)).isEqualTo("Close control panel")
+        assertThat(chinese.getString(R.string.control_panel_close)).isEqualTo("關閉投放控制面板")
+        assertThat(english.getString(R.string.control_panel_rotate)).isEqualTo("Switch orientation")
+        assertThat(chinese.getString(R.string.control_panel_rotate)).isEqualTo("切換螢幕方向")
         assertThat(english.getString(R.string.end_connection_confirm_action)).isEqualTo("End connection")
         assertThat(chinese.getString(R.string.end_connection_confirm_action)).isEqualTo("結束連線")
     }

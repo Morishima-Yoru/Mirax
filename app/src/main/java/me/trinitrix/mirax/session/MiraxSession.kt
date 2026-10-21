@@ -132,9 +132,6 @@ class MiraxSession(
         sourceDeviceName = name
     }
 
-    /** Return the current run's diagnostics before they enter persisted history. */
-    fun activeConnectionRun(): ConnectionRun? = connectionHistory.activeRun()
-
     fun handle(action: SessionAction) {
         when (action) {
             SessionAction.OpenApp -> onOpenApp()

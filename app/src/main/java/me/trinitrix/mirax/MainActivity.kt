@@ -807,7 +807,7 @@ class MainActivity : AppCompatActivity() {
     private fun pageSignature(target: Page, snapshot: SessionSnapshot): String {
         return when (target) {
             Page.DASHBOARD -> "${snapshot.phase}|${snapshot.advertisingEnabled}|${snapshot.connectionRuns.size}"
-            Page.PICTURE -> "${customSummary(snapshot)}|${modesSummary(snapshot)}|${scaleLabel(snapshot.pictureScale)}|${snapshot.touchEnabled}|${snapshot.maxVideoBitrateBps}"
+            Page.PICTURE -> "${customSummary(snapshot)}|${modesSummary(snapshot)}|${scaleLabel(snapshot.pictureScale)}|${snapshot.touchEnabled}|${snapshot.orientationLockEnabled}|${snapshot.maxVideoBitrateBps}"
             Page.CUSTOM -> "${snapshot.autoAddWmSizeOnConnect}|${snapshot.customModes.joinToString { it.format() }}"
             Page.GENERAL -> "${snapshot.displayNameOverride}|${ballOn(snapshot)}|${snapshot.languagePreference}"
             Page.MODES -> snapshot.standardModes.joinToString { "${it.mode.format()}=${it.checked}" }
@@ -1350,6 +1350,12 @@ class MainActivity : AppCompatActivity() {
             persist(session)
             render(session.snapshot())
         }.apply { tag = "touch" })
+        column.addView(switchRow(getString(R.string.control_panel_lock_orientation), snapshot.orientationLockEnabled) { enabled ->
+            val session = MiraxApp.instance.session
+            session.handle(SessionAction.SetOrientationLock(enabled))
+            persist(session)
+            render(session.snapshot())
+        }.apply { tag = "orientation-lock" })
         column.addView(section(getString(R.string.max_video_bitrate)).apply {
             (layoutParams as LinearLayout.LayoutParams).topMargin = dp(28)
         })
@@ -1362,6 +1368,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updatePicture(root: View, snapshot: SessionSnapshot) {
         updateSwitch(root, "touch", snapshot.touchEnabled)
+        updateSwitch(root, "orientation-lock", snapshot.orientationLockEnabled)
         val field = contentColumn(root).findViewWithTag<EditText>("max-bitrate") ?: return
         if (field.hasFocus()) {
             return

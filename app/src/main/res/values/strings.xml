@@ -100,9 +100,10 @@
     <string name="control_panel_debug_overlay">Show debug info</string>
     <string name="control_panel_touch_input">Touch input</string>
     <string name="control_panel_avoid_cutout">Avoid display cutout</string>
-    <string name="control_panel_export_html">Export diagnostics (HTML)</string>
-    <string name="control_panel_no_diagnostics">No connection diagnostics yet</string>
-    <string name="control_panel_export_failed">Could not save diagnostics</string>
+    <string name="control_panel_close">Close control panel</string>
+    <string name="control_panel_rotate">Switch orientation</string>
+    <string name="control_panel_more_controls">More controls</string>
+    <string name="control_panel_less_controls">Fewer controls</string>
     <string name="press_back_again_to_leave">Press Back again to leave</string>
     <string name="handle_refresh_value">%1$d Hz</string>
     <string name="settings_floating_ball_title">Floating ball</string>
