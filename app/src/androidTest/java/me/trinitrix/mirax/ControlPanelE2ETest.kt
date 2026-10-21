@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import com.google.common.truth.Truth.assertThat
@@ -289,6 +290,47 @@ class ControlPanelE2ETest {
         }
 
         scenario.close()
+    }
+
+    /** Verify landscape actions and status stay visible independently of the scrollable controls. */
+    @Test
+    fun testMockSession_landscapeEndActionStaysVisible() {
+        val originalRotation = device.executeShellCommand("cmd window user-rotation").trim()
+        val originalAngle = device.executeShellCommand("settings get system user_rotation").trim()
+        try {
+            device.executeShellCommand("cmd window user-rotation lock 1")
+            val intent = Intent(context, PictureActivity::class.java).apply {
+                putExtra("mirax_mock_session", true)
+            }
+            val scenario = ActivityScenario.launch<PictureActivity>(intent)
+            try {
+                device.waitForIdle()
+                val endButton = waitForObject(By.text("結束連線"), launchTimeoutMs)
+                val status = waitForObject(By.text("投放中"), launchTimeoutMs)
+                val scrollView = waitForObject(By.clazz("android.widget.ScrollView"), launchTimeoutMs)
+                assertThat(scrollView.findObject(By.text("結束連線"))).isNull()
+                assertThat(scrollView.findObject(By.text("投放中"))).isNull()
+                val buttonBounds = endButton.visibleBounds
+                val statusBounds = status.visibleBounds
+                assertThat(buttonBounds.height()).isGreaterThan(0)
+                assertThat(buttonBounds.top).isLessThan(scrollView.visibleBounds.top)
+                assertThat(buttonBounds.bottom).isAtMost(device.displayHeight)
+                if (scrollView.isScrollable) {
+                    scrollView.scroll(Direction.DOWN, 1f)
+                    assertThat(waitForObject(By.text("結束連線"), launchTimeoutMs).visibleBounds)
+                        .isEqualTo(buttonBounds)
+                    assertThat(waitForObject(By.text("投放中"), launchTimeoutMs).visibleBounds)
+                        .isEqualTo(statusBounds)
+                }
+            } finally {
+                scenario.close()
+            }
+        } finally {
+            if (originalRotation == "free" && originalAngle in listOf("0", "1", "2", "3")) {
+                device.executeShellCommand("cmd window user-rotation lock $originalAngle")
+            }
+            device.executeShellCommand("cmd window user-rotation $originalRotation")
+        }
     }
 
     private fun findViewByIdSafely(activity: android.app.Activity, viewIdName: String): android.view.View? {

@@ -165,9 +165,9 @@ class FloatingBallService : Service() {
             MotionEvent.ACTION_UP -> {
                 trashRoot?.visibility = View.GONE
                 if (!moved) {
-                    SessionHost.toggleControlPanel(this)
+                    SessionHost.floatingBallTapped(this)
                 } else if (isOverTrash(event.rawX, event.rawY)) {
-                    SessionHost.requestEndConnection(this)
+                    SessionHost.confirmEndConnection(this)
                 } else {
                     snapBallToEdge()
                 }

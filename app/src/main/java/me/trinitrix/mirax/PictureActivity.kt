@@ -170,6 +170,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             visibility = View.GONE
         }
         stage.addView(debugOverlay)
+        stage.bringChildToFront(controlPanelRoot)
 
         surfaceView.holder.addCallback(this)
         stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutPicture() }
@@ -278,7 +279,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 FrameLayout.LayoutParams.MATCH_PARENT,
             ),
         )
-        stage.bringChildToFront(debugOverlay)
+        stage.bringChildToFront(controlPanelRoot)
         applySession(MiraxApp.instance.session.snapshot())
     }
 
@@ -377,18 +378,25 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val cardWidth = if (isLandscape) {
-            minOf(dp(620), resources.displayMetrics.widthPixels - dp(32))
+            minOf(dp(840), resources.displayMetrics.widthPixels - dp(32))
         } else {
             minOf(dp(360), resources.displayMetrics.widthPixels - dp(32))
+        }
+        val cardHeight = if (isLandscape) {
+            FrameLayout.LayoutParams.MATCH_PARENT
+        } else {
+            FrameLayout.LayoutParams.WRAP_CONTENT
         }
 
         controlPanelCardScrollView = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_surface, 16, R.color.mirax_stroke, 1)
+            if (!isLandscape) {
+                background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_surface, 16, R.color.mirax_stroke, 1)
+            }
             layoutParams = FrameLayout.LayoutParams(
                 cardWidth,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
+                cardHeight,
                 Gravity.CENTER,
             ).apply {
                 val margin = dp(16)
@@ -401,7 +409,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         controlPanelCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(20))
+            setPadding(dp(20), if (isLandscape) 0 else dp(18), dp(20), dp(20))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -451,7 +459,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         }
         topRow.addView(closeButton)
-        controlPanelCard.addView(topRow)
+        if (!isLandscape) {
+            controlPanelCard.addView(topRow)
+        }
 
         // Columns layout: Summary (left) + Controls (right) in landscape
         val columnsLayout = LinearLayout(this).apply {
@@ -547,11 +557,14 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             ).apply { bottomMargin = dp(10) }
         }
         val scaleList = listOf(
-            listOf("等比" to PictureScale.PROPORTIONAL, "鋪滿" to PictureScale.CENTER_CROP),
-            listOf("拉伸" to PictureScale.MATCH_EDGES, "原寸" to PictureScale.ACTUAL),
+            "等比" to PictureScale.PROPORTIONAL,
+            "鋪滿" to PictureScale.CENTER_CROP,
+            "拉伸" to PictureScale.MATCH_EDGES,
+            "原寸" to PictureScale.ACTUAL,
         )
+        val scaleRows = if (isLandscape && cardWidth >= dp(800)) listOf(scaleList) else scaleList.chunked(2)
         scaleButtons.clear()
-        for ((rowIndex, rowPairs) in scaleList.withIndex()) {
+        for ((rowIndex, rowPairs) in scaleRows.withIndex()) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(
@@ -571,7 +584,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                     insetTop = 0
                     insetBottom = 0
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        if (colIndex == 0) rightMargin = dp(6)
+                        if (colIndex < rowPairs.lastIndex) rightMargin = dp(6)
                     }
                     setOnClickListener {
                         val session = MiraxApp.instance.session
@@ -699,31 +712,54 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         columnsLayout.addView(controlsColumn)
         controlPanelCard.addView(columnsLayout)
 
-        controlPanelCard.addView(View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                topMargin = dp(14)
-                bottomMargin = dp(14)
-            }
-            setBackgroundColor(getColor(R.color.mirax_stroke))
-        })
-
-        val bottomRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
-        }
         controlPanelEndButton = MiraxUi.stopActionButton(this, "結束連線") {
             applySession(SessionHost.requestEndConnection(this@PictureActivity))
         }
-        bottomRow.addView(controlPanelEndButton)
-        controlPanelCard.addView(bottomRow)
+        if (!isLandscape) {
+            controlPanelCard.addView(View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                    topMargin = dp(14)
+                    bottomMargin = dp(14)
+                }
+                setBackgroundColor(getColor(R.color.mirax_stroke))
+            })
+
+            val bottomRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                )
+            }
+            bottomRow.addView(controlPanelEndButton)
+            controlPanelCard.addView(bottomRow)
+        }
 
         controlPanelCardScrollView.addView(controlPanelCard)
         controlPanelRoot.addView(controlPanelScrim)
-        controlPanelRoot.addView(controlPanelCardScrollView)
+        if (isLandscape) {
+            // Use the landscape width for actions; only the settings need to scroll.
+            val cardContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = controlPanelCardScrollView.layoutParams
+                background = MiraxUi.rounded(this@PictureActivity, R.color.mirax_surface, 16, R.color.mirax_stroke, 1)
+                clipToOutline = true
+            }
+            controlPanelEndButton.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(56),
+            ).apply { marginEnd = dp(12) }
+            topRow.addView(controlPanelEndButton, 1)
+            topRow.setPadding(dp(20), dp(18), dp(20), 0)
+            cardContainer.addView(topRow)
+            controlPanelCardScrollView.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
+            )
+            cardContainer.addView(controlPanelCardScrollView)
+            controlPanelRoot.addView(cardContainer)
+        } else {
+            controlPanelRoot.addView(controlPanelCardScrollView)
+        }
     }
 
     private fun createSwitchRow(label: String, onInit: (MaterialSwitch) -> Unit): LinearLayout {
