@@ -101,8 +101,7 @@
     <string name="control_panel_avoid_cutout">避開螢幕開孔</string>
     <string name="control_panel_close">關閉投放控制面板</string>
     <string name="control_panel_rotate">切換螢幕方向</string>
-    <string name="control_panel_more_controls">更多控制項</string>
-    <string name="control_panel_less_controls">收起控制項</string>
+    <string name="control_panel_other_settings">其他設定</string>
     <string name="press_back_again_to_leave">再按一次返回即可離開</string>
     <string name="handle_refresh_value">%1$d Hz</string>
     <string name="settings_floating_ball_title">浮動球</string>

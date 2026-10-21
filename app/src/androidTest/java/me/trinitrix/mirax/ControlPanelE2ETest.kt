@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.widget.ScrollView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
@@ -105,30 +106,60 @@ class ControlPanelE2ETest {
         scenario.close()
     }
 
-    /** Verify less-frequent controls are exposed only in the secondary menu. */
+    /** Verify portrait settings replace the body without hiding status or disconnect. */
     @Test
-    fun testMockSession_secondaryControlsExpandAndCollapse() {
-        val intent = Intent(context, PictureActivity::class.java).apply {
-            putExtra("mirax_mock_session", true)
-        }
-        val scenario = ActivityScenario.launch<PictureActivity>(intent)
+    fun testMockSession_portraitSettingsPageKeepsActionsVisible() {
+        val originalRotation = device.executeShellCommand("cmd window user-rotation").trim()
+        val originalAngle = device.executeShellCommand("settings get system user_rotation").trim()
         try {
-            lateinit var moreLabel: String
-            lateinit var lessLabel: String
-            lateinit var debugLabel: String
-            scenario.onActivity { activity ->
-                moreLabel = activity.getString(R.string.control_panel_more_controls)
-                lessLabel = activity.getString(R.string.control_panel_less_controls)
-                debugLabel = activity.getString(R.string.control_panel_debug_overlay)
+            device.executeShellCommand("cmd window user-rotation lock 0")
+            val intent = Intent(context, PictureActivity::class.java).apply {
+                putExtra("mirax_mock_session", true)
             }
-            assertThat(device.findObject(By.text(debugLabel))).isNull()
-            waitForObject(By.text(moreLabel), launchTimeoutMs).click()
-            waitForObject(By.text(debugLabel), launchTimeoutMs)
-            waitForObject(By.desc(debugLabel), launchTimeoutMs)
-            waitForObject(By.text(lessLabel), launchTimeoutMs).click()
-            assertThat(device.findObject(By.text(debugLabel))).isNull()
+            val scenario = ActivityScenario.launch<PictureActivity>(intent)
+            try {
+                lateinit var settingsLabel: String
+                lateinit var sourceLabel: String
+                lateinit var scaleLabel: String
+                lateinit var debugLabel: String
+                lateinit var endLabel: String
+                lateinit var statusLabel: String
+                lateinit var backLabel: String
+                scenario.onActivity { activity ->
+                    settingsLabel = activity.getString(R.string.control_panel_other_settings)
+                    sourceLabel = activity.getString(R.string.control_panel_source_device)
+                    scaleLabel = activity.getString(R.string.control_panel_scale_title)
+                    debugLabel = activity.getString(R.string.control_panel_debug_overlay)
+                    endLabel = activity.getString(R.string.end_connection_confirm_action)
+                    statusLabel = activity.getString(R.string.control_panel_casting_status)
+                    backLabel = activity.getString(R.string.nav_back)
+                }
+                val mainPanelBounds = waitForObject(By.clazz(ScrollView::class.java), launchTimeoutMs).visibleBounds
+                waitForObject(By.text(settingsLabel), launchTimeoutMs).click()
+                waitForObject(By.text(debugLabel), launchTimeoutMs)
+                assertThat(waitForObject(By.clazz(ScrollView::class.java), launchTimeoutMs).visibleBounds)
+                    .isEqualTo(mainPanelBounds)
+                assertThat(device.findObject(By.text(sourceLabel))).isNull()
+                assertThat(device.findObject(By.text(scaleLabel))).isNull()
+                waitForObject(By.text(statusLabel), launchTimeoutMs)
+                waitForObject(By.text(endLabel), launchTimeoutMs)
+                device.pressBack()
+                waitForObject(By.text(sourceLabel), launchTimeoutMs)
+                waitForObject(By.text(scaleLabel), launchTimeoutMs)
+                waitForObject(By.text(settingsLabel), launchTimeoutMs).click()
+                waitForObject(By.desc(backLabel), launchTimeoutMs).click()
+                waitForObject(By.text(sourceLabel), launchTimeoutMs)
+                waitForObject(By.text(scaleLabel), launchTimeoutMs)
+                assertThat(waitForObject(By.clazz(ScrollView::class.java), launchTimeoutMs).visibleBounds)
+                    .isEqualTo(mainPanelBounds)
+            } finally {
+                scenario.close()
+            }
         } finally {
-            scenario.close()
+            if (originalRotation == "free" && originalAngle in listOf("0", "1", "2", "3")) {
+                device.executeShellCommand("cmd window user-rotation lock $originalAngle")
+            }
+            device.executeShellCommand("cmd window user-rotation $originalRotation")
         }
     }
 
@@ -416,11 +447,15 @@ class ControlPanelE2ETest {
                 lateinit var statusLabel: String
                 lateinit var sourceLabel: String
                 lateinit var scaleLabel: String
+                lateinit var settingsLabel: String
+                lateinit var debugLabel: String
                 scenario.onActivity { activity ->
                     endLabel = activity.getString(R.string.end_connection_confirm_action)
                     statusLabel = activity.getString(R.string.control_panel_casting_status)
                     sourceLabel = activity.getString(R.string.control_panel_source_device)
                     scaleLabel = activity.getString(R.string.control_panel_scale_title)
+                    settingsLabel = activity.getString(R.string.control_panel_other_settings)
+                    debugLabel = activity.getString(R.string.control_panel_debug_overlay)
                 }
                 val endButton = waitForObject(By.text(endLabel), launchTimeoutMs)
                 val status = waitForObject(By.text(statusLabel), launchTimeoutMs)
@@ -441,6 +476,11 @@ class ControlPanelE2ETest {
                     assertThat(waitForObject(By.text(statusLabel), launchTimeoutMs).visibleBounds)
                         .isEqualTo(statusBounds)
                 }
+                waitForObject(By.text(settingsLabel), launchTimeoutMs).click()
+                waitForObject(By.text(debugLabel), launchTimeoutMs)
+                waitForObject(By.text(sourceLabel), launchTimeoutMs)
+                waitForObject(By.text(scaleLabel), launchTimeoutMs)
+                assertThat(waitForObject(By.text(endLabel), launchTimeoutMs).visibleBounds).isEqualTo(buttonBounds)
             } finally {
                 scenario.close()
             }
@@ -465,8 +505,8 @@ class ControlPanelE2ETest {
         assertThat(chinese.getString(R.string.control_panel_casting_status)).isEqualTo("投放中")
         assertThat(english.getString(R.string.control_panel_scale_fit)).isEqualTo("Fit")
         assertThat(chinese.getString(R.string.control_panel_scale_fit)).isEqualTo("等比")
-        assertThat(english.getString(R.string.control_panel_more_controls)).isEqualTo("More controls")
-        assertThat(chinese.getString(R.string.control_panel_more_controls)).isEqualTo("更多控制項")
+        assertThat(english.getString(R.string.control_panel_other_settings)).isEqualTo("Other settings")
+        assertThat(chinese.getString(R.string.control_panel_other_settings)).isEqualTo("其他設定")
         assertThat(english.getString(R.string.control_panel_close)).isEqualTo("Close control panel")
         assertThat(chinese.getString(R.string.control_panel_close)).isEqualTo("關閉投放控制面板")
         assertThat(english.getString(R.string.control_panel_rotate)).isEqualTo("Switch orientation")

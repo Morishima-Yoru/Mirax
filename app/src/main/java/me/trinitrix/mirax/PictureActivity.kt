@@ -74,6 +74,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var controlPanelScrim: View
     private lateinit var controlPanelCardScrollView: ScrollView
     private lateinit var controlPanelCard: LinearLayout
+    private lateinit var controlPanelPrimaryPage: LinearLayout
+    private lateinit var controlPanelSettingsPage: LinearLayout
+    private var showingSettingsPage = false
     private lateinit var controlPanelSourceName: TextView
     private lateinit var controlPanelResolutionValue: TextView
     private lateinit var controlPanelRefreshValue: TextView
@@ -223,7 +226,11 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    applySession(SessionHost.onSystemBack(this@PictureActivity))
+                    if (showingSettingsPage) {
+                        showSettingsPage(false)
+                    } else {
+                        applySession(SessionHost.onSystemBack(this@PictureActivity))
+                    }
                 }
             },
         )
@@ -722,27 +729,30 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
         orientationActions.addView(controlPanelOrientationLockSwitch)
         orientationRow.addView(orientationActions)
-        controlsColumn.addView(orientationRow)
-
-        val advancedControls = LinearLayout(this).apply {
+        val primarySettings = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
         }
-        controlsColumn.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-            text = getString(R.string.control_panel_more_controls)
+        primarySettings.addView(orientationRow)
+        primarySettings.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = getString(R.string.control_panel_other_settings)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             )
-            setOnClickListener {
-                val expanded = advancedControls.visibility != View.VISIBLE
-                advancedControls.visibility = if (expanded) View.VISIBLE else View.GONE
-                text = getString(if (expanded) R.string.control_panel_less_controls else R.string.control_panel_more_controls)
-            }
+            setOnClickListener { showSettingsPage(true) }
         })
-        controlsColumn.addView(advancedControls)
+        val settingsPage = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        settingsPage.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+            text = "← ${getString(R.string.nav_back)}"
+            contentDescription = getString(R.string.nav_back)
+            minHeight = dp(48)
+            setOnClickListener { showSettingsPage(false) }
+        })
+        settingsPage.addView(frameLabel(getString(R.string.control_panel_other_settings)))
 
-        advancedControls.addView(createSwitchRow(getString(R.string.control_panel_debug_overlay)) { switch ->
+        settingsPage.addView(createSwitchRow(getString(R.string.control_panel_debug_overlay)) { switch ->
             controlPanelDebugOverlaySwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -752,7 +762,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
-        advancedControls.addView(createSwitchRow(getString(R.string.control_panel_touch_input)) { switch ->
+        settingsPage.addView(createSwitchRow(getString(R.string.control_panel_touch_input)) { switch ->
             controlPanelTouchEnabledSwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -762,7 +772,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
-        advancedControls.addView(createSwitchRow(getString(R.string.control_panel_avoid_cutout)) { switch ->
+        settingsPage.addView(createSwitchRow(getString(R.string.control_panel_avoid_cutout)) { switch ->
             controlPanelCameraCutoutSwitch = switch
             switch.setOnCheckedChangeListener { _, isChecked ->
                 val session = MiraxApp.instance.session
@@ -772,8 +782,33 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         })
 
+        if (!isLandscape) {
+            controlsColumn.addView(primarySettings)
+        }
         columnsLayout.addView(controlsColumn)
-        controlPanelCard.addView(columnsLayout)
+        val pages = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        controlPanelPrimaryPage = if (isLandscape) primarySettings else columnsLayout
+        pages.addView(
+            controlPanelPrimaryPage,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
+        )
+        pages.addView(
+            settingsPage,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT),
+        )
+        if (isLandscape) {
+            controlsColumn.addView(pages)
+            controlPanelCard.addView(columnsLayout)
+        } else {
+            controlPanelCard.addView(pages)
+        }
+        controlPanelSettingsPage = settingsPage
+        showSettingsPage(showingSettingsPage)
 
         controlPanelEndButton = MiraxUi.stopActionButton(this, getString(R.string.end_connection_confirm_action)) {
             applySession(SessionHost.requestEndConnection(this@PictureActivity))
@@ -899,6 +934,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private fun renderControlPanel(snapshot: SessionSnapshot) {
         applyOrientationLock(snapshot.orientationLockEnabled)
         if (!snapshot.controlPanelExpanded) {
+            showSettingsPage(false)
             controlPanelRoot.visibility = View.GONE
             return
         }
@@ -955,6 +991,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             controlPanelCameraCutoutSwitch.isChecked = snapshot.cameraCutoutAffectsLayout
         }
         controlPanelRoot.visibility = if (snapshot.controlPanelExpanded) View.VISIBLE else View.GONE
+    }
+
+    /** Switch the lower-right pane in landscape, or the whole body in portrait. */
+    private fun showSettingsPage(show: Boolean) {
+        showingSettingsPage = show
+        controlPanelPrimaryPage.visibility = if (show) View.INVISIBLE else View.VISIBLE
+        controlPanelSettingsPage.visibility = if (show) View.VISIBLE else View.INVISIBLE
     }
 
     private fun layoutPicture() {
