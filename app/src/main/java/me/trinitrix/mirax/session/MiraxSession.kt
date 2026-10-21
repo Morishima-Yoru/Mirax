@@ -1,9 +1,6 @@
 package me.trinitrix.mirax.session
 
 import android.util.Log
-import java.net.InetAddress
-import me.trinitrix.mirax.MiraxApp
-import me.trinitrix.mirax.SessionPreferences
 
 /**
  * Mirax product session facade: the single external test seam preserving
@@ -51,6 +48,8 @@ class MiraxSession(
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
     private var sourceDeviceName: String? = null
+    var sourceNameGeneration: Long = 0L
+        private set
     private var miraxDisplayId: Int = 0
     private var pictureRotationDegrees: Int = 0
     private var overlayGranted: Boolean = false
@@ -77,7 +76,7 @@ class MiraxSession(
         privilege = report
         if (nextOwner == WfdOwner.NONE) {
             advertisingState.onOwnerNone()
-            activeConnection = ActiveConnectionState()
+            clearConnectionEphemerals()
             caps.provisioningReadRequested = false
             pendingEffects = pendingEffects.filterNot {
                 it is SessionEffect.ReadPlainWmSizeForProvisioning
@@ -127,9 +126,14 @@ class MiraxSession(
     }
 
     fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60), name: String = "Mock Device") {
+        sourceNameGeneration++
+        display.setControlPanelExpanded(false)
         activeConnection.enterMockConnected(mode)
         sourceDeviceName = name
     }
+
+    /** Return the current run's diagnostics before they enter persisted history. */
+    fun activeConnectionRun(): ConnectionRun? = connectionHistory.activeRun()
 
     fun handle(action: SessionAction) {
         when (action) {
@@ -169,6 +173,8 @@ class MiraxSession(
                 endConnectionState(emitDrop = false)
             }
             is SessionAction.BeginConnectionRun -> {
+                sourceNameGeneration++
+                sourceDeviceName = null
                 activeConnection.onPrePlayProgress(caps.resolveNextAdvertisementModes())
                 diagnostics.beginRun(action.remoteHost, configurationBackup())
                 connectionHistory.start(action.remoteHost, configurationBackup())
@@ -280,11 +286,6 @@ class MiraxSession(
             }
             is SessionAction.SetOrientationLock -> {
                 display.setOrientationLockEnabled(action.enabled)
-                try {
-                    SessionPreferences.saveOrientationLockEnabled(MiraxApp.instance.applicationContext, action.enabled)
-                } catch (e: UninitializedPropertyAccessException) {
-                    // MiraxApp not initialized (e.g., in unit tests), skip persistence
-                }
             }
             is SessionAction.SetSourceDeviceName -> {
                 sourceDeviceName = action.name
@@ -319,9 +320,6 @@ fun snapshot(): SessionSnapshot {
                 activeConnection.awayOnHomeScreenState &&
                 overlayGranted &&
                 display.floatingBallEnabled
-        if (sourceDeviceName == null) {
-            sourceDeviceName = resolveSourceDeviceName()
-        }
         return SessionSnapshot(
             phase = phase,
             wfdOwner = owner,
@@ -517,7 +515,7 @@ fun snapshot(): SessionSnapshot {
 
     private fun endConnectionState(emitDrop: Boolean) {
         val wasConnected = activeConnection.isConnected
-        activeConnection = ActiveConnectionState()
+        clearConnectionEphemerals()
         if (emitDrop && wasConnected) {
             if (SessionEffect.DropActiveConnection !in pendingEffects) {
                 pendingEffects = pendingEffects + SessionEffect.DropActiveConnection
@@ -572,7 +570,10 @@ fun snapshot(): SessionSnapshot {
     }
 
     private fun clearConnectionEphemerals() {
+        sourceNameGeneration++
         activeConnection = ActiveConnectionState()
+        display.setControlPanelExpanded(false)
+        sourceDeviceName = null
     }
 
     private fun applyProvisioningWmSize(reading: WmSizeReading) {
@@ -659,18 +660,6 @@ fun snapshot(): SessionSnapshot {
                 phase == ScreenPhase.CONNECTING ||
                 phase == ScreenPhase.WIFI_PAUSED -> WidgetStatus.ADVERTISING
             else -> WidgetStatus.OFF
-        }
-    }
-
-    private fun resolveSourceDeviceName(): String? {
-        val activeRun = connectionHistory.activeRun() ?: return null
-        val host = activeRun.remoteHost
-        if (host.isBlank()) return null
-        return try {
-            InetAddress.getByName(host).takeIf { !it.hostName.equals(host, ignoreCase = true) }?.hostName
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to resolve source device name for $host", e)
-            null
         }
     }
 

@@ -21,9 +21,12 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -40,6 +43,7 @@ import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.VideoMode
+import me.trinitrix.mirax.session.connectionRunHtml
 import me.trinitrix.mirax.wfd.DebugOverlayView
 import me.trinitrix.mirax.wfd.H264SurfaceDecoder
 import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
@@ -50,7 +54,11 @@ import me.trinitrix.mirax.wfd.UibcPenContact
 import me.trinitrix.mirax.wfd.UibcTouchChannel
 import me.trinitrix.mirax.wfd.rtsp.WfdCapabilityTable
 import java.lang.ref.WeakReference
+import java.io.IOException
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Fullscreen Miracast picture. Placement follows the session [me.trinitrix.mirax.session.PictureScale]
@@ -100,10 +108,38 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var debugOverlay: DebugOverlayView
     private val debugOverlayHandler = Handler(Looper.getMainLooper())
     private val debugOverlayRunnable = Runnable { updateDebugOverlayPeriodic() }
+    private var pendingDiagnosticsHtml: String? = null
+    private val diagnosticsExport = registerForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
+        if (uri == null) {
+            pendingDiagnosticsHtml = null
+            return@registerForActivityResult
+        }
+        val html = pendingDiagnosticsHtml
+        pendingDiagnosticsHtml = null
+        if (html == null) {
+            // shortcut: process death during the picker loses the export; persist it if that becomes common.
+            Log.w("PictureActivity", "Diagnostics export lost while choosing a document")
+            Toast.makeText(this, R.string.control_panel_export_failed, Toast.LENGTH_SHORT).show()
+            return@registerForActivityResult
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val output = contentResolver.openOutputStream(uri)
+                    ?: throw IOException("No output stream for diagnostics export")
+                output.bufferedWriter(Charsets.UTF_8).use { it.write(html) }
+            } catch (e: Exception) {
+                Log.e("PictureActivity", "Failed to export connection diagnostics", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@PictureActivity, R.string.control_panel_export_failed, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showing = WeakReference(this)
+        lockedDirectionIsLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.statusBarColor = Color.BLACK
@@ -232,6 +268,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         hideSystemBars()
         // Projection is foreground again — hide the ball without ending the connection.
         val session = MiraxApp.instance.session
+        if (session.snapshot().orientationLockEnabled && requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+            lockedDirectionIsLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        }
         if (session.snapshot().showFloatingBall) {
             applySession(SessionHost.openedMiraxDashboard(this))
         } else {
@@ -265,6 +304,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (!MiraxApp.instance.session.snapshot().orientationLockEnabled) {
+            lockedDirectionIsLandscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+        }
         hideSystemBars()
         MiraxApp.instance.session.report(
             PictureRotationReport(SessionHost.pictureRotationDegrees(this, displayId = null)),
@@ -587,10 +629,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                         if (colIndex < rowPairs.lastIndex) rightMargin = dp(6)
                     }
                     setOnClickListener {
-                        val session = MiraxApp.instance.session
-                        session.handle(SessionAction.SetPictureScale(scale))
-                        val snapshot = SessionHost.commit(this@PictureActivity)
-                        applySession(snapshot)
+                        applySession(SessionHost.setPictureScale(this@PictureActivity, scale))
                     }
                 }
                 scaleButtons[scale] = btn
@@ -704,6 +743,25 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 session.handle(SessionAction.SetCameraCutoutAffectsLayout(isChecked))
                 val snapshot = SessionHost.commit(this@PictureActivity)
                 applySession(snapshot)
+            }
+        })
+
+        controlsColumn.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = getString(R.string.control_panel_export_html)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            setOnClickListener {
+                val session = MiraxApp.instance.session
+                val activeRun = session.activeConnectionRun()
+                val run = activeRun ?: session.snapshot().connectionRuns.firstOrNull()
+                if (run == null) {
+                    Toast.makeText(this@PictureActivity, R.string.control_panel_no_diagnostics, Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                pendingDiagnosticsHtml = connectionRunHtml(run, active = activeRun != null)
+                diagnosticsExport.launch("mirax-diagnostics.html")
             }
         })
 
@@ -830,6 +888,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun renderControlPanel(snapshot: SessionSnapshot) {
+        applyOrientationLock(snapshot.orientationLockEnabled)
         if (!snapshot.controlPanelExpanded) {
             controlPanelRoot.visibility = View.GONE
             return
@@ -874,7 +933,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (::controlPanelOrientationLockSwitch.isInitialized && controlPanelOrientationLockSwitch.isChecked != snapshot.orientationLockEnabled) {
             controlPanelOrientationLockSwitch.isChecked = snapshot.orientationLockEnabled
         }
-        applyOrientationLock(snapshot.orientationLockEnabled)
         if (::controlPanelDebugOverlaySwitch.isInitialized && controlPanelDebugOverlaySwitch.isChecked != snapshot.showDebugOverlay) {
             controlPanelDebugOverlaySwitch.isChecked = snapshot.showDebugOverlay
         }
@@ -1308,6 +1366,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         fun relayoutIfShowing() {
             showing?.get()?.runOnUiThread {
                 showing?.get()?.layoutPicture()
+            }
+        }
+
+        /** Refresh the panel after an asynchronous source-name lookup. */
+        fun refreshIfShowing() {
+            showing?.get()?.runOnUiThread {
+                showing?.get()?.applySession(MiraxApp.instance.session.snapshot())
             }
         }
     }

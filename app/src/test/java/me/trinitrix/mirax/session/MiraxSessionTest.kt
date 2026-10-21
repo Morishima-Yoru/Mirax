@@ -1767,6 +1767,30 @@ class MiraxSessionTest {
         assertThat(session.snapshot().sourceDeviceName).isNull()
     }
 
+    @Test
+    fun connectionEnded_clearsSourceNameAndPanel() {
+        val session = connectedSession()
+        session.handle(SessionAction.SetSourceDeviceName("Previous source"))
+        session.handle(SessionAction.ToggleControlPanel)
+
+        session.handle(SessionAction.ConnectionEnded)
+
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+    }
+
+    @Test
+    fun beginConnectionRun_clearsPreviousSourceName() {
+        val session = freshSession()
+        session.handle(SessionAction.SetSourceDeviceName("Previous source"))
+        val previousGeneration = session.sourceNameGeneration
+
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2"))
+
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+        assertThat(session.sourceNameGeneration).isGreaterThan(previousGeneration)
+    }
+
     private fun connectedSession(): MiraxSession {
         val session = sessionWithBroadcast()
         session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))

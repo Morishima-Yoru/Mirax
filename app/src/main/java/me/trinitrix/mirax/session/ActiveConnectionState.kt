@@ -134,6 +134,7 @@ internal class ActiveConnectionState {
         connectionAdvertisedModesInternal = setOf(mode)
         awayOnHomeScreen = false
         backEndsConnectionPending = false
+        controlPanelExpanded = false
     }
 
     sealed interface BackResult {

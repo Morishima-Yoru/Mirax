@@ -3,9 +3,17 @@ package me.trinitrix.mirax
 import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.view.Display
 import android.view.Surface
 import android.widget.Toast
+import java.net.InetAddress
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import me.trinitrix.mirax.broadcast.BroadcastAutoStop
 import me.trinitrix.mirax.broadcast.EndConnectionConfirm
 import me.trinitrix.mirax.host.OverlayPermission
@@ -41,6 +49,9 @@ import me.trinitrix.mirax.wm.WmSize
  * the session decides visible-picture axes.
  */
 object SessionHost {
+    private const val SOURCE_NAME_TIMEOUT_NS = 2_000_000_000L
+    private val sourceNameScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mainHandler = Handler(Looper.getMainLooper())
     /**
      * Dashboard or other UI toggled the shared advertising switch.
      */
@@ -132,7 +143,39 @@ object SessionHost {
         session.handle(action)
         val snapshot = commit(context)
         MainActivity.refreshIfShowing()
+        if (action is SessionAction.BeginConnectionRun && action.remoteHost.isNotBlank()) {
+            resolveSourceDeviceName(context.applicationContext, session, action.remoteHost, session.sourceNameGeneration)
+        }
         return snapshot
+    }
+
+    private fun resolveSourceDeviceName(
+        context: Context,
+        session: me.trinitrix.mirax.session.MiraxSession,
+        host: String,
+        generation: Long,
+    ) {
+        sourceNameScope.launch {
+            // shortcut: timed-out platform DNS may occupy an IO worker; use cancellable DNS if timeouts recur.
+            val startedAt = System.nanoTime()
+            val name = try {
+                InetAddress.getByName(host).hostName.takeUnless { it.equals(host, ignoreCase = true) }
+            } catch (e: Exception) {
+                Log.w("SessionHost", "Failed to resolve source device name for $host", e)
+                null
+            }
+            if (System.nanoTime() - startedAt > SOURCE_NAME_TIMEOUT_NS) {
+                Log.w("SessionHost", "Source device name lookup timed out for $host")
+                return@launch
+            }
+            if (name == null) return@launch
+            mainHandler.post {
+                if (MiraxApp.instance.session !== session || session.sourceNameGeneration != generation) return@post
+                session.handle(SessionAction.SetSourceDeviceName(name))
+                commit(context)
+                PictureActivity.refreshIfShowing()
+            }
+        }
     }
 
     /**

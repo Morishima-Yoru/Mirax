@@ -2,9 +2,14 @@ package me.trinitrix.mirax
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.scrollTo
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
@@ -12,6 +17,7 @@ import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import com.google.common.truth.Truth.assertThat
+import me.trinitrix.mirax.session.PictureScale
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -61,6 +67,10 @@ class ControlPanelE2ETest {
         val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
         device = UiDevice.getInstance(instrumentation)
         context = ApplicationProvider.getApplicationContext<Context>()
+        val session = (context as MiraxApp).session
+        if (session.snapshot().controlPanelExpanded) {
+            session.handle(me.trinitrix.mirax.session.SessionAction.ToggleControlPanel)
+        }
 
         device.wakeUp()
         device.executeShellCommand("wm dismiss-keyguard")
@@ -72,34 +82,23 @@ class ControlPanelE2ETest {
         device.pressHome()
     }
 
-    /**
-     * Launch PictureActivity with mock session and verify control panel is hidden by default.
-     */
+    /** Verify the debug mock opens the control panel on launch. */
     @Test
-    fun testMockSession_controlPanelHiddenByDefault() {
-        // Launch PictureActivity with mock session
+    fun testMockSession_controlPanelVisibleByDefault() {
         val intent = Intent(context, PictureActivity::class.java).apply {
             putExtra("mirax_mock_session", true)
         }
         val scenario = ActivityScenario.launch<PictureActivity>(intent)
 
-        scenario.onActivity { activity: PictureActivity ->
-            // Wait for activity to be ready
-            Thread.sleep(1000)
-
-            // Verify control panel is hidden (controlPanelExpanded = false by default)
-            val controlPanelRoot = findViewByIdSafely(activity, "controlPanelRoot")
-            assertThat(controlPanelRoot?.visibility).isEqualTo(android.view.View.GONE)
+        scenario.onActivity { activity ->
+            assertThat((activity.application as MiraxApp).session.snapshot().controlPanelExpanded).isTrue()
         }
+        waitForObject(By.text("Mock Device"), launchTimeoutMs)
 
         scenario.close()
     }
 
-    /**
-     * Test that tapping the scrim expands the control panel.
-     * Note: In mock session, we can't easily simulate the toggle, but we can verify
-     * the session action dispatching works.
-     */
+    /** Verify the panel toggle closes and reopens the debug mock session. */
     @Test
     fun testMockSession_controlPanelExpandsOnToggle() {
         val intent = Intent(context, PictureActivity::class.java).apply {
@@ -107,32 +106,47 @@ class ControlPanelE2ETest {
         }
         val scenario = ActivityScenario.launch<PictureActivity>(intent)
 
-        scenario.onActivity { activity: PictureActivity ->
-            Thread.sleep(1000)
+        scenario.onActivity { activity ->
+            val session = (activity.application as MiraxApp).session
+            assertThat(session.snapshot().controlPanelExpanded).isTrue()
 
-            // Verify initial state - panel is collapsed
-            val controlPanelRoot = findViewByIdSafely(activity, "controlPanelRoot")
-            assertThat(controlPanelRoot?.visibility).isEqualTo(android.view.View.GONE)
+            session.handle(me.trinitrix.mirax.session.SessionAction.ToggleControlPanel)
+            assertThat(session.snapshot().controlPanelExpanded).isFalse()
 
-            // Simulate ToggleControlPanel action
-            // This tests that the session action works correctly
-            val session = activity.application as me.trinitrix.mirax.MiraxApp
-            session.session.handle(me.trinitrix.mirax.session.SessionAction.ToggleControlPanel)
-
-            // Verify panel expanded
-            val snapshot = session.session.snapshot()
-            assertThat(snapshot.controlPanelExpanded).isTrue()
+            session.handle(me.trinitrix.mirax.session.SessionAction.ToggleControlPanel)
+            assertThat(session.snapshot().controlPanelExpanded).isTrue()
         }
 
         scenario.close()
     }
 
-    /**
-     * Test that back key behavior follows the new control panel logic:
-     * - Panel closed → first back → panel expands
-     * - Panel expanded → first back → panel closes, toast shown
-     * - Panel expanded → second back → requests end connection
-     */
+    /** Verify tapping a scale button persists the selected picture scale. */
+    @Test
+    fun testMockSession_scaleClickPersistsSelection() {
+        val originalScale = SessionPreferences.load(context).pictureScale
+        val targetScale = if (originalScale == PictureScale.CENTER_CROP) PictureScale.MATCH_EDGES else PictureScale.CENTER_CROP
+        val intent = Intent(context, PictureActivity::class.java).apply {
+            putExtra("mirax_mock_session", true)
+        }
+        val scenario = ActivityScenario.launch<PictureActivity>(intent)
+        try {
+            lateinit var scaleLabel: String
+            scenario.onActivity { activity ->
+                assertThat((activity.application as MiraxApp).session.snapshot().controlPanelExpanded).isTrue()
+                scaleLabel = activity.getString(
+                    if (targetScale == PictureScale.CENTER_CROP) R.string.control_panel_scale_crop
+                    else R.string.control_panel_scale_stretch,
+                )
+            }
+            onView(withText(scaleLabel)).perform(scrollTo(), click())
+            assertThat(SessionPreferences.load(context).pictureScale).isEqualTo(targetScale)
+        } finally {
+            scenario.onActivity { activity -> SessionHost.setPictureScale(activity, originalScale) }
+            scenario.close()
+        }
+    }
+
+    /** Verify Back collapses the expanded panel, then requests end confirmation. */
     @Test
     fun testMockSession_backKeyLogic() {
         val intent = Intent(context, PictureActivity::class.java).apply {
@@ -145,20 +159,19 @@ class ControlPanelE2ETest {
 
             val session = activity.application as me.trinitrix.mirax.MiraxApp
 
-            // Initial state - panel collapsed
             var snapshot = session.session.snapshot()
-            assertThat(snapshot.controlPanelExpanded).isFalse()
-
-            // First back - should expand panel
-            session.session.handle(me.trinitrix.mirax.session.SessionAction.SystemBack)
-            snapshot = session.session.snapshot()
             assertThat(snapshot.controlPanelExpanded).isTrue()
 
-            // Second back - should collapse panel and arm for end
             session.session.handle(me.trinitrix.mirax.session.SessionAction.SystemBack)
             snapshot = session.session.snapshot()
             assertThat(snapshot.controlPanelExpanded).isFalse()
-            // Note: ActiveConnectionState handles the armed state internally
+            assertThat(snapshot.effects).contains(me.trinitrix.mirax.session.SessionEffect.ShowPressBackAgainToEndToast)
+
+            session.session.handle(me.trinitrix.mirax.session.SessionAction.SystemBack)
+            snapshot = session.session.snapshot()
+            assertThat(snapshot.effects).contains(me.trinitrix.mirax.session.SessionEffect.ConfirmEndConnection)
+            assertThat(snapshot.phase).isEqualTo(me.trinitrix.mirax.session.ScreenPhase.CONNECTED)
+            session.session.handle(me.trinitrix.mirax.session.SessionAction.AcknowledgeEffects)
         }
 
         scenario.close()
@@ -214,7 +227,7 @@ class ControlPanelE2ETest {
 
             // Initial state - mock device name
             var snapshot = session.session.snapshot()
-            assertThat(snapshot.sourceDeviceName).isEqualTo("MockDevice")
+            assertThat(snapshot.sourceDeviceName).isEqualTo("Mock Device")
 
             // Update source device name
             session.session.handle(me.trinitrix.mirax.session.SessionAction.SetSourceDeviceName("TestSource"))
@@ -257,7 +270,7 @@ class ControlPanelE2ETest {
             session.session.handle(me.trinitrix.mirax.session.SessionAction.EndConnection)
 
             snapshot = session.session.snapshot()
-            assertThat(snapshot.phase).isEqualTo(me.trinitrix.mirax.session.ScreenPhase.ADVERTISING)
+            assertThat(snapshot.phase).isNotEqualTo(me.trinitrix.mirax.session.ScreenPhase.CONNECTED)
         }
 
         scenario.close()
@@ -282,16 +295,47 @@ class ControlPanelE2ETest {
             assertThat(snapshot.phase).isEqualTo(me.trinitrix.mirax.session.ScreenPhase.CONNECTED)
             assertThat(snapshot.handleResolutionText).isEqualTo("1920×1080")
             assertThat(snapshot.handleRefreshRateHz).isEqualTo(60)
-            assertThat(snapshot.sourceDeviceName).isEqualTo("MockDevice")
+            assertThat(snapshot.sourceDeviceName).isEqualTo("Mock Device")
             assertThat(snapshot.touchEnabled).isTrue()
             assertThat(snapshot.pictureScale).isEqualTo(me.trinitrix.mirax.session.PictureScale.PROPORTIONAL)
             assertThat(snapshot.cameraCutoutAffectsLayout).isFalse()
             assertThat(snapshot.showDebugOverlay).isFalse()
-            assertThat(snapshot.controlPanelExpanded).isFalse()
+            assertThat(snapshot.controlPanelExpanded).isTrue()
             assertThat(snapshot.orientationLockEnabled).isFalse()
         }
 
         scenario.close()
+    }
+
+    /** Verify a saved lock applies immediately, even after Back hides the panel. */
+    @Test
+    fun testMockSession_orientationLockAppliesWithPanelHidden() {
+        val session = (context as MiraxApp).session
+        val originalLock = session.snapshot().orientationLockEnabled
+        session.handle(me.trinitrix.mirax.session.SessionAction.SetOrientationLock(true))
+        val intent = Intent(context, PictureActivity::class.java).apply {
+            putExtra("mirax_mock_session", true)
+        }
+        val scenario = ActivityScenario.launch<PictureActivity>(intent)
+        try {
+            var expectedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            scenario.onActivity { activity ->
+                expectedOrientation = if (activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                }
+                assertThat(activity.requestedOrientation).isEqualTo(expectedOrientation)
+            }
+            device.pressBack()
+            scenario.onActivity { activity ->
+                assertThat(session.snapshot().controlPanelExpanded).isFalse()
+                assertThat(activity.requestedOrientation).isEqualTo(expectedOrientation)
+            }
+        } finally {
+            scenario.close()
+            SessionHost.toggleOrientationLock(context, originalLock)
+        }
     }
 
     /** Verify landscape actions and status stay visible independently of the scrollable controls. */
@@ -360,13 +404,9 @@ class ControlPanelE2ETest {
         assertThat(chinese.getString(R.string.control_panel_casting_status)).isEqualTo("投放中")
         assertThat(english.getString(R.string.control_panel_scale_fit)).isEqualTo("Fit")
         assertThat(chinese.getString(R.string.control_panel_scale_fit)).isEqualTo("等比")
+        assertThat(english.getString(R.string.control_panel_export_html)).isEqualTo("Export diagnostics (HTML)")
+        assertThat(chinese.getString(R.string.control_panel_export_html)).isEqualTo("匯出除錯資訊 (HTML)")
         assertThat(english.getString(R.string.end_connection_confirm_action)).isEqualTo("End connection")
         assertThat(chinese.getString(R.string.end_connection_confirm_action)).isEqualTo("結束連線")
-    }
-
-    private fun findViewByIdSafely(activity: android.app.Activity, viewIdName: String): android.view.View? {
-        val id = activity.resources.getIdentifier(viewIdName, "id", activity.packageName)
-        if (id == 0) return null
-        return activity.findViewById<android.view.View>(id)
     }
 }
