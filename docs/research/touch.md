@@ -1,5 +1,7 @@
 # 一般觸控
 
+> 此頁保留早期方案及外部依據；下方 Report ID 1/2 的複合描述元屬於舊候選，**不是**目前十個 Touch TLC（IDs 1–10）加 Pen TLC（ID 11）的正式形狀。現行實作、接觸結束語意與驗證界線見 [HIDC 現況規格](../spec/miracast-hid-input-as-built.md)。
+
 結論：可以。未安裝驅動的 Windows 10/11 Miracast source 會把 Sink 送來的接觸收成自己的指標輸入。前提是使用者在 Win+K 允許來自該裝置的輸入，而且 Sink 用 HIDC / USB 送按下、移動、放開。規格裡的 Generic 座標是另一條封包。Microsoft 寫明 Generic 只涵蓋 ASCII 按鍵；Windows 要的是 HID Commands。
 
 詞彙以 [CONTEXT.md](../CONTEXT.md) 為準。S Pen 與一般觸控是兩種輸入；Mirax 透過複合 HID 報告描述元在同一條 UIBC 通道中支援兩者。
@@ -43,7 +45,7 @@ Generic 的確定義了 Touch Down / Up / Move，座標相對協商後的影片�
 
 HIDC 每一則帶：USB path、與 M4 一致的 Single Touch 或 Multi Touch type、usage、長度、以及 descriptor 或 input report。每一組 path + type，要在 input report 之前先送 report descriptor，而且可以重送。預設 descriptor 只涵蓋 USB 鍵盤和 USB 滑鼠。觸摸與手寫筆沒有預設 descriptor。沒先送，Windows 無法解釋後面的座標。
 
-### 複合描述元（Composite Report Descriptor）
+### 歷史候選：單指與筆複合描述元（非現行）
 
 Mirax 送出之 Report Descriptor 同時包含兩個頂層 Application Collection：
 - **Report ID 1 (Touch Screen)**：Usage Page `0x0D` (Digitizers) / Usage `0x04` (Touch Screen)，支援多指 Tip Switch、In-Range、Contact ID、X、Y 與 Contact Count。
@@ -52,7 +54,7 @@ Mirax 送出之 Report Descriptor 同時包含兩個頂層 Application Collectio
 ### 數位筆輸入報告
 
 - 報告 ID 為 `2`。
-- 開關位元組：bit 0 (Tip)、bit 1 (Barrel)、bit 2 (Invert)、bit 3 (Eraser)、bit 4 (In Range)。
+- 開關位元組：bit 0 (Tip)、bit 1 (Barrel)、bit 2 (Invert)、bit 3 (Eraser)、bit 5 (In Range)；bit 4 為 padding。
 - 懸停（Hover）：`inRange = true, tip = false, pressure = 0`。
 - 下筆：`inRange = true, tip = true, pressure = 1..4095`。
 - 抬筆：`inRange = true, tip = false, pressure = 0`。

@@ -24,6 +24,9 @@ captures/
 *.log
 *.hprof
 
+# Compiled pointer probe (keep its source)
+/scripts/pointer-probe/*.exe
+
 # Keystores (keep the public AOSP platform test key)
 *.jks
 *.keystore

@@ -120,9 +120,12 @@ Write-Log "  Decoder: $($overlayCheck.Decoder)"
 
 # 8. Capture screenshot for verification
 $screenshotPath = "e2e-debug-overlay-$(Get-Date -Format 'yyyyMMdd-HHmmss').png"
-Write-Log "Capturing screenshot: $screenshotPath"
+$runDir = Join-Path ([System.IO.Path]::GetTempPath()) ("opencode/mirax/e2e-debug-overlay-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+[void][System.IO.Directory]::CreateDirectory($runDir)
+$localScreenshotPath = Join-Path $runDir $screenshotPath
+Write-Log "Capturing screenshot: $localScreenshotPath"
 Adb shell "screencap -p /sdcard/$screenshotPath"
-Adb pull "/sdcard/$screenshotPath" ".\$screenshotPath"
+Adb pull "/sdcard/$screenshotPath" $localScreenshotPath
 Adb shell "rm /sdcard/$screenshotPath"
 
 # 9. Check logcat for decoder stats updates

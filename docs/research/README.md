@@ -2,6 +2,8 @@
 
 這些是轉進 Mirax 時仍有用的結論。裝置 dump、Samsung native library、keystore，以及會啟動 Samsung 播放器的舊 daemon，留在本機實驗目錄。目前的 Android 接收端程式在 `app/`，shell helper 在 `helper/`。
 
+指筆正式路徑及現況驗證界線另見 [HIDC 現況規格](../spec/miracast-hid-input-as-built.md)；以下研究依各自實驗時間保留。
+
 更早的直向 `1201×2176` 診斷、以及對 Samsung library 做 hook 的步驟，已被後來的橫向量測和 [ADR 0001](../adr/0001-standalone-sink.md) 取代，所以沒有收進來。
 
 | 文件 | 保留的判斷 |
@@ -14,7 +16,10 @@
 | [app-entrypoints.md](app-entrypoints.md) | 普通 App 沒有已證實的免 ADB Sink 入口；這台韌體拒絕 `pm enable` tile |
 | [privileged-entrypoints.md](privileged-entrypoints.md) | Knox 只能嘗試打開 Samsung 自己的元件，而且尚未實測、會改裝置管理前提 |
 | [device-owner-wifi-display.md](device-owner-wifi-display.md) | Device Owner 不能取得或轉授 `CONFIGURE_WIFI_DISPLAY` |
-| [touch.md](touch.md) | 一般觸控可以走 UIBC HIDC；S Pen 不在範圍內 |
+| [touch.md](touch.md) | 早期一般觸控研究；當時 S Pen 不在範圍內，非現行功能限制 |
+| [uibc-multitouch-investigation.md](uibc-multitouch-investigation.md) | 正式 type2 同 socket：run87 確認 Windows 十指，run86 確認筆及 UI 指筆共存；run82 找到 Cast 視窗遮擋。歷史負面保留，不保證每次重連或穩定 pointer ID |
+| [uibc-pen-release-conclusion.md](uibc-pen-release-conclusion.md) | 最終筆分支整合、清理範圍、證據保留與使用者實體 S Pen 體驗的驗收界線 |
+| [uibc-current-apk-live-20261021.md](uibc-current-apk-live-20261021.md) | 修復後 APK 重新配對；Windows 原生 live 指筆共存與十指同時接觸，附原始證據及未驗範圍 |
 | [large-screen-split.md](large-screen-split.md) | 平行視界的官方對應是 activity embedding，但 Google 限給多 Activity 舊 App；單一 Activity 的 Views 推論以 `SlidingPaneLayout` 最小 |
 | [win11-source-burst-pacing.md](win11-source-burst-pacing.md) | Win11 來源約每秒 30 AU 突發後靜默 ~550 ms；與 High latency ~500 ms 對齊；sink pacing 只能換成穩定延遲 |
 

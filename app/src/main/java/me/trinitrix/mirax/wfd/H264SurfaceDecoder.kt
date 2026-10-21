@@ -324,7 +324,7 @@ class H264SurfaceDecoder {
 
 
     private fun drainPending() {
-        val surfaceReady = surface != null && surface!!.isValid
+        val surfaceReady = surface?.isValid == true
         if (videoW <= 0 || videoH <= 0) {
             return
         }
@@ -382,7 +382,8 @@ class H264SurfaceDecoder {
                 format.setInteger(MediaFormat.KEY_FRAME_RATE, videoFps)
                 created = try {
                     MediaCodec.createByCodecName(PREFERRED_MTK_AVC)
-                } catch (_: Exception) {
+                } catch (err: Exception) {
+                    Log.w(TAG, "preferred decoder unavailable; falling back", err)
                     MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
                 }
                 created.configure(format, output, null, 0)
@@ -401,11 +402,13 @@ class H264SurfaceDecoder {
             } catch (err: Exception) {
                 try {
                     created?.stop()
-                } catch (_: Exception) {
+                } catch (stopErr: Exception) {
+                    Log.w(TAG, "failed to stop decoder after configure failure", stopErr)
                 }
                 try {
                     created?.release()
-                } catch (_: Exception) {
+                } catch (releaseErr: Exception) {
+                    Log.w(TAG, "failed to release decoder after configure failure", releaseErr)
                 }
                 val codecErr = err as? MediaCodec.CodecException
                 val next = H264LowLatencyConfigurePolicy.nextPhaseAfterFailure(
@@ -496,7 +499,7 @@ class H264SurfaceDecoder {
         if (indices.isEmpty()) {
             return
         }
-        val canShow = surface != null && surface!!.isValid
+        val canShow = surface?.isValid == true
         // Always show the newest ready buffer — never queue decoded frames for
         // smoothness; that traded the 1s hitch for constant hundreds of ms lag.
         val renderFrom = indices.size - 1
@@ -509,7 +512,8 @@ class H264SurfaceDecoder {
                 for (j in (i + 1) until indices.size) {
                     try {
                         codec.releaseOutputBuffer(indices[j], false)
-                    } catch (_: Exception) {
+                    } catch (releaseErr: Exception) {
+                        Log.w(TAG, "failed to release pending output buffer", releaseErr)
                     }
                 }
                 stopCodec()
@@ -549,7 +553,8 @@ class H264SurfaceDecoder {
         for (index in indices) {
             try {
                 codec.releaseOutputBuffer(index, false)
-            } catch (_: Exception) {
+            } catch (err: Exception) {
+                Log.w(TAG, "failed to release gathered output buffer", err)
             }
         }
     }
@@ -733,11 +738,13 @@ class H264SurfaceDecoder {
         stopDrainThread()
         try {
             codec?.stop()
-        } catch (_: Exception) {
+        } catch (err: Exception) {
+            Log.w(TAG, "decoder stop failed", err)
         }
         try {
             codec?.release()
-        } catch (_: Exception) {
+        } catch (err: Exception) {
+            Log.w(TAG, "decoder release failed", err)
         }
         codec = null
     }

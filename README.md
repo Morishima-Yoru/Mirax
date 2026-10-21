@@ -1,6 +1,6 @@
 # Mirax
 
-Use a supported Android phone as a Windows Miracast second screen. Windows stays on the built-in **Win+K** flow. The phone owns the sink: discovery, RTSP, decode, and UIBC touch.
+Use a supported Android phone as a Windows Miracast second screen. Windows stays on the built-in **Win+K** flow. The phone owns the sink: discovery, RTSP, decode, and UIBC touch/pen input.
 
 Vocabulary: [`docs/CONTEXT.md`](docs/CONTEXT.md). Design: [`docs/design.md`](docs/design.md).
 
@@ -20,7 +20,7 @@ Miracast sink advertising calls `WifiP2pManager.setWfdInfo()`, which requires `C
 2. Download the `v0.0.1` APK from [GitHub Releases](https://github.com/Morishima-Yoru/Mirax/releases) and sideload it.
 3. Open Mirax and grant Shizuku access when prompted.
 4. Turn on broadcast in Mirax (or use the Quick Settings tile).
-5. On Windows, press **Win+K**, pick the phone, and allow input from the device when you want touch.
+5. On Windows, press **Win+K**, pick the phone, and allow input from the device when you want touch or pen input. Enable Touch in Mirax's Picture settings, then interact with the projected Windows content; pen availability depends on the phone.
 
 > The Release APK is signed with the Android debug keystore for sideload/testing only. It is not a Play Store signing key.
 

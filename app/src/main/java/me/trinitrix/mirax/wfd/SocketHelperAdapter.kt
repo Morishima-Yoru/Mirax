@@ -10,30 +10,38 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 
+/** WFD owner transport backed by the local helper socket. */
 class SocketHelperAdapter : WfdOwnerTransport {
     override val owner: WfdOwner = WfdOwner.HELPER
 
+    /** Advertises [command] through the helper socket. */
     override fun advertise(command: WfdAdvertiseCommand): Boolean {
         val line = "ADVERTISE	${sanitizeName(command.broadcastName)}	${WfdOwnerBridge.encodeModes(command.modes)}"
         return exchangeHelper(line) != null
     }
 
+    /** Stops helper advertising. */
     override fun stopAdvertise() {
         sendHelperQuietly("STOP_ADVERTISE")
     }
 
+    /** Returns whether the helper is listening. */
     override fun isListening(): Boolean = exchangeHelper("LISTENING") == "YES"
 
+    /** Returns the current group state, or null if unavailable. */
     override fun groupState(): String? = exchangeHelper("GROUP")
 
+    /** Ends the current WFD session. */
     override fun endSession() {
         sendHelperQuietly("END")
     }
 
+    /** Forgets all saved WFD pairings. */
     override fun forgetAllPairings() {
         sendHelperQuietly("FORGET_PAIRINGS")
     }
 
+    /** Returns the pairing state, defaulting to unpaired if unavailable. */
     override fun pairingState(): String {
         return when (val state = exchangeHelper("PAIRING_STATE")) {
             "UNPAIRED", "PAIRING", "PAIRED" -> state
@@ -41,15 +49,18 @@ class SocketHelperAdapter : WfdOwnerTransport {
         }
     }
 
+    /** Returns the window-manager size for [displayId], or null on failure. */
     override fun wmSize(displayId: Int?): String? {
         val cmd = if (displayId == null) "WM_SIZE" else "WM_SIZE $displayId"
         return exchangeHelper(cmd, readAll = true)
     }
 
+    /** Sends [command] without expecting a response. */
     private fun sendHelperQuietly(command: String) {
         exchangeHelper(command)
     }
 
+    /** Exchanges [command] and reads one line or the entire response when [readAll] is true. */
     private fun exchangeHelper(command: String, readAll: Boolean = false): String? {
         return try {
             LocalSocket().use { socket ->
@@ -66,6 +77,7 @@ class SocketHelperAdapter : WfdOwnerTransport {
         }
     }
 
+    /** Removes protocol delimiters from [name]. */
     private fun sanitizeName(name: String): String = name.replace('	', ' ').replace('\n', ' ')
 
     companion object {

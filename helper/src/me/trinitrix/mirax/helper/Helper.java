@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.util.Log;
 import me.trinitrix.mirax.wfd.PrimarySinkBeacon;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -53,7 +54,8 @@ public final class Helper {
             RUNNING.set(false);
             try {
                 server.close();
-            } catch (Exception ignored) {
+            } catch (IOException err) {
+                Log.w(TAG, "close helper socket after beacon init failure failed", err);
             }
             return;
         }

@@ -18,12 +18,25 @@ import kotlinx.coroutines.launch
  * Deep module: exposes a small interface hiding complex persistence logic.
  */
 interface ConnectionHistory {
+    /** Starts a run for [host] with its [configuration]. */
     fun start(host: String, configuration: List<ConnectionRunFact>)
+
+    /** Adds [line] to the current run. */
     fun log(line: String)
+
+    /** Finishes the current run with [succeeded] and [metadata]. */
     fun finish(succeeded: Boolean, metadata: List<ConnectionRunFact>)
+
+    /** Returns finished runs, newest first. */
     fun runs(): List<ConnectionRun>
+
+    /** Returns the active run, if any. */
     fun activeRun(): ConnectionRun?
+
+    /** Returns the active handshake log. */
     fun currentHandshakeLog(): String
+
+    /** Clears finished runs and schedules their persistence. */
     fun clear(): Completable
 }
 
