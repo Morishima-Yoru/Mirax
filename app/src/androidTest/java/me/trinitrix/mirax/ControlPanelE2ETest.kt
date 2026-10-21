@@ -449,6 +449,8 @@ class ControlPanelE2ETest {
                 lateinit var scaleLabel: String
                 lateinit var settingsLabel: String
                 lateinit var debugLabel: String
+                lateinit var touchLabel: String
+                lateinit var cutoutLabel: String
                 scenario.onActivity { activity ->
                     endLabel = activity.getString(R.string.end_connection_confirm_action)
                     statusLabel = activity.getString(R.string.control_panel_casting_status)
@@ -456,6 +458,8 @@ class ControlPanelE2ETest {
                     scaleLabel = activity.getString(R.string.control_panel_scale_title)
                     settingsLabel = activity.getString(R.string.control_panel_other_settings)
                     debugLabel = activity.getString(R.string.control_panel_debug_overlay)
+                    touchLabel = activity.getString(R.string.control_panel_touch_input)
+                    cutoutLabel = activity.getString(R.string.control_panel_avoid_cutout)
                 }
                 val endButton = waitForObject(By.text(endLabel), launchTimeoutMs)
                 val status = waitForObject(By.text(statusLabel), launchTimeoutMs)
@@ -464,6 +468,9 @@ class ControlPanelE2ETest {
                 val scrollView = waitForObject(By.clazz("android.widget.ScrollView"), launchTimeoutMs)
                 assertThat(scrollView.findObject(By.text(endLabel))).isNull()
                 assertThat(scrollView.findObject(By.text(statusLabel))).isNull()
+                val panelBounds = scrollView.parent.visibleBounds
+                assertThat(panelBounds.width()).isAtMost(device.displayWidth * 4 / 5)
+                assertThat(panelBounds.height()).isAtMost(device.displayHeight * 4 / 5)
                 val buttonBounds = endButton.visibleBounds
                 val statusBounds = status.visibleBounds
                 assertThat(buttonBounds.height()).isGreaterThan(0)
@@ -480,6 +487,13 @@ class ControlPanelE2ETest {
                 waitForObject(By.text(debugLabel), launchTimeoutMs)
                 waitForObject(By.text(sourceLabel), launchTimeoutMs)
                 waitForObject(By.text(scaleLabel), launchTimeoutMs)
+                assertThat(waitForObject(By.text(endLabel), launchTimeoutMs).visibleBounds).isEqualTo(buttonBounds)
+                assertThat(scrollView.parent.visibleBounds).isEqualTo(panelBounds)
+                if (scrollView.isScrollable) {
+                    scrollView.scroll(Direction.DOWN, 1f)
+                }
+                waitForObject(By.text(touchLabel), launchTimeoutMs)
+                waitForObject(By.text(cutoutLabel), launchTimeoutMs)
                 assertThat(waitForObject(By.text(endLabel), launchTimeoutMs).visibleBounds).isEqualTo(buttonBounds)
             } finally {
                 scenario.close()

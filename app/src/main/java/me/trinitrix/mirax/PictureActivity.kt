@@ -432,12 +432,12 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val cardWidth = if (isLandscape) {
-            minOf(dp(840), resources.displayMetrics.widthPixels - dp(32))
+            minOf(dp(640), resources.displayMetrics.widthPixels * 4 / 5)
         } else {
             minOf(dp(360), resources.displayMetrics.widthPixels - dp(32))
         }
         val cardHeight = if (isLandscape) {
-            FrameLayout.LayoutParams.MATCH_PARENT
+            minOf(dp(400), resources.displayMetrics.heightPixels * 3 / 4)
         } else {
             FrameLayout.LayoutParams.WRAP_CONTENT
         }
@@ -617,7 +617,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             getString(R.string.control_panel_scale_stretch) to PictureScale.MATCH_EDGES,
             getString(R.string.control_panel_scale_original) to PictureScale.ACTUAL,
         )
-        val scaleRows = if (isLandscape && cardWidth >= dp(800)) listOf(scaleList) else scaleList.chunked(2)
+        val scaleRows = scaleList.chunked(2)
         scaleButtons.clear()
         for ((rowIndex, rowPairs) in scaleRows.withIndex()) {
             val row = LinearLayout(this).apply {
@@ -995,6 +995,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     /** Switch the lower-right pane in landscape, or the whole body in portrait. */
     private fun showSettingsPage(show: Boolean) {
+        controlPanelCardScrollView.scrollTo(0, 0)
         showingSettingsPage = show
         controlPanelPrimaryPage.visibility = if (show) View.INVISIBLE else View.VISIBLE
         controlPanelSettingsPage.visibility = if (show) View.VISIBLE else View.INVISIBLE
