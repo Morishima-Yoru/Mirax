@@ -19,6 +19,9 @@ import kotlin.math.abs
  */
 class DebugOverlayView(context: Context, attrs: AttributeSet?) : FrameLayout(context, attrs) {
 
+    /** Notifies picture input when this phone control moves over an active contact. */
+    var onPositionChanged: (() -> Unit)? = null
+
     private val density = context.resources.displayMetrics.density
     private val lineHeight = (15f * density).toInt()
     private val padding = (10f * density).toInt()
@@ -145,6 +148,7 @@ class DebugOverlayView(context: Context, attrs: AttributeSet?) : FrameLayout(con
                     Gesture.MOVE -> {
                         translationX = downTranslationX + dx
                         translationY = downTranslationY + dy
+                        onPositionChanged?.invoke()
                     }
                     Gesture.NONE -> Unit
                 }
@@ -398,9 +402,9 @@ class DebugOverlayView(context: Context, attrs: AttributeSet?) : FrameLayout(con
         drawText(canvas, text, accentPaint, padding, y)
     }
 
-    private fun drawKV(canvas: Canvas, key: String, value: Any, varargY: IntArray) {
+    private fun drawKV(canvas: Canvas, key: String, value: String, varargY: IntArray) {
         drawText(canvas, "$key:", textPaint, padding, varargY[0])
-        drawText(canvas, value.toString(), textPaint, padding + (72f * density).toInt(), varargY[0])
+        drawText(canvas, value, textPaint, padding + (72f * density).toInt(), varargY[0])
         varargY[0] += lineHeight
     }
 

@@ -66,7 +66,9 @@ $height = [CastInputState]::GetSystemMetrics(1)
 $bmp = New-Object System.Drawing.Bitmap $width, $height
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.CopyFromScreen(0, 0, 0, 0, [System.Drawing.Size]::new($width, $height))
-$screenshotPath = Join-Path $PSScriptRoot "cast-panel.png"
+$runDir = Join-Path ([System.IO.Path]::GetTempPath()) ("opencode/mirax/cast-state-oct16-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+[void][System.IO.Directory]::CreateDirectory($runDir)
+$screenshotPath = Join-Path $runDir "cast-panel.png"
 $bmp.Save($screenshotPath)
 $g.Dispose()
 $bmp.Dispose()

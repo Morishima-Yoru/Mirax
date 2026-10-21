@@ -92,7 +92,9 @@ $rect = New-Object PhhClick+RECT
 $w = $rect.R - $rect.L
 $h = $rect.B - $rect.T
 Write-Host "cast $($rect.L),$($rect.T) ${w}x$h"
-$path = Join-Path $PSScriptRoot "phh-evidence.png"
+$runDir = Join-Path ([System.IO.Path]::GetTempPath()) ("opencode/mirax/click-phh-evidence-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+[void][System.IO.Directory]::CreateDirectory($runDir)
+$path = Join-Path $runDir "phh-evidence.png"
 $bmp = New-Object System.Drawing.Bitmap $w, $h
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.CopyFromScreen($rect.L, $rect.T, 0, 0, (New-Object System.Drawing.Size $w, $h))

@@ -5,11 +5,17 @@ import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.session.WfdOwner
 import me.trinitrix.mirax.shell.IMiraxShellService
 
+/**
+ * WFD owner transport backed by the Shizuku shell service.
+ *
+ * @param serviceProvider Supplies the currently bound service, if available.
+ */
 class ShizukuOwnerAdapter(
     private val serviceProvider: () -> IMiraxShellService?,
 ) : WfdOwnerTransport {
     override val owner: WfdOwner = WfdOwner.SHIZUKU
 
+    /** Advertises [command] via Shizuku; returns whether the request succeeded. */
     override fun advertise(command: WfdAdvertiseCommand): Boolean {
         val service = serviceProvider() ?: return false
         return try {
@@ -21,6 +27,7 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    /** Stops Shizuku advertising if a service is bound. */
     override fun stopAdvertise() {
         try {
             serviceProvider()?.stopAdvertise()
@@ -29,6 +36,7 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    /** Returns whether the Shizuku service is listening. */
     override fun isListening(): Boolean {
         return try {
             serviceProvider()?.isListening == true
@@ -38,6 +46,7 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    /** Returns the current group state, or null if unavailable. */
     override fun groupState(): String? {
         return try {
             serviceProvider()?.groupState()
@@ -47,6 +56,7 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    /** Ends the current WFD session. */
     override fun endSession() {
         try {
             serviceProvider()?.endSession()
@@ -55,6 +65,7 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    /** Forgets all saved WFD pairings. */
     override fun forgetAllPairings() {
         try {
             serviceProvider()?.forgetAllPairings()
@@ -63,6 +74,7 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    /** Returns the pairing state, defaulting to unpaired if unavailable. */
     override fun pairingState(): String {
         return try {
             serviceProvider()?.pairingState ?: "UNPAIRED"
@@ -72,6 +84,7 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    /** Returns the window-manager size for [displayId], or null on failure. */
     override fun wmSize(displayId: Int?): String? {
         val id = displayId ?: -1
         return try {

@@ -13,7 +13,7 @@
 - P2P beacon 只宣告裝置是 Primary Sink、session、控制埠與吞吐。寬高不在 `WifiP2pWfdInfo` 裡。解析度在後續 RTSP 協商。
 - 標準 CEA / VESA / HH 模式表沒有 `2176×1812`。能寫出這個尺寸的是 Microsoft 的 `microsoft_custom_video_formats`：寬、高、更新率三個十六進位欄位。Fold 橫向 60 Hz 寫成 `0880 0714 003C`。Windows 11 24H2 / 25H2 對這個參數的支援帶有 KB 條件；這台 25H2 是否已裝對應更新尚未確認。Windows 10 不在該支援表上。
 - `1812` 不是 16 的倍數。廣告這個高度在 Microsoft 參數裡仍然合法；編碼端用 frame cropping 處理，和 1080 的作法同一類。
-- S Pen 與一般觸控是兩種輸入。現行 type-2 UIBC/HIDC 在同一 socket 廣告十個單指 TLC 和一個 Pen TLC；基本實體 S Pen 操作有使用者回饋，壓力、側鍵、橡皮擦及跨連線穩定性仍待實測。見 [指筆結論](research/uibc-pen-release-conclusion.md)。
+- S Pen 與一般觸控是兩種輸入。現行 type-2 UIBC/HIDC 在同一 socket 廣告十個單指 TLC 和一個 Pen TLC；基本實體 S Pen 操作有使用者回饋，壓力、側鍵、橡皮擦及跨連線穩定性仍待實測。見 [HIDC 現況規格](spec/miracast-hid-input-as-built.md)及[指筆結論](research/uibc-pen-release-conclusion.md)。
 - 可觸控還要求使用者在 Win+K 允許來自該裝置的輸入。未允許時畫面可以在，狀態是只顯示。
 
 ## 手機要自己做的鏈

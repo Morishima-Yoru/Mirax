@@ -460,10 +460,10 @@ public final class PrimarySinkBeacon {
             Method set = WifiManager.class.getMethod("setMiracastMode", int.class);
             set.invoke(wifi, mode);
             Log.i(TAG, "setMiracastMode " + label + " (" + mode + ")");
-        } catch (NoSuchMethodException ignored) {
-            // Hidden API absent on this WifiManager (common on GSI).
+        } catch (NoSuchMethodException missing) {
+            Log.d(TAG, "setMiracastMode " + label + " unavailable on this WifiManager", missing);
         } catch (Throwable err) {
-            Log.w(TAG, "setMiracastMode " + label + " failed: " + err.getMessage());
+            Log.w(TAG, "setMiracastMode " + label + " failed", err);
         }
     }
 
@@ -980,7 +980,7 @@ public final class PrimarySinkBeacon {
                             logged("connection request result+config"));
                     return;
                 } catch (NoSuchMethodException missing) {
-                    // Older API: mutate config in place and use the 3-arg form.
+                    Log.d(TAG, "setConnectionRequestResult with config unavailable; using legacy overload", missing);
                 }
             }
             manager.setConnectionRequestResult(

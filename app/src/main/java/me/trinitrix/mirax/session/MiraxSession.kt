@@ -268,7 +268,10 @@ class MiraxSession(
                 caps.setMaxVideoBitrateBps(action.bps)
             }
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
-            SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe()
+            SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe(
+                {},
+                { err -> Log.w(TAG, "Failed to clear connection history", err) },
+            )
         }
     }
 
@@ -288,10 +291,8 @@ fun snapshot(): SessionSnapshot {
         val standardRows = StandardVideoModes.catalog(caps.maxVideoBitrateBps).map { mode ->
             StandardModeRow(mode = mode, checked = mode in caps.checkedStandardModes)
         }
-        val resolutionText = when {
-            activeConnection.isConnected && activeConnection.selectedMode != null -> activeConnection.selectedMode!!.format()
-            else -> caps.preferredMode?.format().orEmpty()
-        }
+        val resolutionText = (if (activeConnection.isConnected) activeConnection.selectedMode else null)
+            ?.format() ?: caps.preferredMode?.format().orEmpty()
         val handleResolution = activeConnection.selectedMode?.let { "${it.width}×${it.height}" }.orEmpty()
         val handleRefresh = activeConnection.selectedMode?.refreshHz
         val showHandle = phase == ScreenPhase.CONNECTED && display.bottomHandleEnabled

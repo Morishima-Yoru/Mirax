@@ -1,12 +1,14 @@
 package me.trinitrix.mirax.wfd
 
 import com.google.common.truth.Truth.assertThat
+import me.trinitrix.mirax.session.PictureContactState
 import org.junit.After
 import org.junit.Test
 import java.io.DataInputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -81,6 +83,193 @@ class UibcTouchChannelTest {
     }
 
     @Test
+    fun coveredFingerAndPenReleaseWithoutEndingOtherTouch() {
+        previousRunner = UibcTouchChannel.writeRunner
+        UibcTouchChannel.writeRunner = { it.run() }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+            listening.accept().use { socket ->
+                socket.soTimeout = 2_000
+                val input = DataInputStream(socket.getInputStream())
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                readPacket(input)
+                repeat(UibcPackets.MAX_CONTACTS + 1) { readPacket(input) }
+                val contacts = listOf(UibcContact(0, 100, 200, true), UibcContact(1, 300, 400, true))
+                val pictureContacts = PictureContactState(UibcPackets.MAX_CONTACTS)
+                pictureContacts.touchDown(1, insidePicture = true)
+                pictureContacts.touchDown(2, insidePicture = true)
+                pictureContacts.touchMove(1, true, 100f, 200f)
+                pictureContacts.touchMove(2, true, 300f, 400f)
+                pictureContacts.penDown(3, insidePicture = true)
+                pictureContacts.penMove(3, true, 110f, 220f)
+                UibcTouchChannel.submit(contacts)
+                repeat(UibcPackets.MAX_CONTACTS) { readPacket(input) }
+                UibcTouchChannel.submitPen(UibcPenContact(110, 220, true, true, pressure = 800))
+                readPacket(input)
+
+                val covered = pictureContacts.endCovered { x, y -> x < 150f && y < 250f }
+                assertThat(pictureContacts.touchSlot(2)).isEqualTo(1)
+                UibcTouchChannel.releaseCovered(covered.touchSlots, covered.pen)
+
+                val ended = readPacket(input)
+                assertThat(ended[9].toInt() and 0xFF).isEqualTo(1)
+                assertThat(ended[10].toInt()).isEqualTo(0x06)
+                assertThat(ended[18].toInt()).isEqualTo(1)
+                val remaining = readPacket(input)
+                assertThat(remaining[9].toInt() and 0xFF).isEqualTo(2)
+                assertThat(remaining[10].toInt()).isEqualTo(0x07)
+                repeat(UibcPackets.MAX_CONTACTS - 2) { readPacket(input) }
+                val pen = readPacket(input)
+                assertThat(pen[9].toInt() and 0xFF).isEqualTo(UibcPackets.MAX_CONTACTS + 1)
+                assertThat(pen[10].toInt()).isEqualTo(0)
+
+                UibcTouchChannel.submit(contacts.drop(1))
+                val noLongerDown = readPacket(input)
+                assertThat(noLongerDown[10].toInt()).isEqualTo(0)
+                val stillDown = readPacket(input)
+                assertThat(stillDown[10].toInt()).isEqualTo(0x07)
+                repeat(UibcPackets.MAX_CONTACTS - 2) { readPacket(input) }
+            }
+        }
+    }
+
+    @Test
+    fun pictureExitAfterPenUpClearsTheRemainingHoverOnTheWire() {
+        previousRunner = UibcTouchChannel.writeRunner
+        UibcTouchChannel.writeRunner = { it.run() }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+            listening.accept().use { socket ->
+                socket.soTimeout = 2_000
+                val input = DataInputStream(socket.getInputStream())
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                readPacket(input)
+                repeat(UibcPackets.MAX_CONTACTS + 1) { readPacket(input) }
+
+                val pictureContacts = PictureContactState(UibcPackets.MAX_CONTACTS)
+                pictureContacts.penDown(9, insidePicture = true)
+                UibcTouchChannel.submitPen(UibcPenContact(40, 50, tip = true, inRange = true))
+                readPacket(input)
+                UibcTouchChannel.submitPen(UibcPenContact(40, 50, tip = false, inRange = true))
+                assertThat(readPacket(input)[10].toInt() and 0x20).isEqualTo(0x20)
+                pictureContacts.penUp(9)
+                pictureContacts.finishGesture()
+
+                assertThat(pictureContacts.hasPenHover()).isTrue()
+                if (pictureContacts.hasContacts() || pictureContacts.hasPenHover()) {
+                    UibcTouchChannel.liftAll()
+                }
+                pictureContacts.endAll()
+                assertThat(readPacket(input)[10].toInt()).isEqualTo(0)
+            }
+        }
+    }
+
+    @Test
+    fun quickDisableThenEnableWritesOldContactReleasesBeforeNewDescriptor() {
+        val queuedWrites = LinkedBlockingQueue<Runnable>()
+        previousRunner = UibcTouchChannel.writeRunner
+        UibcTouchChannel.writeRunner = { queuedWrites.add(it) }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+            listening.accept().use { socket ->
+                socket.soTimeout = 2_000
+                val input = DataInputStream(socket.getInputStream())
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                repeat(UibcPackets.MAX_CONTACTS + 2) { queuedWrites.poll(2, TimeUnit.SECONDS).run() }
+                readPacket(input)
+                repeat(UibcPackets.MAX_CONTACTS + 1) { readPacket(input) }
+
+                UibcTouchChannel.submit(listOf(UibcContact(0, 100, 200, tip = true)))
+                repeat(UibcPackets.MAX_CONTACTS) { queuedWrites.poll(2, TimeUnit.SECONDS).run() }
+                repeat(UibcPackets.MAX_CONTACTS) { readPacket(input) }
+                UibcTouchChannel.submitPen(UibcPenContact(100, 200, tip = true, inRange = true, pressure = 800))
+                queuedWrites.poll(2, TimeUnit.SECONDS).run()
+                readPacket(input)
+
+                UibcTouchChannel.setEnabled(false)
+                UibcTouchChannel.setEnabled(true)
+                while (queuedWrites.isNotEmpty()) {
+                    queuedWrites.remove().run()
+                }
+
+                val releasedTouch = readPacket(input)
+                assertThat(releasedTouch[6].toInt()).isEqualTo(UibcPackets.USAGE_INPUT_REPORT)
+                assertThat(releasedTouch[9].toInt()).isEqualTo(1)
+                assertThat(releasedTouch[10].toInt()).isEqualTo(0x06)
+                assertThat(releasedTouch[18].toInt()).isEqualTo(1)
+                repeat(UibcPackets.MAX_CONTACTS - 1) { readPacket(input) }
+                val releasedPen = readPacket(input)
+                assertThat(releasedPen[10].toInt()).isEqualTo(0)
+            }
+        }
+    }
+
+    @Test
+    fun inputGenerationChangesAcrossEnableCyclesAndNewSockets() {
+        val before = UibcTouchChannel.inputGeneration()
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+            listening.accept().use {
+                val opened = UibcTouchChannel.inputGeneration()
+                assertThat(opened).isGreaterThan(before)
+                UibcTouchChannel.setEnabled(false)
+                val disabled = UibcTouchChannel.inputGeneration()
+                assertThat(disabled).isGreaterThan(opened)
+                UibcTouchChannel.setEnabled(true)
+                val reenabled = UibcTouchChannel.inputGeneration()
+                assertThat(reenabled).isGreaterThan(disabled)
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                val resized = UibcTouchChannel.inputGeneration()
+                assertThat(resized).isGreaterThan(reenabled)
+                UibcTouchChannel.setHidType(UibcPackets.HID_MULTI_TOUCH)
+                assertThat(UibcTouchChannel.inputGeneration()).isGreaterThan(resized)
+            }
+        }
+        val enabled = UibcTouchChannel.inputGeneration()
+        UibcTouchChannel.close()
+        assertThat(UibcTouchChannel.inputGeneration()).isGreaterThan(enabled)
+        assertThat(UibcTouchChannel.canForwardInput()).isFalse()
+    }
+
+    @Test
+    fun rejectedDialReportsFailureAndNextSessionCanOpenOneNewSocket() {
+        val port = ServerSocket(0).use { it.localPort }
+        val failed = CountDownLatch(1)
+        val statuses = LinkedBlockingQueue<String>()
+        UibcTouchChannel.onStatus = { line ->
+            statuses.add(line)
+            if (line.startsWith("UIBC dial 127.0.0.1:$port failed:")) {
+                failed.countDown()
+            }
+        }
+        try {
+            UibcTouchChannel.open("127.0.0.1", port, UibcPackets.HID_SINGLE_TOUCH)
+            assertThat(failed.await(3, TimeUnit.SECONDS)).isTrue()
+            assertThat(UibcTouchChannel.canForwardInput()).isFalse()
+            assertThat(statuses).doesNotContain("UIBC connected to 127.0.0.1:$port")
+            ServerSocket(0).use { listening ->
+                listening.soTimeout = 3_000
+                UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+                listening.accept().use { socket ->
+                    socket.soTimeout = 2_000
+                    assertThat(UibcTouchChannel.canForwardInput()).isFalse()
+                    UibcTouchChannel.setPictureSize(1920, 1080)
+                    val descriptor = readPacket(DataInputStream(socket.getInputStream()))
+                    assertThat(descriptor[6].toInt()).isEqualTo(UibcPackets.USAGE_REPORT_DESCRIPTOR)
+                    assertThat(UibcTouchChannel.canForwardInput()).isTrue()
+                }
+            }
+        } finally {
+            UibcTouchChannel.onStatus = null
+        }
+    }
+
+    @Test
     fun queuedDescriptorAllowsTouchReportBeforeWriterRuns() {
         val writes = LinkedBlockingQueue<Runnable>()
         previousRunner = UibcTouchChannel.writeRunner
@@ -88,6 +277,7 @@ class UibcTouchChannelTest {
         ServerSocket(0).use { listening ->
             listening.soTimeout = 3_000
             UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_MULTI_TOUCH)
+            assertThat(UibcTouchChannel.touchSlotLimit()).isEqualTo(2)
             listening.accept().use { socket ->
                 socket.soTimeout = 2_000
                 UibcTouchChannel.setPictureSize(1920, 1080)
@@ -413,6 +603,7 @@ class UibcTouchChannelTest {
                 listening.accept().use { socket ->
                     socket.soTimeout = 2_000
                     assertThat(connected.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue()
+                    assertThat(UibcTouchChannel.canForwardInput()).isFalse()
                     UibcTouchChannel.setPictureSize(1920, 1080)
                     // Disabled: no descriptor, no clear frame, no reports.
                     assertNoDataWithinTimeout(socket)
@@ -427,6 +618,7 @@ class UibcTouchChannelTest {
                         ),
                     )
                     assertTouchReport(input, emptyList())
+                    assertThat(UibcTouchChannel.canForwardInput()).isTrue()
 
                     // Redundant enable is a no-op: no second descriptor.
                     UibcTouchChannel.setEnabled(true)
@@ -438,6 +630,7 @@ class UibcTouchChannelTest {
 
                     // Disable lifts live state, stops new writes, and keeps TCP open.
                     UibcTouchChannel.setEnabled(false)
+                    assertThat(UibcTouchChannel.canForwardInput()).isFalse()
                     assertTouchReport(input, contact.map { it.copy(tip = false) })
                     UibcTouchChannel.submit(contact)
                     UibcTouchChannel.submitPen(
@@ -456,12 +649,49 @@ class UibcTouchChannelTest {
                         ),
                     )
                     assertTouchReport(input, emptyList())
+                    assertThat(UibcTouchChannel.canForwardInput()).isTrue()
                     UibcTouchChannel.submit(contact)
                     assertTouchReport(input, contact)
                 }
             }
         } finally {
             UibcTouchChannel.onStatus = null
+        }
+    }
+
+    @Test
+    fun reportWriteFailureEndsInputOnTheSameConnection() {
+        previousRunner = UibcTouchChannel.writeRunner
+        UibcTouchChannel.writeRunner = { runnable -> runnable.run() }
+        ServerSocket(0).use { listening ->
+            listening.soTimeout = 3_000
+            UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_MULTI_TOUCH)
+            listening.accept().use { socket ->
+                socket.soTimeout = 2_000
+                UibcTouchChannel.setPictureSize(1920, 1080)
+                val input = DataInputStream(socket.getInputStream())
+                readPacket(input)
+                assertTouchReport(input, emptyList())
+                assertThat(UibcTouchChannel.canForwardInput()).isTrue()
+                val generation = UibcTouchChannel.inputGeneration()
+                val pictureContacts = PictureContactState(UibcPackets.MAX_CONTACTS, generation)
+                pictureContacts.touchDown(0, insidePicture = true)
+
+                socket.setSoLinger(true, 0)
+                socket.close()
+                repeat(64) { index ->
+                    if (UibcTouchChannel.canForwardInput()) {
+                        UibcTouchChannel.submit(listOf(UibcContact(0, index, 20, tip = true)))
+                    }
+                }
+                assertThat(UibcTouchChannel.canForwardInput()).isFalse()
+                assertThat(UibcTouchChannel.inputGeneration()).isGreaterThan(generation)
+                assertThat(pictureContacts.observeInputGeneration(UibcTouchChannel.inputGeneration())).isTrue()
+                assertThat(pictureContacts.touchMove(0, true, 10f, 20f)).isNull()
+                UibcTouchChannel.setEnabled(false)
+                UibcTouchChannel.setEnabled(true)
+                assertThat(UibcTouchChannel.canForwardInput()).isFalse()
+            }
         }
     }
 

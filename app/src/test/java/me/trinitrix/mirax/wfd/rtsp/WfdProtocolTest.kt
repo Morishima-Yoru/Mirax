@@ -139,7 +139,7 @@ class WfdProtocolTest {
         assertThat(session.state).isEqualTo("PLAYING")
         assertThat(afterPlay[0]).contains("wfd_idr_request")
 
-        val startupIdrCseq = Regex("CSeq: (\\d+)").find(afterPlay[0])!!.groupValues[1]
+        val startupIdrCseq = extractCSeq(afterPlay[0])
         assertThat(session.requestIdr()).isEmpty()
         session.handle("RTSP/1.0 200 OK\r\nCSeq: $startupIdrCseq\r\n\r\n")
         val refresh = session.requestIdr()
@@ -290,7 +290,7 @@ class WfdProtocolTest {
     }
 
     @Test
-    fun sinkM15EnableAccepted_marksEnabled() {
+    fun sinkM15AfterPlayAndSourcePortDoesNotRequireUibcSocketToBeConnected() {
         val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax", touchEnabled = true))
         session.handle("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n")
         session.handle("RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0\r\n\r\n")
@@ -299,18 +299,19 @@ class WfdProtocolTest {
                 "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
                 "wfd_trigger_method: SETUP\r\n",
         )
-        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val setupCseq = extractCSeq(setupOut.last())
         val playOut = session.handle(
             "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
                 "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
         )
-        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val playCseq = extractCSeq(playOut.last())
         val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
-        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        val idrCseq = extractCSeq(idrOut.last())
         session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
         assertThat(session.state).isEqualTo("PLAYING")
         val enable = session.requestUibcEnable()
-        val enableCseq = Regex("CSeq: (\\d+)").find(enable)!!.groupValues[1]
+        assertThat(enable).contains("wfd_uibc_setting: enable")
+        val enableCseq = extractCSeq(enable)
         assertThat(session.uibcEnabled).isFalse()
         session.handle("RTSP/1.0 200 OK\r\nCSeq: $enableCseq\r\n\r\n")
         assertThat(session.uibcEnabled).isTrue()
@@ -328,17 +329,17 @@ class WfdProtocolTest {
                 "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
                 "wfd_trigger_method: SETUP\r\n",
         )
-        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val setupCseq = extractCSeq(setupOut.last())
         val playOut = session.handle(
             "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
                 "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
         )
-        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val playCseq = extractCSeq(playOut.last())
         val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
-        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        val idrCseq = extractCSeq(idrOut.last())
         session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
         val enable = session.requestUibcEnable()
-        val enableCseq = Regex("CSeq: (\\d+)").find(enable)!!.groupValues[1]
+        val enableCseq = extractCSeq(enable)
         session.handle("RTSP/1.0 403 Forbidden\r\nCSeq: $enableCseq\r\n\r\n")
         assertThat(session.uibcEnabled).isFalse()
         assertThat(session.state).isEqualTo("PLAYING")
@@ -358,14 +359,14 @@ class WfdProtocolTest {
                 "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
                 "wfd_trigger_method: SETUP\r\n",
         )
-        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val setupCseq = extractCSeq(setupOut.last())
         val playOut = session.handle(
             "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
                 "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
         )
-        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val playCseq = extractCSeq(playOut.last())
         val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
-        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        val idrCseq = extractCSeq(idrOut.last())
         assertThat(session.state).isEqualTo("PLAYING")
         session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
         session.requestIdr()
@@ -389,14 +390,14 @@ class WfdProtocolTest {
                 "wfd_uibc_capability: input_category_list=HIDC; hidc_cap_list=MultiTouch/USB; port=50123\r\n" +
                 "wfd_trigger_method: SETUP\r\n",
         )
-        val setupCseq = Regex("CSeq: (\\d+)").find(setupOut.last())!!.groupValues[1]
+        val setupCseq = extractCSeq(setupOut.last())
         val playOut = session.handle(
             "RTSP/1.0 200 OK\r\nCSeq: $setupCseq\r\nSession: 1;timeout=30\r\n" +
                 "Transport: RTP/AVP/UDP;unicast;client_port=19000-19001;server_port=5000-5001\r\n\r\n",
         )
-        val playCseq = Regex("CSeq: (\\d+)").find(playOut.last())!!.groupValues[1]
+        val playCseq = extractCSeq(playOut.last())
         val idrOut = session.handle("RTSP/1.0 200 OK\r\nCSeq: $playCseq\r\nSession: 1\r\n\r\n")
-        val idrCseq = Regex("CSeq: (\\d+)").find(idrOut.last())!!.groupValues[1]
+        val idrCseq = extractCSeq(idrOut.last())
         session.handle("RTSP/1.0 200 OK\r\nCSeq: $idrCseq\r\n\r\n")
         assertThat(session.requestUibcEnable()).isNotEmpty()
         now += 5_000L
@@ -453,6 +454,15 @@ class WfdProtocolTest {
         assertThat(Arrays.equals(payload, au)).isTrue()
         assertThat(demux.poll()).isNull()
     }
+
+    /**
+     * Extract the CSeq from a generated RTSP request.
+     *
+     * @param message generated RTSP request
+     * @return decimal CSeq value, or fail the test if none is present
+     */
+    private fun extractCSeq(message: String): String =
+        Regex("CSeq: (\\d+)").find(message)?.groupValues?.get(1) ?: error("missing CSeq in $message")
 
     private fun pesPacket(payload: ByteArray): ByteArray {
         val afterLength = 3 + payload.size

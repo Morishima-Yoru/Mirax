@@ -29,7 +29,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.graphics.Rect
+import android.graphics.RectF
 import me.trinitrix.mirax.session.PicturePlacement
+import me.trinitrix.mirax.session.PictureContactState
 import me.trinitrix.mirax.session.PictureTouchMap
 import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
@@ -72,8 +74,24 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private var bufferH: Int = 0
     private var currentFixedW: Int = 0
     private var currentFixedH: Int = 0
-    /** Pointer id to UIBC contact slot. */
-    private val touchSlots = LinkedHashMap<Int, Int>()
+    private val pictureContacts = PictureContactState(UibcPackets.MAX_CONTACTS, UibcTouchChannel.inputGeneration())
+    private var lastPictureFrame: PictureFrame? = null
+    private val visiblePictureBounds = Rect()
+    private var lastInputAllowed = false
+
+    /** Pixel and visible-viewport geometry for the current picture. */
+    private data class PictureFrame(
+        val pictureWidth: Int,
+        val pictureHeight: Int,
+        val left: Int,
+        val top: Int,
+        val width: Int,
+        val height: Int,
+        val visibleLeft: Int,
+        val visibleTop: Int,
+        val visibleRight: Int,
+        val visibleBottom: Int,
+    )
     private var cursorPictureX: Int = 0
     private var cursorPictureY: Int = 0
     private var cursorHotspotX: Int = 0
@@ -151,6 +169,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             visibility = View.GONE
         }
         stage.addView(debugOverlay)
+        debugOverlay.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> endCoveredContacts() }
+        debugOverlay.onPositionChanged = { endCoveredContacts() }
 
         surfaceView.holder.addCallback(this)
         stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutPicture() }
@@ -221,6 +241,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onStop() {
+        endPictureContacts()
+        pictureContacts.cancelAll()
         super.onStop()
         stopDebugOverlayUpdates()
         if (isChangingConfigurations || isFinishing) {
@@ -236,6 +258,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onDestroy() {
+        endPictureContacts()
+        debugOverlay.onPositionChanged = null
         stopDebugOverlayUpdates()
         endConnectionDialog?.dismiss()
         endConnectionDialog = null
@@ -261,10 +285,16 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        endPictureContacts()
         SinkConnectionController.decoder.attachSurface(null)
     }
 
     private fun applySession(snapshot: SessionSnapshot) {
+        val inputAllowed = canForwardPictureInput(snapshot)
+        if (!inputAllowed) {
+            endPictureContacts()
+        }
+        lastInputAllowed = inputAllowed
         if (!snapshot.showPicture) {
             finish()
             return
@@ -273,8 +303,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         ViewCompat.requestApplyInsets(stage)
         layoutPicture()
 
-        debugOverlay.visibility = if (snapshot.showDebugOverlay) View.VISIBLE else View.GONE
-        if (snapshot.showDebugOverlay) {
+        val showDebugOverlay = snapshot.showDebugOverlay
+        debugOverlay.visibility = if (showDebugOverlay) View.VISIBLE else View.GONE
+        if (showDebugOverlay) {
+            endCoveredContacts()
             startDebugOverlayUpdates()
             updateDebugOverlay(snapshot)
         } else {
@@ -284,12 +316,20 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     private fun applyProjectionCutoutInsets(view: View, insets: WindowInsetsCompat) {
         val avoidCutout = MiraxApp.instance.session.snapshot().cameraCutoutAffectsLayout
-        if (avoidCutout) {
+        val padding = if (avoidCutout) {
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
-            view.setPadding(cutout.left, cutout.top, cutout.right, cutout.bottom)
+            Rect(cutout.left, cutout.top, cutout.right, cutout.bottom)
         } else {
-            view.setPadding(0, 0, 0, 0)
+            Rect()
         }
+        if (view.paddingLeft == padding.left && view.paddingTop == padding.top &&
+            view.paddingRight == padding.right && view.paddingBottom == padding.bottom
+        ) {
+            return
+        }
+        endPictureContacts()
+        view.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+        view.post { layoutPicture() }
     }
 
     private fun buildHandle() {
@@ -424,6 +464,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (endConnectionDialog?.isShowing == true) {
             return
         }
+        endPictureContacts()
         endConnectionDialog = MaterialAlertDialogBuilder(this)
             .setMessage(R.string.end_connection_confirm_message)
             .setNegativeButton(android.R.string.cancel, null)
@@ -450,6 +491,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             debugOverlaySwitch.isChecked = snapshot.showDebugOverlay
         }
         val expanded = snapshot.bottomHandleExpanded
+        if (expanded && handleRoot.visibility != View.VISIBLE) {
+            endPictureContacts()
+        }
         handleRoot.visibility = if (expanded) View.VISIBLE else View.GONE
         if (expanded && ::handleScrollView.isInitialized) {
             ViewCompat.requestApplyInsets(handleScrollView)
@@ -458,13 +502,21 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     private fun layoutPicture() {
         if (stage.width <= 0 || stage.height <= 0) {
+            endPictureContacts()
+            lastPictureFrame = null
             return
         }
         val snapshot = MiraxApp.instance.session.snapshot()
-        val picture = snapshot.selectedMode ?: return
+        val picture = snapshot.selectedMode ?: run {
+            endPictureContacts()
+            lastPictureFrame = null
+            return
+        }
         val pictureW = picture.width
         val pictureH = picture.height
         if (pictureW <= 0 || pictureH <= 0) {
+            endPictureContacts()
+            lastPictureFrame = null
             return
         }
         val rect = PicturePlacement.place(
@@ -476,6 +528,22 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         )
         val targetW = maxOf(1, rect.width)
         val targetH = maxOf(1, rect.height)
+        val frame = PictureFrame(
+            pictureWidth = pictureW,
+            pictureHeight = pictureH,
+            left = rect.left,
+            top = rect.top,
+            width = targetW,
+            height = targetH,
+            visibleLeft = stage.paddingLeft,
+            visibleTop = stage.paddingTop,
+            visibleRight = stage.width - stage.paddingRight,
+            visibleBottom = stage.height - stage.paddingBottom,
+        )
+        if (lastPictureFrame != null && lastPictureFrame != frame) {
+            endPictureContacts()
+        }
+        lastPictureFrame = frame
         val currentParams = surfaceView.layoutParams as? FrameLayout.LayoutParams
         if (currentParams == null ||
             currentParams.width != targetW ||
@@ -500,6 +568,84 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             surfaceView.holder.setFixedSize(fixedW, fixedH)
         }
         layoutCursor()
+    }
+
+    /** Release locally owned pointers before the picture or its input state changes. */
+    private fun endPictureContacts() {
+        if (pictureContacts.hasContacts() || pictureContacts.hasPenHover()) {
+            UibcTouchChannel.liftAll()
+        }
+        pictureContacts.endAll()
+    }
+
+    /**
+     * A completed Android gesture may restart after a phone-only input transition.
+     *
+     * @param event final Android event for the gesture or one lifted pointer
+     */
+    private fun finishPictureGesture(event: MotionEvent) {
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            pictureContacts.cancelAll()
+        } else if (event.actionMasked == MotionEvent.ACTION_UP) {
+            pictureContacts.finishGesture()
+        } else if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
+            val pointerId = event.getPointerId(event.actionIndex)
+            pictureContacts.touchUp(pointerId)
+            pictureContacts.penUp(pointerId)
+        }
+    }
+
+    /** Observe a transport reset before accepting another Android motion sample. */
+    private fun observeInputGeneration() {
+        pictureContacts.observeInputGeneration(UibcTouchChannel.inputGeneration())
+    }
+
+    /**
+     * Only an available HIDC socket can own new Android picture contacts.
+     *
+     * @param snapshot current session preferences and negotiated picture mode
+     * @return true when new input can reach the current UIBC channel
+     */
+    private fun canForwardPictureInput(snapshot: SessionSnapshot): Boolean =
+        snapshot.touchEnabled && snapshot.showPicture && snapshot.selectedMode != null &&
+            UibcTouchChannel.canForwardInput()
+
+    /** @return movable phone control bounds in picture-view coordinates, if visible. */
+    private fun debugControlBounds(): RectF? {
+        if (!::debugOverlay.isInitialized || !debugOverlay.isShown || debugOverlay.width <= 0) {
+            return null
+        }
+        val left = debugOverlay.x - surfaceView.x
+        val top = debugOverlay.y - surfaceView.y
+        return RectF(left, top, left + debugOverlay.width, top + debugOverlay.height)
+    }
+
+    /** Only contacts underneath the moved phone control lose Windows ownership. */
+    private fun endCoveredContacts() {
+        val bounds = debugControlBounds() ?: return
+        val ended = pictureContacts.endCovered { x, y -> bounds.contains(x, y) }
+        if (ended.touchSlots.isNotEmpty() || ended.pen) {
+            UibcTouchChannel.releaseCovered(ended.touchSlots, ended.pen)
+        }
+    }
+
+    /**
+     * A contact outside the visible viewport or under a phone control is not on the picture.
+     *
+     * @param x local X in picture-view coordinates
+     * @param y local Y in picture-view coordinates
+     * @return true only for an uncovered, visible picture sample
+     */
+    private fun isInsideVisiblePicture(x: Float, y: Float): Boolean {
+        if (handleRoot.visibility == View.VISIBLE || !surfaceView.getLocalVisibleRect(visiblePictureBounds)) {
+            return false
+        }
+        if (x < visiblePictureBounds.left || x >= visiblePictureBounds.right ||
+            y < visiblePictureBounds.top || y >= visiblePictureBounds.bottom
+        ) {
+            return false
+        }
+        return debugControlBounds()?.contains(x, y) != true
     }
 
     private fun applyCursorBitmap(bitmap: Bitmap?, hotspotX: Int, hotspotY: Int) {
@@ -563,9 +709,16 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun forwardPictureHover(event: MotionEvent) {
+        observeInputGeneration()
         val snapshot = MiraxApp.instance.session.snapshot()
         val mode = snapshot.selectedMode
-        if (!snapshot.touchEnabled || mode == null) {
+        val inputAllowed = canForwardPictureInput(snapshot)
+        if (!lastInputAllowed && inputAllowed) {
+            endPictureContacts()
+        }
+        lastInputAllowed = inputAllowed
+        if (!inputAllowed || mode == null || handleRoot.visibility == View.VISIBLE) {
+            endPictureContacts()
             return
         }
         val index = event.actionIndex
@@ -578,6 +731,14 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         Log.v("PictureHover", "hover: action=${event.actionMasked} barrel=$barrel eraser=$isEraser")
         when (event.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                if (!pictureContacts.penHover(
+                        isInsideVisiblePicture(event.getX(index), event.getY(index)),
+                        event.getX(index), event.getY(index),
+                        entering = event.actionMasked == MotionEvent.ACTION_HOVER_ENTER,
+                    )) {
+                    releaseOutsideContacts()
+                    return
+                }
                 val x = PictureTouchMap.clampedPixel(event.getX(index), surfaceView.width, mode.width) ?: return
                 val y = PictureTouchMap.clampedPixel(event.getY(index), surfaceView.height, mode.height) ?: return
                 UibcTouchChannel.submitPen(
@@ -593,6 +754,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 )
             }
             MotionEvent.ACTION_HOVER_EXIT -> {
+                val wasHovering = pictureContacts.penHoverExit()
+                if (!wasHovering) {
+                    return
+                }
                 val x = PictureTouchMap.clampedPixel(event.getX(index), surfaceView.width, mode.width) ?: 0
                 val y = PictureTouchMap.clampedPixel(event.getY(index), surfaceView.height, mode.height) ?: 0
                 UibcTouchChannel.submitPen(
@@ -611,16 +776,24 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun forwardPictureTouch(event: MotionEvent) {
+        observeInputGeneration()
         val snapshot = MiraxApp.instance.session.snapshot()
         val mode = snapshot.selectedMode
-        Log.d("MiraxTouch", "forwardPictureTouch: action=${event.actionMasked} touchEnabled=${snapshot.touchEnabled} mode=$mode")
-        if (!snapshot.touchEnabled || mode == null) {
-            if (event.actionMasked == MotionEvent.ACTION_UP ||
-                event.actionMasked == MotionEvent.ACTION_CANCEL
-            ) {
-                touchSlots.clear()
-                UibcTouchChannel.liftAll()
-            }
+        val inputAllowed = canForwardPictureInput(snapshot)
+        if (!lastInputAllowed && inputAllowed) {
+            endPictureContacts()
+        }
+        lastInputAllowed = inputAllowed
+        Log.d("MiraxTouch", "forwardPictureTouch: action=${event.actionMasked} inputAllowed=$inputAllowed mode=$mode")
+        if (!inputAllowed || mode == null || handleRoot.visibility == View.VISIBLE) {
+            endPictureContacts()
+            finishPictureGesture(event)
+            return
+        }
+
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            endPictureContacts()
+            pictureContacts.cancelAll()
             return
         }
 
@@ -628,10 +801,25 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         for (index in 0 until event.pointerCount) {
             if (isStylus(event, index)) {
                 hasStylus = true
-                forwardStylusTouch(event, mode, index)
+                val pointerId = event.getPointerId(index)
+                val isTarget = event.actionIndex == index
+                val insidePicture = isInsideVisiblePicture(event.getX(index), event.getY(index))
+                if (isTarget && (event.actionMasked == MotionEvent.ACTION_DOWN ||
+                        event.actionMasked == MotionEvent.ACTION_POINTER_DOWN)) {
+                    pictureContacts.penDown(pointerId, insidePicture)
+                }
+                if (pictureContacts.penMove(pointerId, insidePicture, event.getX(index), event.getY(index))) {
+                    forwardStylusTouch(event, mode, index)
+                }
+                if (isTarget && (event.actionMasked == MotionEvent.ACTION_UP ||
+                        event.actionMasked == MotionEvent.ACTION_POINTER_UP)) {
+                    pictureContacts.penUp(pointerId)
+                }
             }
         }
         if (hasStylus && event.pointerCount == 1) {
+            releaseOutsideContacts()
+            finishPictureGesture(event)
             return
         }
 
@@ -640,7 +828,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val index = event.actionIndex
                 if (!isStylus(event, index)) {
-                    assignSlot(event.getPointerId(index))
+                    pictureContacts.touchDown(
+                        event.getPointerId(index), isInsideVisiblePicture(event.getX(index), event.getY(index)),
+                        UibcTouchChannel.touchSlotLimit(),
+                    )
                 }
                 submitContacts(event, mode, liftingPointerId = null)
             }
@@ -648,11 +839,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val pointerId = event.getPointerId(event.actionIndex)
                 submitContacts(event, mode, liftingPointerId = pointerId)
-                touchSlots.remove(pointerId)
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                UibcTouchChannel.liftAll()
-                touchSlots.clear()
+                pictureContacts.touchUp(pointerId)
+                finishPictureGesture(event)
             }
         }
     }
@@ -749,7 +937,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 continue
             }
             val pointerId = event.getPointerId(index)
-            val slot = touchSlots[pointerId] ?: continue
+            val insidePicture = isInsideVisiblePicture(event.getX(index), event.getY(index))
+            val slot = pictureContacts.touchMove(pointerId, insidePicture, event.getX(index), event.getY(index))
+                ?: continue
             val x = PictureTouchMap.clampedPixel(event.getX(index), surfaceView.width, mode.width) ?: continue
             val y = PictureTouchMap.clampedPixel(event.getY(index), surfaceView.height, mode.height) ?: continue
             contacts.add(
@@ -761,19 +951,15 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 ),
             )
         }
+        releaseOutsideContacts()
         UibcTouchChannel.submit(contacts)
     }
 
-    private fun assignSlot(pointerId: Int) {
-        if (touchSlots.containsKey(pointerId)) {
-            return
-        }
-        val used = touchSlots.values.toSet()
-        for (slot in 0 until UibcPackets.MAX_CONTACTS) {
-            if (slot !in used) {
-                touchSlots[pointerId] = slot
-                return
-            }
+    /** Send terminal reports before the next active frame drops the ended slots. */
+    private fun releaseOutsideContacts() {
+        val ended = pictureContacts.takeOutsideReleases()
+        if (ended.touchSlots.isNotEmpty() || ended.pen) {
+            UibcTouchChannel.releaseCovered(ended.touchSlots, ended.pen)
         }
     }
 
@@ -811,6 +997,9 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private fun updateDebugOverlay(snapshot: SessionSnapshot) {
         // Show or hide the overlay view based on the session setting.
         debugOverlay.visibility = if (snapshot.showDebugOverlay) View.VISIBLE else View.GONE
+        if (snapshot.showDebugOverlay) {
+            endCoveredContacts()
+        }
 
         val decoder = SinkConnectionController.decoder
         val outW = if (bufferW > 0) bufferW else decoder.inputWidth

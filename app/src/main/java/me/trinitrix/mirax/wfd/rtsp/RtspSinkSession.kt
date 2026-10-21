@@ -202,8 +202,8 @@ fun handle(message: String?): List<String> {
      * Windows only sends this itself when the user toggles the Win+K checkbox
      * mid-session; when it is already checked at cast time neither side sends
      * it, and the source never activates HIDC processing. The sink sends it
-     * once after the UIBC TCP socket is up, which is where the WFD sink is
-     * allowed to send it (see §6.4.15 state diagram).
+     * once PLAY is active and the source has advertised its UIBC port. The
+     * channel dials asynchronously; a TCP connection is not an M15 precondition.
      */
     fun requestUibcEnable(): String {
         if (state != "PLAYING" || hasOutstandingTransaction() || uibcPort <= 0 || uibcEnabled) {
