@@ -1,13 +1,13 @@
 package me.trinitrix.mirax.session
 
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.edit
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import io.reactivex.rxjava3.core.Completable
-import io.reactivex.rxjava3.schedulers.Schedulers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -37,7 +37,7 @@ interface ConnectionHistory {
     fun currentHandshakeLog(): String
 
     /** Clears finished runs and schedules their persistence. */
-    fun clear(): Completable
+    fun clear()
 }
 
 /**
@@ -58,6 +58,7 @@ class ConnectionHistoryImpl(
     private val runs: MutableList<ConnectionRun> = mutableListOf()
 
     companion object {
+        private const val TAG = "ConnectionHistory"
         private const val MAX_RUNS = 500
         private const val MAX_LOG_LINES = 200
         private const val RUNS_KEY = "connection_runs"
@@ -73,7 +74,7 @@ class ConnectionHistoryImpl(
         coroutineScope.launch(Dispatchers.IO) {
             val flow: kotlinx.coroutines.flow.Flow<Preferences> = dataStore.data
             val prefs: Preferences = flow.first()
-            val json = prefs[stringPreferencesKey("connection_runs")] ?: ""
+            val json = prefs[stringPreferencesKey(RUNS_KEY)] ?: ""
             if (json.isNotBlank()) {
                 val loadedRuns = gson.fromJson<List<ConnectionRun>>(json, Companion.getRunsType())
                 runs.clear()
@@ -84,9 +85,15 @@ class ConnectionHistoryImpl(
 
     private fun persistRuns() {
         coroutineScope.launch(Dispatchers.IO) {
-            val json = gson.toJson(runs)
-            dataStore.edit { prefs ->
-                prefs[stringPreferencesKey("connection_runs")] = json
+            try {
+                val json = gson.toJson(runs)
+                dataStore.edit { prefs ->
+                    prefs[stringPreferencesKey(RUNS_KEY)] = json
+                }
+            } catch (err: CancellationException) {
+                throw err
+            } catch (err: Exception) {
+                Log.w(TAG, "Failed to persist connection history", err)
             }
         }
     }
@@ -138,7 +145,7 @@ class ConnectionHistoryImpl(
 
     private fun trimToLimit() {
         while (runs.size > MAX_RUNS) {
-            runs.removeLast()
+            runs.removeAt(runs.lastIndex)
         }
     }
 
@@ -160,11 +167,10 @@ class ConnectionHistoryImpl(
 
     override fun currentHandshakeLog(): String = openRun?.lines?.joinToString("\n") ?: ""
 
-    override fun clear(): Completable {
-        return Completable.fromAction {
-            runs.clear()
-            persistRuns()
-        }.subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())
+    /** Clear finished runs now and schedule their DataStore update. */
+    override fun clear() {
+        runs.clear()
+        persistRuns()
     }
 }
 

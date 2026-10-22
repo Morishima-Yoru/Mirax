@@ -7,6 +7,7 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
+import androidx.test.uiautomator.UiSelector
 import org.hamcrest.MatcherAssert.assertThat
 import org.hamcrest.Matchers
 import org.junit.After
@@ -46,6 +47,23 @@ class MiraxE2ETest {
             Thread.sleep(100)
         }
         throw AssertionError("UI object not found within ${timeout}ms")
+    }
+
+    /**
+     * Wait for either localized label instead of assuming an unfinished UI update chose the other language.
+     * @param first first localized selector
+     * @param second second localized selector
+     * @param timeout maximum wait in milliseconds
+     * @return the visible UI object
+     */
+    private fun waitForEither(first: BySelector, second: BySelector, timeout: Long): UiObject2 {
+        val startTime = System.currentTimeMillis()
+        while (System.currentTimeMillis() - startTime < timeout) {
+            device.findObject(first)?.let { return it }
+            device.findObject(second)?.let { return it }
+            Thread.sleep(100)
+        }
+        throw AssertionError("Neither UI object found within ${timeout}ms")
     }
 
     /**
@@ -155,10 +173,8 @@ class MiraxE2ETest {
 
         assertThat(startButton.isClickable(), Matchers.equalTo(true))
         startButton.click()
-        val stopButton = waitForObject(
-            By.pkg(packageName).text(stopBroadcastLabel()),
-            launchTimeoutMs
-        )
+        val stopButton = device.findObject(UiSelector().packageName(packageName).text(stopBroadcastLabel()))
+        assertThat(stopButton.waitForExists(launchTimeoutMs), Matchers.equalTo(true))
         stopButton.click()
         waitForObject(By.pkg(packageName).text(startBroadcastLabel()), launchTimeoutMs)
     }
@@ -261,15 +277,18 @@ class MiraxE2ETest {
     fun testLanguageChangesImmediatelyWithoutLeavingPage() {
         device.executeShellCommand("am start -n $packageName/.MainActivity")
         waitForObject(By.res("$packageName:id/menuButton"), 5000).click()
-        val general = device.findObject(By.pkg(packageName).text("General"))
-            ?: waitForObject(By.pkg(packageName).text("一般"), 5000)
+        val general = waitForEither(
+            By.pkg(packageName).text("General"), By.pkg(packageName).text("一般"), 5000
+        )
         general.click()
-        val language = device.findObject(By.pkg(packageName).descContains("Language"))
-            ?: waitForObject(By.pkg(packageName).descContains("語言"), 5000)
+        val language = waitForEither(
+            By.pkg(packageName).descContains("Language"), By.pkg(packageName).descContains("語言"), 5000
+        )
         language.click()
 
-        val english = device.findObject(By.pkg(packageName).text("English"))
-            ?: waitForObject(By.pkg(packageName).text("英文"), 5000)
+        val english = waitForEither(
+            By.pkg(packageName).text("English"), By.pkg(packageName).text("英文"), 5000
+        )
         english.click()
         waitForObject(By.pkg(packageName).text("Language"), 5000)
         waitForObject(By.pkg(packageName).text("Traditional Chinese"), 5000).click()

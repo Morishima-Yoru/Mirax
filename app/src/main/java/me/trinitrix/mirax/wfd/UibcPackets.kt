@@ -222,6 +222,7 @@ object UibcPackets {
         penCollection(pictureWidth.coerceAtLeast(1), pictureHeight.coerceAtLeast(1))
             .map { it.toByte() }.toByteArray()
 
+    /** Assemble the pen HID collection with the negotiated picture bounds. */
     private fun penCollection(width: Int, height: Int): List<Int> = listOf(
         0x05, 0x0D, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x02, // Pen Application, Report ID 2
         0x09, 0x20, 0xA1, 0x00, // Stylus Physical collection

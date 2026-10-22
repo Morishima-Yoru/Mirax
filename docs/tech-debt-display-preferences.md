@@ -183,7 +183,8 @@ display.showDebugOverlay = displayPreferences.showDebugOverlay
 - `show_debug_messages`
 - `camera_cutout_affects_layout`
 - `broadcast_auto_stop_minutes`
-- (Missing: `show_debug_overlay`)
+
+`show_debug_overlay` is intentionally session-only and not persisted.
 
 ---
 
@@ -193,7 +194,6 @@ display.showDebugOverlay = displayPreferences.showDebugOverlay
 2. **High**: Fix `broadcastAutoStopMinutes` default
 3. **Medium**: Smart default for `cameraCutoutAffectsLayout`
 4. **Medium**: Consolidate state management (single source of truth)
-5. **Low**: Add `showDebugOverlay` to SessionPreferences persistence
 6. **Low**: Improve KDoc coverage
 
 ---

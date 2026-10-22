@@ -155,6 +155,7 @@ object SessionPreferences {
             .apply()
     }
 
+    /** Persist whether the floating ball appears outside the projection activity. */
     fun saveFloatingBallEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -162,6 +163,7 @@ object SessionPreferences {
             .apply()
     }
 
+    /** Persist the selected picture scaling behavior. */
     fun savePictureScale(context: Context, scale: PictureScale) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -169,6 +171,7 @@ object SessionPreferences {
             .apply()
     }
 
+    /** Persist whether the picture control panel is available. */
     fun saveControlPanelEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -176,6 +179,7 @@ object SessionPreferences {
             .apply()
     }
 
+    /** Persist whether picture orientation follows the locked direction. */
     fun saveOrientationLockEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()

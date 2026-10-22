@@ -47,6 +47,7 @@ internal class ActiveConnectionState {
     val controlPanelExpandedState: Boolean
         get() = controlPanelExpanded
 
+    /** Set panel visibility and clear the pending Back confirmation when closing it. */
     fun setControlPanelExpanded(value: Boolean) {
         controlPanelExpanded = value
         if (!value) {
@@ -127,6 +128,7 @@ internal class ActiveConnectionState {
         return true
     }
 
+    /** Enter a connected session for debug verification with [mode]. */
     fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60)) {
         _phase = ConnectionPhase.PLAYING
         _selectedMode = mode
@@ -143,6 +145,7 @@ internal class ActiveConnectionState {
         data object ArmedSecondBack : BackResult
     }
 
+    /** @return the next Back action for the current connection and panel state. */
     fun onSystemBack(): BackResult {
         if (_phase != ConnectionPhase.PLAYING) {
             return BackResult.ArmedSecondBack

@@ -2,30 +2,7 @@
 
 ## DisplayPreferences / SessionSettings Tech Debt
 
-### 1. Missing Persistence for `showDebugOverlay`
-
-**File:** `app/src/main/java/me/trinitrix/mirax/SessionPreferences.kt`
-
-**Issue:** The `showDebugOverlay` field exists in `SessionSettings` data class but is **not persisted** in `SessionPreferences`. It defaults to `false` on every app restart.
-
-**Impact:** Users who enable the debug overlay will lose this setting after app restart or process death.
-
-**Fix:** Add `KEY_SHOW_DEBUG_OVERLAY` constant and include it in `load()` and `saveResolutionSettings()` methods.
-
-```kotlin
-// Missing from SessionPreferences.kt
-private const val KEY_SHOW_DEBUG_OVERLAY = "show_debug_overlay"
-
-// In load():
-showDebugOverlay = prefs.getBoolean(KEY_SHOW_DEBUG_OVERLAY, false),
-
-// In saveResolutionSettings():
-putBoolean(KEY_SHOW_DEBUG_OVERLAY, settings.showDebugOverlay)
-```
-
----
-
-### 2. Aggressive Default for `broadcastAutoStopMinutes`
+### 1. Aggressive Default for `broadcastAutoStopMinutes`
 
 **File:** `app/src/main/java/me/trinitrix/mirax/session/SessionTypes.kt` (line ~315)
 
@@ -44,7 +21,7 @@ val broadcastAutoStopMinutes: Int = 1,
 
 ---
 
-### 3. `cameraCutoutAffectsLayout` Default Behavior
+### 2. `cameraCutoutAffectsLayout` Default Behavior
 
 **File:** `app/src/main/java/me/trinitrix/mirax/session/SessionTypes.kt` (line ~317)
 
@@ -65,11 +42,11 @@ val cameraCutoutAffectsLayout: Boolean = false,
 
 ---
 
-### 4. No Migration Path for Settings Schema Changes
+### 3. No Migration Path for Settings Schema Changes
 
 **File:** `app/src/main/java/me/trinitrix/mirax/SessionPreferences.kt`
 
-**Issue:** No versioning or migration logic for `SharedPreferences` schema changes. Adding new fields (like `showDebugOverlay`) requires manual default handling.
+**Issue:** No versioning or migration logic for `SharedPreferences` schema changes. Adding new persistent fields requires manual default handling; `showDebugOverlay` is intentionally session-only.
 
 **Impact:** Settings corruption or loss when app updates add new preference fields.
 
@@ -77,7 +54,7 @@ val cameraCutoutAffectsLayout: Boolean = false,
 
 ---
 
-### 5. Inconsistent Persistence Granularity
+### 4. Inconsistent Persistence Granularity
 
 **File:** `app/src/main/java/me/trinitrix/mirax/SessionPreferences.kt`
 
@@ -89,7 +66,7 @@ val cameraCutoutAffectsLayout: Boolean = false,
 
 ---
 
-### 6. DisplayPreferences Class Not Using Persistence Directly
+### 5. DisplayPreferences Class Not Using Persistence Directly
 
 **File:** `app/src/main/java/me/trinitrix/mirax/session/DisplayPreferences.kt`
 
@@ -109,7 +86,7 @@ val cameraCutoutAffectsLayout: Boolean = false,
 
 ## Other Tech Debt Items
 
-### 7. MiraxSession God Class Tendency
+### 6. MiraxSession God Class Tendency
 
 **File:** `app/src/main/java/me/trinitrix/mirax/session/MiraxSession.kt`
 
@@ -124,24 +101,19 @@ val cameraCutoutAffectsLayout: Boolean = false,
 
 ---
 
-### 8. No E2E / Instrumentation Tests
+### 7. Limited Connected-Device Automation
 
-**Directory:** `app/src/androidTest/` - **EMPTY**
+**Directory:** `app/src/androidTest/`, `scripts/pointer-probe/`
 
-**Issue:** Zero Android instrumentation tests. Only JVM unit tests exist.
+**Issue:** Android instrumentation covers UI and input injection, but live Windows Miracast acceptance still requires an external source and native Windows pointer probe; it is not part of CI.
 
-**Impact:** No verification of:
-- Actual Android framework integration
-- UI interactions (click-fold, floating ball, bottom handle)
-- Permission flows (overlay, Shizuku, Wi-Fi)
-- Cross-process communication (helper APK, Shizuku)
-- Real device Wi-Fi Display / Miracast behavior
+**Impact:** JVM and Android instrumentation alone cannot detect every Windows receiver, Wi-Fi Display, or audio playback regression.
 
 **Priority:** HIGH - Critical for regression prevention
 
 ---
 
-### 9. PowerShell Scripts as Manual Test Helpers
+### 8. PowerShell Scripts as Manual Test Helpers
 
 **Directory:** `scripts/`
 
@@ -161,8 +133,7 @@ val cameraCutoutAffectsLayout: Boolean = false,
 
 | Priority | Item | Effort | Risk |
 |----------|------|--------|------|
-| 🔴 HIGH | Missing `showDebugOverlay` persistence | Low | Settings loss |
-| 🔴 HIGH | No E2E instrumentation tests | High | Regression blind |
+| 🔴 HIGH | Live Windows Miracast coverage outside CI | High | Hardware regression risk |
 | 🟡 MEDIUM | `broadcastAutoStopMinutes` default too aggressive | Low | UX friction |
 | 🟡 MEDIUM | `cameraCutoutAffectsLayout` default on cutout devices | Medium | Layout issues |
 | 🟢 LOW | Settings schema migration | Medium | Future-proofing |

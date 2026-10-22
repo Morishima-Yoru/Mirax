@@ -1732,6 +1732,32 @@ class MiraxSessionTest {
     }
 
     @Test
+    fun systemBackAndToggleControlPanel_shareExpandedState() {
+        val session = connectedSession()
+
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().controlPanelExpanded).isTrue()
+
+        session.handle(SessionAction.ToggleControlPanel)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().controlPanelExpanded).isTrue()
+    }
+
+    @Test
+    fun clearConnectionHistory_updatesSnapshotImmediately() {
+        val session = freshSession()
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.1"))
+        session.handle(SessionAction.FinishConnectionRun(true, emptyList()))
+        assertThat(session.snapshot().connectionRuns).hasSize(1)
+
+        session.handle(SessionAction.ClearConnectionHistory)
+
+        assertThat(session.snapshot().connectionRuns).isEmpty()
+    }
+
+    @Test
     fun setOrientationLock_updatesSnapshotAndPersists() {
         val session = freshSession()
         assertThat(session.snapshot().orientationLockEnabled).isFalse()

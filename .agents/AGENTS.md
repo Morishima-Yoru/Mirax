@@ -26,10 +26,10 @@ See `.agents/e2e-testing.md` for `adb` + `UiAutomator` verification procedures.
 * Always use standard 4-space indentation.
 * Standardize logging with Android `Log` or `Timber`. Avoid silent failure.
 * Avoid `!!` (not-null assertions); prefer safe calls `?.` and elvis `?:`.
-* Always keep code `camelCase` for normal, `PascalCase` for classes/interfaces, and `UPPER_SNAKE_CASE` for const vals.
+* Follow the naming conventions below.
 
 ## Naming Conventions
-* Variables & functions: `camelCase` — descriptive, explicit verbs.
+* Variables & production functions: `camelCase` — descriptive, explicit verbs. Test methods may use underscores to separate scenario and expected behavior.
 * Classes & exceptions: `PascalCase` — nouns.
 * Constants: `UPPER_SNAKE_CASE` (for `const val`).
 * Generic type parameters: single letter `T` or descriptive `StateT`.

@@ -35,7 +35,6 @@ class MiraxSession(
         initialBroadcastAutoStopMinutes = initialSettings.broadcastAutoStopMinutes,
         initialShowDebugOverlay = initialSettings.showDebugOverlay,
         initialControlPanelEnabled = initialSettings.controlPanelEnabled,
-        initialControlPanelExpanded = false,
         initialOrientationLockEnabled = initialSettings.orientationLockEnabled,
     )
     private var activeConnection = ActiveConnectionState()
@@ -125,9 +124,9 @@ class MiraxSession(
         maybeEndHomeStayWithoutBall()
     }
 
+    /** Enter a mock connected state with [mode] and a visible source [name]. */
     fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60), name: String = "Mock Device") {
         sourceNameGeneration++
-        display.setControlPanelExpanded(false)
         activeConnection.enterMockConnected(mode)
         sourceDeviceName = name
     }
@@ -224,7 +223,6 @@ class MiraxSession(
             }
             SessionAction.CollapseControlPanel -> {
                 if (activeConnection.isConnected) {
-                    display.setControlPanelExpanded(false)
                     activeConnection.setControlPanelExpanded(false)
                 }
             }
@@ -275,14 +273,15 @@ class MiraxSession(
                 caps.setMaxVideoBitrateBps(action.bps)
             }
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
-            SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe(
-                {},
-                { err -> Log.w(TAG, "Failed to clear connection history", err) },
-            )
+            SessionAction.ClearConnectionHistory -> {
+                try {
+                    connectionHistory.clear()
+                } catch (err: Exception) {
+                    Log.w(TAG, "Failed to clear connection history", err)
+                }
+            }
             SessionAction.ToggleControlPanel -> {
-                val next = !display.controlPanelExpanded
-                display.setControlPanelExpanded(next)
-                activeConnection.setControlPanelExpanded(next)
+                activeConnection.setControlPanelExpanded(!activeConnection.controlPanelExpandedState)
             }
             is SessionAction.SetOrientationLock -> {
                 display.setOrientationLockEnabled(action.enabled)
@@ -361,7 +360,7 @@ fun snapshot(): SessionSnapshot {
             showDebugOverlay = display.showDebugOverlay,
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
-            controlPanelExpanded = display.controlPanelExpanded,
+            controlPanelExpanded = activeConnection.controlPanelExpandedState,
             orientationLockEnabled = display.orientationLockEnabled,
             sourceDeviceName = sourceDeviceName,
             handshakeLog = if (phase == ScreenPhase.CONNECTING && display.showDebugMessages) {
@@ -488,11 +487,8 @@ fun snapshot(): SessionSnapshot {
     private fun onSystemBack() {
         if (!activeConnection.isConnected) return
         when (activeConnection.onSystemBack()) {
-            ActiveConnectionState.BackResult.ExpandControlPanel -> {
-                display.setControlPanelExpanded(true)
-            }
+            ActiveConnectionState.BackResult.ExpandControlPanel -> Unit
             ActiveConnectionState.BackResult.ArmedSecondBack -> {
-                display.setControlPanelExpanded(false)
                 enqueueEffect(SessionEffect.ShowPressBackAgainToEndToast)
             }
             ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()
@@ -570,7 +566,6 @@ fun snapshot(): SessionSnapshot {
     private fun clearConnectionEphemerals() {
         sourceNameGeneration++
         activeConnection = ActiveConnectionState()
-        display.setControlPanelExpanded(false)
         sourceDeviceName = null
     }
 

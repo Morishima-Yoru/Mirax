@@ -57,6 +57,7 @@ object UibcTouchChannel {
     /** Optional English status line, for the connection log. */
     var onStatus: ((String) -> Unit)? = null
 
+    /** Open a UIBC channel to [host]:[port] with the negotiated [hidType]. */
     fun open(host: String, port: Int, hidType: Int, enabled: Boolean = true) {
         Log.d(TAG, "open: host=$host port=$port hidType=$hidType enabled=$enabled")
         close()
@@ -91,6 +92,7 @@ object UibcTouchChannel {
         }, "mirax-uibc").apply { isDaemon = true }.start()
     }
 
+    /** Change input availability, releasing live contacts before disabling. */
     fun setEnabled(enabled: Boolean) {
         val current = state.get()
         synchronized(current) {
@@ -106,19 +108,14 @@ object UibcTouchChannel {
             }
             current.enabled = enabled
             Log.i(TAG, "setEnabled=$enabled hidType=${current.hidType}")
+            current.pending = null
+            current.pendingPen = null
+            current.last = emptyList()
+            current.lastPen = null
             if (enabled) {
-                current.pending = null
-                current.pendingPen = null
-                current.last = emptyList()
-                current.lastPen = null
                 current.descriptorSent = false
                 sendDescriptor(current)
                 flushPending(current)
-            } else {
-                current.pending = null
-                current.pendingPen = null
-                current.last = emptyList()
-                current.lastPen = null
             }
         }
     }

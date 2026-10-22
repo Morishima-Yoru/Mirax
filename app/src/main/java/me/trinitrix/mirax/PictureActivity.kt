@@ -128,8 +128,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         lockedDirectionIsLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.statusBarColor = Color.BLACK
-        window.navigationBarColor = Color.BLACK
 
         stage = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -296,6 +294,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
     }
 
+    /** Rebuild the projection layout and controls after device rotation. */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (!MiraxApp.instance.session.snapshot().orientationLockEnabled) {
@@ -411,6 +410,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         view.post { layoutPicture() }
     }
 
+    /** Build the projection controls for the current screen orientation. */
     private fun buildControlPanel() {
         fun dp(value: Int): Int = MiraxUi.dp(this, value)
 
@@ -864,6 +864,13 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
     }
 
+    /**
+     * Create a labeled switch row in the control panel.
+     *
+     * @param label visible switch label
+     * @param onInit configures the switch before the row is returned
+     * @return the switch and label container
+     */
     private fun createSwitchRow(label: String, onInit: (MaterialSwitch) -> Unit): LinearLayout {
         fun dp(v: Int): Int = MiraxUi.dp(this, v)
         return LinearLayout(this).apply {
@@ -935,6 +942,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         endConnectionDialog?.show()
     }
 
+    /** Render control visibility and switch values from [snapshot]. */
     private fun renderControlPanel(snapshot: SessionSnapshot) {
         applyOrientationLock(snapshot.orientationLockEnabled)
         if (!snapshot.controlPanelExpanded) {

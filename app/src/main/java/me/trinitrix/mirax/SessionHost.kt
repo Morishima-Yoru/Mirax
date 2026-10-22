@@ -149,6 +149,14 @@ object SessionHost {
         return snapshot
     }
 
+    /**
+     * Resolve the source's hostname off the main thread and ignore stale connection results.
+     *
+     * @param context application context for dispatching the name update
+     * @param session session receiving the resolved name
+     * @param host source IP address
+     * @param generation connection generation used to reject stale lookups
+     */
     private fun resolveSourceDeviceName(
         context: Context,
         session: me.trinitrix.mirax.session.MiraxSession,

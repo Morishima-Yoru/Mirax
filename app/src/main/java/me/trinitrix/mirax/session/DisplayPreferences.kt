@@ -13,7 +13,6 @@ internal class DisplayPreferences(
     initialBroadcastAutoStopMinutes: Int = 1,
     initialShowDebugOverlay: Boolean = false,
     initialControlPanelEnabled: Boolean = true,
-    initialControlPanelExpanded: Boolean = false,
     initialOrientationLockEnabled: Boolean = false,
 ) {
 
@@ -39,9 +38,6 @@ internal class DisplayPreferences(
         private set
 
     var controlPanelEnabled: Boolean = initialControlPanelEnabled
-        private set
-
-    var controlPanelExpanded: Boolean = initialControlPanelExpanded
         private set
 
     var orientationLockEnabled: Boolean = initialOrientationLockEnabled
@@ -75,14 +71,12 @@ internal class DisplayPreferences(
         broadcastAutoStopMinutes = clampAutoStopMinutes(minutes)
     }
 
+    /** Record whether the picture control panel is available. */
     fun setControlPanelEnabled(enabled: Boolean) {
         controlPanelEnabled = enabled
     }
 
-    fun setControlPanelExpanded(expanded: Boolean) {
-        controlPanelExpanded = expanded
-    }
-
+    /** Record whether projection orientation is locked. */
     fun setOrientationLockEnabled(enabled: Boolean) {
         orientationLockEnabled = enabled
     }

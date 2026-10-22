@@ -8,7 +8,7 @@ Vocabulary: [`docs/CONTEXT.md`](docs/CONTEXT.md). Design: [`docs/design.md`](doc
 
 | Item | Detail |
 |------|--------|
-| Phone | Android 11 (API 30)+, Wi‑Fi available |
+| Phone | Android 14 (API 34)+, Wi‑Fi available |
 | PC | Windows 11 with inbox Win+K Miracast |
 | Privilege | Most Samsung models need [Shizuku](https://shizuku.rikka.app/) (see below) |
 
@@ -17,12 +17,13 @@ Miracast sink advertising calls `WifiP2pManager.setWfdInfo()`, which requires `C
 ## Install (Shizuku path, recommended)
 
 1. Install and start [Shizuku](https://shizuku.rikka.app/) on the phone; enable it via wireless debugging or root as documented there.
-2. Download the `v0.0.1` APK from [GitHub Releases](https://github.com/Morishima-Yoru/Mirax/releases) and sideload it.
+2. Download the latest APK from [GitHub Releases](https://github.com/Morishima-Yoru/Mirax/releases/latest) and sideload it.
 3. Open Mirax and grant Shizuku access when prompted.
 4. Turn on broadcast in Mirax (or use the Quick Settings tile).
 5. On Windows, press **Win+K**, pick the phone, and allow input from the device when you want touch or pen input. Enable Touch in Mirax's Picture settings, then interact with the projected Windows content; pen availability depends on the phone.
 
 > The Release APK is signed with the Android debug keystore for sideload/testing only. It is not a Play Store signing key.
+> The v0.0.5 APK has a different signing certificate from v0.0.1. Android cannot update v0.0.1 in place; uninstalling the old APK first deletes its local app data.
 
 ## Other privilege paths
 

@@ -11,8 +11,8 @@ android {
         applicationId = "me.trinitrix.mirax"
         minSdk = 34
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.0.4"
+        versionCode = 4
+        versionName = "0.0.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -70,10 +70,8 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 
-    // DataStore and RxJava3 for ConnectionHistory
+    // DataStore for ConnectionHistory
     implementation("androidx.datastore:datastore-preferences:1.1.1")
-    implementation("androidx.datastore:datastore-preferences-rxjava3:1.1.1")
-    implementation("io.reactivex.rxjava3:rxjava:3.1.6")
     implementation("com.google.code.gson:gson:2.10.1")
 
     testImplementation("junit:junit:4.13.2")
