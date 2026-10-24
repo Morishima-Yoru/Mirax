@@ -19,6 +19,7 @@ import me.trinitrix.mirax.broadcast.EndConnectionConfirm
 import me.trinitrix.mirax.host.OverlayPermission
 import me.trinitrix.mirax.host.PrivilegeProbe
 import me.trinitrix.mirax.host.RootHelper
+import me.trinitrix.mirax.session.ControlPanelEntry
 import me.trinitrix.mirax.session.PictureRotationReport
 import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.session.PictureScale
@@ -202,7 +203,7 @@ object SessionHost {
     }
 
     /**
-     * System Back on the picture surface. Session decides toast vs end-connection.
+     * System Back on the picture surface closes an expanded control panel only.
      */
     fun onSystemBack(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
@@ -324,6 +325,16 @@ object SessionHost {
         session.handle(SessionAction.SetControlPanelEnabled(enabled))
         SessionPreferences.saveControlPanelEnabled(context.applicationContext, enabled)
         return commit(context)
+    }
+
+    /** Persist and apply the projection control panel entry selection. */
+    fun setControlPanelEntry(context: Context, entry: ControlPanelEntry): SessionSnapshot {
+        val session = MiraxApp.instance.session
+        session.handle(SessionAction.SetControlPanelEntry(entry))
+        SessionPreferences.saveControlPanelEntry(context.applicationContext, entry)
+        val snapshot = commit(context)
+        PictureActivity.refreshIfShowing()
+        return snapshot
     }
 
     /**

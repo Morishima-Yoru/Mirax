@@ -211,7 +211,7 @@ class ControlPanelE2ETest {
         }
     }
 
-    /** Verify Back collapses the expanded panel, then requests end confirmation. */
+    /** Verify Back only collapses the panel and never requests disconnection. */
     @Test
     fun testMockSession_backKeyLogic() {
         val intent = Intent(context, PictureActivity::class.java).apply {
@@ -220,8 +220,6 @@ class ControlPanelE2ETest {
         val scenario = ActivityScenario.launch<PictureActivity>(intent)
 
         scenario.onActivity { activity: PictureActivity ->
-            Thread.sleep(1000)
-
             val session = activity.application as me.trinitrix.mirax.MiraxApp
 
             var snapshot = session.session.snapshot()
@@ -230,11 +228,11 @@ class ControlPanelE2ETest {
             session.session.handle(me.trinitrix.mirax.session.SessionAction.SystemBack)
             snapshot = session.session.snapshot()
             assertThat(snapshot.controlPanelExpanded).isFalse()
-            assertThat(snapshot.effects).contains(me.trinitrix.mirax.session.SessionEffect.ShowPressBackAgainToEndToast)
 
             session.session.handle(me.trinitrix.mirax.session.SessionAction.SystemBack)
             snapshot = session.session.snapshot()
-            assertThat(snapshot.effects).contains(me.trinitrix.mirax.session.SessionEffect.ConfirmEndConnection)
+            assertThat(snapshot.controlPanelExpanded).isFalse()
+            assertThat(snapshot.effects).doesNotContain(me.trinitrix.mirax.session.SessionEffect.ConfirmEndConnection)
             assertThat(snapshot.phase).isEqualTo(me.trinitrix.mirax.session.ScreenPhase.CONNECTED)
             session.session.handle(me.trinitrix.mirax.session.SessionAction.AcknowledgeEffects)
         }

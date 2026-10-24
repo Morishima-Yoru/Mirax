@@ -1,6 +1,7 @@
 package me.trinitrix.mirax
 
 import com.google.common.truth.Truth.assertThat
+import me.trinitrix.mirax.session.ControlPanelEntry
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionSettings
@@ -20,6 +21,7 @@ class SessionPreferencesTest {
         val settings = SessionSettings()
 
         assertThat(settings.controlPanelEnabled).isTrue()
+        assertThat(settings.controlPanelEntry).isEqualTo(ControlPanelEntry.FLOATING_BUTTON)
         assertThat(settings.orientationLockEnabled).isFalse()
     }
 
@@ -71,6 +73,7 @@ class SessionPreferencesTest {
             cameraCutoutAffectsLayout = false,
             broadcastAutoStopMinutes = 1,
             controlPanelEnabled = true,
+            controlPanelEntry = ControlPanelEntry.FLOATING_BUTTON,
             orientationLockEnabled = false,
         )
 
@@ -82,6 +85,16 @@ class SessionPreferencesTest {
     @Test
     fun sessionPreferences_controlPanelEnabledKeyExists() {
         assertThat(me.trinitrix.mirax.SessionPreferences::class.java.getDeclaredField("KEY_CONTROL_PANEL_ENABLED")).isNotNull()
+    }
+
+    @Test
+    fun sessionPreferences_controlPanelEntryPersistenceContractExists() {
+        assertThat(SessionPreferences::class.java.getDeclaredField("KEY_CONTROL_PANEL_ENTRY")).isNotNull()
+        assertThat(SessionPreferences::class.java.getDeclaredMethod(
+            "saveControlPanelEntry",
+            android.content.Context::class.java,
+            ControlPanelEntry::class.java,
+        )).isNotNull()
     }
 
     @Test
