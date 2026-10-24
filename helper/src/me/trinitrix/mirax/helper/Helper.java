@@ -33,6 +33,8 @@ public final class Helper {
     public static final String SOCKET_NAME = "mirax-helper";
     public static final int COMMAND_TIMEOUT_MS = 5000;
     private static final String TAG = "MiraxHelper";
+    private static final String MIRAX_PACKAGE = "me.trinitrix.mirax";
+    private static final int PER_USER_UID_RANGE = 100000;
     private static final ScheduledExecutorService TIMEOUTS = Executors.newSingleThreadScheduledExecutor(
             task -> {
                 Thread thread = new Thread(task, "mirax-helper-timeouts");
@@ -176,6 +178,13 @@ public final class Helper {
                 }
             }, COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             try {
+                int peerUid = owned.getPeerCredentials().getUid();
+                int miraxUid = peerUid >= android.os.Process.FIRST_APPLICATION_UID
+                        ? installedMiraxUid(peerUid) : -1;
+                if (!isAuthorizedPeer(peerUid, miraxUid)) {
+                    Log.w(TAG, "rejecting unauthorized peer uid=" + peerUid);
+                    return;
+                }
                 handleClient(owned);
             } finally {
                 deadline.cancel(false);
@@ -195,6 +204,35 @@ public final class Helper {
     static void shutdownExecutors() {
         CLIENTS.shutdown();
         TIMEOUTS.shutdown();
+    }
+
+    /**
+     * Check the kernel peer UID against privileged clients and the installed Mirax UID.
+     * @param peerUid kernel-reported caller UID
+     * @param miraxUid package-manager UID for Mirax, or -1 if lookup failed
+     * @return whether the peer may issue a helper command
+     */
+    static boolean isAuthorizedPeer(int peerUid, int miraxUid) {
+        return peerUid == 0 || peerUid == 2000 ||
+                (miraxUid >= android.os.Process.FIRST_APPLICATION_UID && peerUid == miraxUid);
+    }
+
+    /**
+     * Resolve Mirax for the peer's Android user on every connection, avoiding stale UID reuse.
+     * @param peerUid kernel-reported caller UID
+     * @return installed Mirax UID, or -1 if package lookup is unavailable
+     */
+    private static int installedMiraxUid(int peerUid) {
+        try {
+            Class<?> globals = Class.forName("android.app.AppGlobals");
+            Object packageManager = globals.getMethod("getPackageManager").invoke(null);
+            Class<?> api = Class.forName("android.content.pm.IPackageManager");
+            return (Integer) api.getMethod("getPackageUid", String.class, long.class, int.class)
+                    .invoke(packageManager, MIRAX_PACKAGE, 0L, peerUid / PER_USER_UID_RANGE);
+        } catch (Exception err) {
+            Log.w(TAG, "cannot resolve authorized Mirax peer", err);
+            return -1;
+        }
     }
 
     /**

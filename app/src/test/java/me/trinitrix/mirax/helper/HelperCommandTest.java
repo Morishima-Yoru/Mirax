@@ -14,6 +14,22 @@ import org.junit.Test;
 
 /** Validates helper command framing before privileged execution. */
 public class HelperCommandTest {
+    /** Existing root, shell, and installed Mirax clients remain authorized. */
+    @Test
+    public void authorizedPeers_includeRootShellAndExactMiraxUid() {
+        assertTrue(Helper.isAuthorizedPeer(0, 10289));
+        assertTrue(Helper.isAuthorizedPeer(2000, 10289));
+        assertTrue(Helper.isAuthorizedPeer(10289, 10289));
+    }
+
+    /** An unrelated UID cannot inherit access, even if package lookup failed. */
+    @Test
+    public void unrelatedPeers_areDeniedBeforeReadingCommands() {
+        assertFalse(Helper.isAuthorizedPeer(10291, 10289));
+        assertFalse(Helper.isAuthorizedPeer(10289, -1));
+        assertFalse(Helper.isAuthorizedPeer(1000, 1000));
+    }
+
     /** Accepts a complete command frame. */
     @Test
     public void completeCommand_isAccepted() throws Exception {
