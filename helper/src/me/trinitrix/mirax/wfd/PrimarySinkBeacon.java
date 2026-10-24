@@ -46,6 +46,8 @@ public final class PrimarySinkBeacon {
     private static final long POLL_INTERVAL_MS = 1000;
     /** Android shuts an idle P2P interface down after 150 s; re-arm well before that. */
     private static final long RELISTEN_INTERVAL_MS = 30_000;
+    /** Upper bound to wait for requestGroupInfo before publishing UP nameless. */
+    private static final long NAME_REQUEST_TIMEOUT_MS = 2_000;
     /** WPS pairing timeout. */
     private static final long WPS_TIMEOUT_MS = 120_000;
 
@@ -73,6 +75,13 @@ public final class PrimarySinkBeacon {
     private volatile String groupState = GROUP_DOWN;
     private volatile String lastName = "";
     private boolean groupFormed;
+    /** Handler-confined lifecycle generation rejecting callbacks from a stopped or replaced group. */
+    private int nameGeneration;
+    /** Generation whose requestGroupInfo is already in flight or answered. */
+    private int nameRequestedGeneration = -1;
+    /** Request-time fallback used only for a matching current group peer. */
+    private String requestedPeerMac = "";
+    private String requestedPeerName = "";
     private boolean forgetSavedGroups;
     private long lastArmedAt;
     private volatile PairingState pairingState = PairingState.UNPAIRED;
@@ -115,6 +124,49 @@ public final class PrimarySinkBeacon {
         void onListening();
 
         void onFailed(String detail);
+    }
+
+    /**
+     * Wire encoding of the group-state line consumed by the app-process owner
+     * bridge. Format: {@code UP <source> [OWNER]} with an optional tab and name.
+     * A nameless group keeps the legacy header so older owners still parse it.
+     * A name that is empty after sanitising falls back to the nameless form.
+     *
+     * @param sourceAddress IPv4 of the Miracast peer (Windows source)
+     * @param phoneIsOwner  true when this phone is the P2P group owner (DHCP)
+     * @param name          peer name from Wi-Fi Direct; may be null or empty
+     * @return wire string for the group-state publish
+     */
+    public static String formatGroupState(String sourceAddress, boolean phoneIsOwner, String name) {
+        if (sourceAddress == null || sourceAddress.isEmpty()) {
+            return GROUP_DOWN;
+        }
+        StringBuilder sb = new StringBuilder(GROUP_UP_PREFIX);
+        sb.append(sourceAddress);
+        if (phoneIsOwner) {
+            sb.append(" OWNER");
+        }
+        String sanitized = sanitizeName(name);
+        if (sanitized != null) {
+            sb.append('\t').append(sanitized);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Sanitise a peer name for the wire format. Tab, CR and LF are protocol
+     * delimiters and become a space; surrounding whitespace is trimmed.
+     * Unicode and inner spaces are kept as is.
+     *
+     * @param name raw Wi-Fi Direct device name, may be null
+     * @return wire-safe name, or null when nothing printable remains
+     */
+    private static String sanitizeName(String name) {
+        if (name == null) {
+            return null;
+        }
+        String clean = name.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ').trim();
+        return clean.isEmpty() ? null : clean;
     }
 
     private volatile ArmCallback armCallback;
@@ -183,6 +235,7 @@ public final class PrimarySinkBeacon {
                 wanted = true;
                 groupFormed = false;
                 groupState = GROUP_DOWN;
+                resetNameState();
                 removeGroupQuietly("removeGroup");
             }
             // Clear any leftover approvers from previous runs
@@ -202,6 +255,7 @@ public final class PrimarySinkBeacon {
             advertising = false;
             groupFormed = false;
             groupState = GROUP_DOWN;
+            resetNameState();
             clientConnectAttempted.clear();
             handler.removeCallbacks(poll);
             if (manager == null || channel == null) {
@@ -221,7 +275,10 @@ public final class PrimarySinkBeacon {
 
     /** End the current connection's P2P group; advertising resumes once the group is down. */
     public void endSession() {
-        handler.post(() -> removeGroupQuietly("endSession"));
+        handler.post(() -> {
+            resetNameState();
+            removeGroupQuietly("endSession");
+        });
     }
 
     /**
@@ -257,7 +314,7 @@ public final class PrimarySinkBeacon {
     }
 
     /**
-     * @return {@link #GROUP_DOWN}, {@link #GROUP_PENDING}, or {@code UP <source address>}
+     * @return {@link #GROUP_DOWN}, {@link #GROUP_PENDING}, or {@code UP <source> [OWNER]} with an optional tab and name
      */
     public String groupState() {
         return groupState;
@@ -295,7 +352,12 @@ public final class PrimarySinkBeacon {
             return;
         }
         try {
-            manager.requestConnectionInfo(channel, this::onConnectionInfo);
+            final int generation = nameGeneration;
+            manager.requestConnectionInfo(channel, info -> {
+                if (generation == nameGeneration) {
+                    onConnectionInfo(info);
+                }
+            });
             manager.requestPeers(channel, peers -> {
                 if (peers == null) {
                     return;
@@ -322,6 +384,7 @@ public final class PrimarySinkBeacon {
                 Log.i(TAG, "P2P group down");
                 groupFormed = false;
                 groupState = GROUP_DOWN;
+                resetNameState();
                 clientConnectAttempted.clear();
                 // Do NOT forget saved groups here - preserve persistent group for reinvocation
                 // forgetSavedGroups is only set to true when user explicitly calls forgetAllPairings()
@@ -348,13 +411,100 @@ public final class PrimarySinkBeacon {
         if (groupState.startsWith(GROUP_UP_PREFIX)) {
             return;
         }
-        String source = info.isGroupOwner ? p2pNeighbor() : hostOf(info.groupOwnerAddress);
-        if (source != null) {
-            // OWNER suffix tells the app-process sink to accept RTSP instead of
-            // dialing: when this phone is GO, Windows is the client.
-            groupState = GROUP_UP_PREFIX + source + (info.isGroupOwner ? " OWNER" : "");
-            Log.i(TAG, "source address " + source + " phoneIsOwner=" + info.isGroupOwner);
+        requestPeerName(info);
+    }
+
+    /**
+     * Invalidate in-flight requestGroupInfo callbacks and drop the cached
+     * request-time peer so the next group cannot inherit a previous name.
+     */
+    private void resetNameState() {
+        nameGeneration++;
+        nameRequestedGeneration = -1;
+        requestedPeerMac = "";
+        requestedPeerName = "";
+    }
+
+    /**
+     * Attempt to confirm the current peer name via requestGroupInfo after a
+     * group forms, then publish the first UP header. Phone client: the peer is
+     * the group owner. Phone GO: only a single uniquely-identifiable group
+     * client may name the peer. A request failure, or any peer that is not
+     * uniquely identifiable, falls back to a nameless (legacy) header. A timeout
+     * bounds the wait if the platform never invokes its callback.
+     *
+     * @param info connection info carrying the group role and source address
+     */
+    private void requestPeerName(final WifiP2pInfo info) {
+        final int generation = nameGeneration;
+        if (nameRequestedGeneration == generation) {
+            return;
         }
+        final boolean owner = info.isGroupOwner;
+        final String source = owner ? p2pNeighbor() : hostOf(info.groupOwnerAddress);
+        if (source == null) {
+            return;
+        }
+        nameRequestedGeneration = generation;
+        try {
+            manager.requestGroupInfo(channel, group -> {
+                if (generation != nameGeneration || !groupFormed
+                        || groupState.startsWith(GROUP_UP_PREFIX)) {
+                    return;
+                }
+                publishUp(source, owner, group == null ? null : peerName(group, owner));
+            });
+            // A callback that never arrives must not block casting.
+            handler.postDelayed(() -> {
+                if (generation == nameGeneration && groupFormed
+                        && !groupState.startsWith(GROUP_UP_PREFIX)) {
+                    Log.w(TAG, "requestGroupInfo timed out; publishing nameless");
+                    publishUp(source, owner, null);
+                }
+            }, NAME_REQUEST_TIMEOUT_MS);
+        } catch (Throwable err) {
+            Log.w(TAG, "requestGroupInfo failed; publishing nameless", err);
+            publishUp(source, owner, null);
+        }
+    }
+
+    /**
+     * Use the current group peer's name, with an identity-matched request-time fallback.
+     *
+     * @param group formed group from requestGroupInfo
+     * @param owner true when this phone is the group owner
+     * @return peer device name, or null when unavailable or ambiguous
+     */
+    private String peerName(WifiP2pGroup group, boolean owner) {
+        WifiP2pDevice peer;
+        if (owner) {
+            Collection<WifiP2pDevice> clients = group.getClientList();
+            peer = clients != null && clients.size() == 1 ? clients.iterator().next() : null;
+        } else {
+            peer = group.getOwner();
+        }
+        if (peer == null || peer.deviceAddress == null || peer.deviceAddress.isEmpty()) {
+            return null;
+        }
+        String name = sanitizeName(peer.deviceName);
+        if (name != null) {
+            return name;
+        }
+        return peer.deviceAddress.equalsIgnoreCase(requestedPeerMac)
+                ? sanitizeName(requestedPeerName) : null;
+    }
+
+    /**
+     * Publish the ready source using the shared wire encoder.
+     *
+     * @param source source IPv4 address
+     * @param owner true when this phone owns the P2P group
+     * @param name current peer name, or null when unavailable
+     */
+    private void publishUp(String source, boolean owner, String name) {
+        groupState = formatGroupState(source, owner, name);
+        Log.i(TAG, "source address " + source + " phoneIsOwner=" + owner
+                + " name=" + (name == null ? "(none)" : "\"" + name + "\""));
     }
 
     private void armSink() {
@@ -932,6 +1082,9 @@ public final class PrimarySinkBeacon {
                         setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_REJECT);
                         return;
                     }
+                    requestedPeerMac = address;
+                    String requestedName = device == null ? null : sanitizeName(device.deviceName);
+                    requestedPeerName = requestedName == null ? "" : requestedName;
 
                     // For first-time pairing (UNPAIRED state), accept connection AND start WPS PBC
                     if (pairingState == PairingState.UNPAIRED) {

@@ -47,8 +47,6 @@ class MiraxSession(
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
     private var sourceDeviceName: String? = null
-    var sourceNameGeneration: Long = 0L
-        private set
     private var miraxDisplayId: Int = 0
     private var pictureRotationDegrees: Int = 0
     private var overlayGranted: Boolean = false
@@ -126,7 +124,6 @@ class MiraxSession(
 
     /** Enter a mock connected state with [mode] and a visible source [name]. */
     fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60), name: String = "Mock Device") {
-        sourceNameGeneration++
         activeConnection.enterMockConnected(mode)
         sourceDeviceName = name
     }
@@ -169,8 +166,7 @@ class MiraxSession(
                 endConnectionState(emitDrop = false)
             }
             is SessionAction.BeginConnectionRun -> {
-                sourceNameGeneration++
-                sourceDeviceName = null
+                sourceDeviceName = action.sourceDeviceName?.trim()?.ifEmpty { null }
                 activeConnection.onPrePlayProgress(caps.resolveNextAdvertisementModes())
                 diagnostics.beginRun(action.remoteHost, configurationBackup())
                 connectionHistory.start(action.remoteHost, configurationBackup())
@@ -564,7 +560,6 @@ fun snapshot(): SessionSnapshot {
     }
 
     private fun clearConnectionEphemerals() {
-        sourceNameGeneration++
         activeConnection = ActiveConnectionState()
         sourceDeviceName = null
     }

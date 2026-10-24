@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object WfdOwnerBridge {
     private const val TAG = "MiraxWfdBridge"
-    private const val USER_SERVICE_VERSION = 4
+    private const val USER_SERVICE_VERSION = 5
     private const val ARM_POLL_MS = 250L
     private const val ARM_TIMEOUT_MS = 4_000L
 
@@ -147,7 +147,7 @@ object WfdOwnerBridge {
     }
 
     /**
-     * Current P2P group state from the owner: `DOWN`, `PENDING`, or `UP <source>`.
+     * Current P2P group state: `DOWN`, `PENDING`, or `UP <source> [OWNER]` with an optional tab and name.
      * Safe to call off the main thread.
      */
     fun groupState(): String? {

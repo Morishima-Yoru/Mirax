@@ -1806,15 +1806,51 @@ class MiraxSessionTest {
     }
 
     @Test
+    fun beginConnectionRun_setsNativeSourceNameSynchronously() {
+        val session = freshSession()
+
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "Alice's Surface"))
+
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Alice's Surface")
+    }
+
+    @Test
+    fun beginConnectionRun_replacesPreviousSourceName() {
+        val session = freshSession()
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.1", "Previous source"))
+
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "Current source"))
+
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Current source")
+    }
+
+    @Test
+    fun beginConnectionRun_blankSourceNameRemainsUnknown() {
+        val session = freshSession()
+
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "  \t  "))
+
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+    }
+
+    @Test
+    fun prePlayGroupDropped_clearsNativeSourceName() {
+        val session = freshSession()
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.1", "Previous source"))
+
+        session.handle(SessionAction.PrePlayGroupDropped)
+
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+    }
+
+    @Test
     fun beginConnectionRun_clearsPreviousSourceName() {
         val session = freshSession()
-        session.handle(SessionAction.SetSourceDeviceName("Previous source"))
-        val previousGeneration = session.sourceNameGeneration
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.1", "Previous source"))
 
         session.handle(SessionAction.BeginConnectionRun("192.0.2.2"))
 
         assertThat(session.snapshot().sourceDeviceName).isNull()
-        assertThat(session.sourceNameGeneration).isGreaterThan(previousGeneration)
     }
 
     private fun connectedSession(): MiraxSession {

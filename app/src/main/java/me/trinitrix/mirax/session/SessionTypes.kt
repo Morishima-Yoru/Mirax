@@ -579,10 +579,13 @@ sealed interface SessionAction {
     /**
      * Start one connection run and snapshot the settings in force now.
      *
-     * Args:
-     *     remoteHost: Source address for this attempt. Blank when it is not known yet.
+     * @param remoteHost source address for this attempt, blank when not known yet
+     * @param sourceDeviceName peer name supplied by Wi-Fi Direct, null when unavailable
      */
-    data class BeginConnectionRun(val remoteHost: String) : SessionAction
+    data class BeginConnectionRun(
+        val remoteHost: String,
+        val sourceDeviceName: String? = null,
+    ) : SessionAction
 
     /**
      * Append one English line to the open connection run.

@@ -1,6 +1,9 @@
 package me.trinitrix.mirax.wfd
 
 import com.google.common.truth.Truth.assertThat
+import me.trinitrix.mirax.session.MiraxSession
+import me.trinitrix.mirax.session.SessionAction
+import me.trinitrix.mirax.session.TestConnectionHistory
 import me.trinitrix.mirax.wfd.rtsp.RtspMessageBuffer
 import org.junit.Test
 import java.nio.charset.StandardCharsets
@@ -19,6 +22,29 @@ class SinkConnectionWireTest {
         assertThat(P2pGroupState.parse("DOWN")).isEqualTo(P2pGroupState.Down)
         assertThat(P2pGroupState.parse(null)).isEqualTo(P2pGroupState.Down)
         assertThat(P2pGroupState.parse("UP ")).isEqualTo(P2pGroupState.Down)
+    }
+
+    @Test
+    fun groupState_updatesSessionSourceNameThroughSinkConnectionEvent() {
+        val session = MiraxSession(connectionHistory = TestConnectionHistory())
+        val group = P2pGroupState.parse(
+            PrimarySinkBeacon.formatGroupState("192.168.137.1", true, "Alice's Surface"),
+        )
+        require(group is P2pGroupState.Up)
+
+        val action = beginConnectionRunAction(group)
+        assertThat(action.remoteHost).isEqualTo("192.168.137.1")
+        session.handle(action)
+
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Alice's Surface")
+
+        session.handle(SessionAction.ConnectionEnded)
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+
+        val legacyGroup = P2pGroupState.parse("UP 192.168.137.2")
+        require(legacyGroup is P2pGroupState.Up)
+        session.handle(beginConnectionRunAction(legacyGroup))
+        assertThat(session.snapshot().sourceDeviceName).isNull()
     }
 
     @Test

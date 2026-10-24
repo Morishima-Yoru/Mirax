@@ -207,7 +207,7 @@ object SinkConnectionController {
                             finishConnectionRun(succeeded = false, selected = null)
                             continue
                         }
-                        beginConnectionRun(state.sourceAddress)
+                        postAction(beginConnectionRunAction(state))
                         note(
                             if (state.phoneIsOwner) {
                                 "P2P group up (phone is GO); dialing Windows RTSP"
@@ -750,10 +750,6 @@ object SinkConnectionController {
         return box.get()
     }
 
-    private fun beginConnectionRun(host: String) {
-        postAction(SessionAction.BeginConnectionRun(host))
-    }
-
     private fun finishConnectionRun(succeeded: Boolean, selected: VideoMode?) {
         val touch = lastTouchEnabled.get()
         postAction(
@@ -833,3 +829,12 @@ object SinkConnectionController {
     private val MICROSOFT_MAX_BITRATE_LINE =
         Regex("microsoft_max_bitrate:\\s*(\\d+)", RegexOption.IGNORE_CASE)
 }
+
+/**
+ * Translate a ready group into the connection event dispatched by the sink.
+ *
+ * @param group current source reported by the privileged owner
+ * @return the connection run action without starting network or Android work
+ */
+internal fun beginConnectionRunAction(group: P2pGroupState.Up): SessionAction.BeginConnectionRun =
+    SessionAction.BeginConnectionRun(group.sourceAddress, group.sourceDeviceName)
