@@ -339,6 +339,9 @@ fun snapshot(): SessionSnapshot {
             preferredModeText = caps.preferredMode?.format().orEmpty(),
             canUseThisScreen = canRead,
             standardModes = standardRows,
+            microsoftModes = MicrosoftVideoModes.catalog().map { mode ->
+                StandardModeRow(mode = mode, checked = mode in caps.checkedStandardModes)
+            },
             nextAdvertisementModes = nextModes,
             currentResolutionText = resolutionText,
             miraxDisplayId = miraxDisplayId,

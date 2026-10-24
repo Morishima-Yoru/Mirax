@@ -10,6 +10,7 @@ import me.trinitrix.mirax.PictureActivity
 import me.trinitrix.mirax.SessionHost
 import me.trinitrix.mirax.wm.WmSize
 import me.trinitrix.mirax.session.ConnectionRunFact
+import me.trinitrix.mirax.session.MicrosoftVideoModes
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.PreferredModeCorrection
 import me.trinitrix.mirax.session.StandardVideoModes
@@ -332,9 +333,8 @@ object SinkConnectionController {
         var lastSelected: VideoMode? = null
         var lastLatencyMode = ""
         val offer = connectionOffer(command)
-        // Settings own resolution. Interactive only remaps refresh >30 → 30 so
-        // Win11 cannot pick *@60 (that path pinned ~550 ms bursts + sub‑Mbps ABR
-        // on HA1CSQTM). Do not inject or lock width/height.
+        // Legacy interactive modes also offer 30 Hz for burst-prone sources;
+        // fixed Microsoft bits remain strictly settings-owned.
         val advertiseModes = offer.modes
             .plus(if (offer.touchEnabled) {
                 remappedInteractiveRefresh(offer.modes)
@@ -688,7 +688,7 @@ object SinkConnectionController {
     )
 
     /**
-     * Keep width/height; cap refresh at [INTERACTIVE_MAX_FPS] for touch sessions.
+     * Keep width/height; cap non-Microsoft refresh at [INTERACTIVE_MAX_FPS] for touch sessions.
      */
     private fun remappedInteractiveRefresh(mode: VideoMode): VideoMode {
         val remapped = if (mode.refreshHz <= INTERACTIVE_MAX_FPS) {
@@ -696,6 +696,8 @@ object SinkConnectionController {
         } else {
             VideoMode(mode.width, mode.height, INTERACTIVE_MAX_FPS)
         }
+        // Fixed Microsoft bits must never add an unchecked sibling refresh.
+        if (MicrosoftVideoModes.contains(mode) || MicrosoftVideoModes.contains(remapped)) return mode
         val level51Compliant = PreferredModeCorrection.correct(
             remapped.width, remapped.height, remapped.refreshHz
         )
@@ -738,7 +740,7 @@ object SinkConnectionController {
             }
         }
         if (!latch.await(2, TimeUnit.SECONDS) || box.get() == null) {
-            val preferred = fallback.modes.firstOrNull { !WfdVideoFormatCodec.isStandardMode(it) }
+            val preferred = fallback.modes.firstOrNull { WfdVideoFormatCodec.isCustomMode(it) }
             return ConnectionOffer(
                 modes = fallback.modes,
                 preferred = preferred,

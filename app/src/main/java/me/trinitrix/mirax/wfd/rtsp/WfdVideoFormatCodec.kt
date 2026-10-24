@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wfd.rtsp
 
+import me.trinitrix.mirax.session.MicrosoftVideoModes
 import me.trinitrix.mirax.session.VideoMode
 
 /**
@@ -68,6 +69,14 @@ object WfdVideoFormatCodec {
 
     fun isStandardMode(mode: VideoMode): Boolean = mode in STANDARD_LOOKUP
 
+    /**
+     * Identifies literal modes not represented by either fixed bitmap family.
+     *
+     * @param mode mode to classify
+     * @return whether a literal custom-format entry is needed
+     */
+    fun isCustomMode(mode: VideoMode): Boolean = !isStandardMode(mode) && !MicrosoftVideoModes.contains(mode)
+
     fun hex4(value: Int): String {
         require(value in 0..0xFFFF) { "field out of range: $value" }
         return String.format("%04X", value)
@@ -77,7 +86,7 @@ object WfdVideoFormatCodec {
      * Encode custom modes as space-separated hex width height refresh, comma between modes.
      */
     fun encodeCustomFormats(modes: Collection<VideoMode>): String {
-        val customs = modes.filterNot { isStandardMode(it) }
+        val customs = modes.filter { isCustomMode(it) }
         if (customs.isEmpty()) {
             return "none"
         }
@@ -148,7 +157,7 @@ object WfdVideoFormatCodec {
         val vesa = encodeVesaHex(modes)
         val hh = encodeHhHex(modes)
         val pref = preferred?.takeIf { it in modes }
-            ?: modes.firstOrNull { !isStandardMode(it) }
+            ?: modes.firstOrNull { isCustomMode(it) }
         return if (pref != null) {
             "00 01 03 $H264_LEVEL_51 $cea $vesa $hh 00 0000 0000 11 ${hex4(pref.width)} ${hex4(pref.height)}"
         } else {
@@ -161,7 +170,7 @@ object WfdVideoFormatCodec {
         val vesa = encodeVesaHexWfdx(modes)
         val hh = String.format("%08X", hhMask(modes))
         val pref = preferred?.takeIf { it in modes }
-            ?: modes.firstOrNull { !isStandardMode(it) }
+            ?: modes.firstOrNull { isCustomMode(it) }
         return if (pref != null) {
             "0000 01 0003 00$H264_LEVEL_51 $cea $vesa $hh 00 0000 0000 11 ${hex4(pref.width)} ${hex4(pref.height)}"
         } else {

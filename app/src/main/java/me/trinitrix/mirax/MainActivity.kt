@@ -58,6 +58,7 @@ import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.StandardModeGroups
+import me.trinitrix.mirax.session.StandardModeRow
 import me.trinitrix.mirax.session.StandardVideoModes
 import me.trinitrix.mirax.session.SystemLocaleReport
 import me.trinitrix.mirax.session.VideoMode
@@ -810,7 +811,8 @@ class MainActivity : AppCompatActivity() {
             Page.PICTURE -> "${customSummary(snapshot)}|${modesSummary(snapshot)}|${scaleLabel(snapshot.pictureScale)}|${snapshot.touchEnabled}|${snapshot.orientationLockEnabled}|${snapshot.maxVideoBitrateBps}"
             Page.CUSTOM -> "${snapshot.autoAddWmSizeOnConnect}|${snapshot.customModes.joinToString { it.format() }}"
             Page.GENERAL -> "${snapshot.displayNameOverride}|${ballOn(snapshot)}|${snapshot.languagePreference}"
-            Page.MODES -> snapshot.standardModes.joinToString { "${it.mode.format()}=${it.checked}" }
+            Page.MODES -> (snapshot.standardModes + snapshot.microsoftModes)
+                .joinToString { "${it.mode.format()}=${it.checked}" }
             Page.SCALE -> snapshot.pictureScale.name
             Page.LANGUAGE -> snapshot.languagePreference.name
             Page.ADVANCED -> "${snapshot.showDebugMessages}|${snapshot.cameraCutoutAffectsLayout}|${snapshot.broadcastAutoStopMinutes}"
@@ -1701,7 +1703,12 @@ class MainActivity : AppCompatActivity() {
         val frame = column.findViewWithTag<LinearLayout>("modes") ?: return
         val tabs = frame.findViewWithTag<LinearLayout>("mode-tabs") ?: return
         val body = frame.findViewWithTag<LinearLayout>("mode-body") ?: return
-        val groups = StandardModeGroups.groups(snapshot.standardModes)
+        val microsoftRows = snapshot.microsoftModes.sortedWith(
+            compareByDescending<StandardModeRow> { it.mode.width }.thenByDescending { it.mode.refreshHz },
+        )
+        val groups = StandardModeGroups.groups(snapshot.standardModes) + listOfNotNull(
+            microsoftRows.takeIf { it.isNotEmpty() }?.let { StandardModeGroups.Group("3:2", it) },
+        )
         if (groups.none { it.label == modesRatio }) {
             modesRatio = groups.firstOrNull()?.label ?: "16:9"
         }
@@ -1722,6 +1729,9 @@ class MainActivity : AppCompatActivity() {
         body.removeAllViews()
         if (group == null) {
             return
+        }
+        if (group.label == "3:2") {
+            body.addView(hint(getString(R.string.microsoft_modes_hint)))
         }
         if (openSize == null) {
             sizes.forEachIndexed { index, size ->
@@ -2100,6 +2110,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun pictureDetail(snapshot: SessionSnapshot): String {
         val labels = snapshot.customModes.map { it.format() } +
+            snapshot.microsoftModes.filter { it.checked }.map { it.mode.format() } +
             snapshot.standardModes.filter { it.checked }.map { it.mode.format() }
         val first = labels.firstOrNull() ?: getString(R.string.custom_empty)
         val others = (labels.size - 1).coerceAtLeast(0)
@@ -2122,7 +2133,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun modesSummary(snapshot: SessionSnapshot): String {
-        val checked = snapshot.standardModes.count { it.checked }
+        val checked = snapshot.standardModes.count { it.checked } + snapshot.microsoftModes.count { it.checked }
         return getString(R.string.modes_checked_count, checked)
     }
 

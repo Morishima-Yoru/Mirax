@@ -593,6 +593,92 @@ class MiraxSessionTest {
     }
 
     @Test
+    fun microsoftModesAreOptInAndRetainedAcrossSettingsRestore() {
+        val session = freshSession()
+        val mode = VideoMode(2160, 1440, 60)
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(mode)
+
+        session.handle(SessionAction.SetStandardModeChecked(mode, checked = true))
+
+        assertThat(session.snapshot().nextAdvertisementModes).contains(mode)
+        val saved = session.exportSettings()
+        assertThat(saved.checkedStandardModes).contains(mode)
+        val restored = MiraxSession(saved, TestConnectionHistory())
+        assertThat(restored.snapshot().nextAdvertisementModes).contains(mode)
+
+        restored.handle(SessionAction.SetStandardModeChecked(mode, checked = false))
+        assertThat(restored.snapshot().nextAdvertisementModes).doesNotContain(mode)
+        assertThat(restored.exportSettings().checkedStandardModes).doesNotContain(mode)
+    }
+
+    @Test
+    fun microsoftPickerShowsOnlySupportedModesAndBulkSelectionUpdatesRows() {
+        val session = freshSession()
+        val expected = listOf(
+            VideoMode(1920, 1280, 30), VideoMode(1920, 1280, 60), VideoMode(1920, 1280, 24),
+            VideoMode(2160, 1440, 30), VideoMode(2160, 1440, 60), VideoMode(2160, 1440, 24),
+            VideoMode(2256, 1504, 30), VideoMode(2256, 1504, 60), VideoMode(2256, 1504, 24),
+            VideoMode(2736, 1824, 30), VideoMode(2736, 1824, 24),
+            VideoMode(3000, 2000, 30), VideoMode(3000, 2000, 24),
+            VideoMode(3240, 2160, 30), VideoMode(3240, 2160, 24),
+        )
+        assertThat(session.snapshot().microsoftModes.map { it.mode }).containsExactlyElementsIn(expected)
+        assertThat(session.snapshot().microsoftModes.any { it.checked }).isFalse()
+        assertThat(session.snapshot().standardModes.map { it.mode }).containsNoneIn(expected)
+
+        val unsupported = VideoMode(2736, 1824, 60)
+        session.handle(SessionAction.SetStandardModesChecked(expected + unsupported, checked = true))
+        assertThat(session.snapshot().microsoftModes.all { it.checked }).isTrue()
+        assertThat(session.snapshot().nextAdvertisementModes).containsAtLeastElementsIn(expected)
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(unsupported)
+
+        session.handle(SessionAction.SetStandardModesChecked(expected, checked = false))
+        assertThat(session.snapshot().microsoftModes.any { it.checked }).isFalse()
+        assertThat(session.snapshot().nextAdvertisementModes).containsNoneIn(expected)
+    }
+
+    @Test
+    fun restoredOversizedMicrosoftModesCannotBypassOfferLimitsThroughCustomSettings() {
+        val safe = VideoMode(2160, 1440, 60)
+        val oversized = listOf(VideoMode(3000, 2000, 60), VideoMode(4500, 3000, 24))
+        val session = MiraxSession(
+            SessionSettings(
+                checkedStandardModes = setOf(safe) + oversized,
+                customModes = oversized,
+                preferredMode = oversized.first(),
+            ),
+            TestConnectionHistory(),
+        )
+        assertThat(session.snapshot().nextAdvertisementModes).containsExactly(safe)
+        // Loading on this receiver filters the offer without destroying saved choices.
+        assertThat(session.exportSettings().customModes).containsExactlyElementsIn(oversized)
+    }
+
+    @Test
+    fun microsoftSettingEditsDoNotMutateFrozenOfferOrSelectedResolution() {
+        val mode = VideoMode(2160, 1440, 60)
+        val session = sessionWithBroadcast(
+            SessionSettings(
+                advertisingEnabled = true,
+                checkedStandardModes = setOf(mode),
+                autoAddWmSizeOnConnect = false,
+                touchEnabled = false,
+            ),
+        )
+        session.handle(SessionAction.FreezeConnectionOffer(null))
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode)
+
+        session.handle(SessionAction.SetStandardModeChecked(mode, checked = false))
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(mode)
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode)
+
+        session.handle(SessionAction.SourceSelectedMode(mode))
+        session.handle(SessionAction.EnteredPlay)
+        assertThat(session.snapshot().selectedMode).isEqualTo(mode)
+        assertThat(session.snapshot().currentResolutionText).isEqualTo("2160×1440@60")
+    }
+
+    @Test
     fun withPreferredMode_advertisementSetIsPreferredPlusChecked_deduped() {
         val session = freshSession()
         session.handle(SessionAction.CommitPreferredModeText("2176×1812@60"))

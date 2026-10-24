@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wfd.rtsp
 
+import me.trinitrix.mirax.session.MicrosoftVideoModes
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 
@@ -10,12 +11,16 @@ import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
  * Advertises UIBC HIDC only when [touchEnabled] is true. Does not open the UIBC socket.
  */
 class WfdCapabilityTable(
-    private val modes: Set<VideoMode>,
+    modes: Set<VideoMode>,
     private val preferred: VideoMode?,
     private val friendlyName: String,
     private val touchEnabled: Boolean = false,
     private val maxBitrateBps: Long = 40_000_000L,
 ) {
+    private val modes = modes.filter { mode ->
+        !MicrosoftVideoModes.contains(mode) || mode in MicrosoftVideoModes.catalog()
+    }.toSet()
+
     /**
      * Interactive (UIBC) sessions: M3 should prefer low-latency encode and always
      * surface [microsoft_max_bitrate], even when Windows omitted those names.
@@ -23,18 +28,27 @@ class WfdCapabilityTable(
     val interactiveHints: Boolean
         get() = touchEnabled
 
+    /**
+     * Validates a Microsoft selection against this connection's offer.
+     *
+     * @param value M4 bitmap value
+     * @return the supported offered mode, or null when the source did not select one
+     */
+    fun microsoftModeFor(value: String): VideoMode? =
+        MicrosoftVideoModes.decodeSelection(value)?.takeIf { it in modes }
+
     fun valueFor(name: String): String {
         return when (name) {
             "wfd_video_formats" -> WfdVideoFormatCodec.wfdVideoFormats(modes, preferred)
             "wfdx_video_formats", "wfd2_video_formats" ->
                 WfdVideoFormatCodec.wfdxVideoFormats(modes, preferred)
             "microsoft_custom_video_formats" -> WfdVideoFormatCodec.encodeCustomFormats(modes)
-            "microsoft_video_formats" -> "000000000000"
+            "microsoft_video_formats" -> MicrosoftVideoModes.encode(modes)
             "wfd_audio_codecs", "wfd2_audio_codecs" -> WfdVideoFormatCodec.audioCodecs()
             "wfd_client_rtp_ports" -> WfdVideoFormatCodec.clientRtpPorts()
             "wfd_display_edid" -> {
                 val edidMode = preferred?.takeIf { it in modes }
-                    ?: modes.firstOrNull { !WfdVideoFormatCodec.isStandardMode(it) }
+                    ?: modes.firstOrNull { WfdVideoFormatCodec.isCustomMode(it) }
                     ?: modes.maxByOrNull { it.width.toLong() * it.height }
                     ?: VideoMode(1920, 1080, 60)
                 WfdEdid.parameterValue(edidMode, friendlyName.take(13).ifEmpty { "Mirax" })

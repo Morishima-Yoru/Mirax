@@ -51,7 +51,7 @@ internal class CapsAndProvisioning(
     }
 
     fun setStandardModeChecked(mode: VideoMode, checked: Boolean) {
-        val catalog = StandardVideoModes.catalog(maxVideoBitrateBps)
+        val catalog = selectableModes()
         if (mode !in catalog) return
         checkedStandardModes = if (checked) {
             checkedStandardModes + mode
@@ -61,7 +61,7 @@ internal class CapsAndProvisioning(
     }
 
     fun setStandardModesChecked(modes: Collection<VideoMode>, checked: Boolean) {
-        val catalog = StandardVideoModes.catalog(maxVideoBitrateBps)
+        val catalog = selectableModes()
         val known = modes.filter { it in catalog }.toSet()
         if (known.isEmpty()) return
         checkedStandardModes = if (checked) {
@@ -125,10 +125,16 @@ internal class CapsAndProvisioning(
 
     fun resolveNextAdvertisementModes(): Set<VideoMode> {
         val checked = checkedStandardModes.intersect(
-            StandardVideoModes.catalog(maxVideoBitrateBps).toSet(),
+            selectableModes().toSet(),
         )
-        return checked + customModes.toSet() + listOfNotNull(preferredMode).toSet()
+        return (checked + customModes.toSet() + listOfNotNull(preferredMode).toSet())
+            .filter { !MicrosoftVideoModes.contains(it) || it in MicrosoftVideoModes.catalog() }
+            .toSet()
     }
+
+    /** @return fixed standard and Microsoft modes available for selection */
+    private fun selectableModes(): List<VideoMode> =
+        StandardVideoModes.catalog(maxVideoBitrateBps) + MicrosoftVideoModes.catalog()
 
     companion object {
         fun visiblePictureAxes(baseWidth: Int, baseHeight: Int, rotationDegrees: Int): Pair<Int, Int> {
