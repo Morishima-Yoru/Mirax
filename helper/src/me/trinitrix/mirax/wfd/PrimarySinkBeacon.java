@@ -197,25 +197,38 @@ public final class PrimarySinkBeacon {
 
     /** Stop listening, drop any group, and clear the WFD IE so the phone is not a connectable sink. */
     public void stopAdvertising() {
+        stopAdvertising(null);
+    }
+
+    /**
+     * Stop advertising and acknowledge after stop operations have been issued on the owner looper.
+     *
+     * @param onStopped optional acknowledgment used before handing WFD to another owner
+     */
+    public void stopAdvertising(Runnable onStopped) {
         handler.post(() -> {
-            wanted = false;
-            advertising = false;
-            groupFormed = false;
-            groupState = GROUP_DOWN;
-            clientConnectAttempted.clear();
-            handler.removeCallbacks(poll);
-            if (manager == null || channel == null) {
-                return;
-            }
             try {
-                manager.stopListening(channel, logged("stopListening"));
-                removeGroupQuietly("removeGroup");
-                clearWfdInfo();
-                removeApprovers();
-            } catch (Throwable err) {
-                Log.w(TAG, "stopAdvertising failed", err);
+                wanted = false;
+                advertising = false;
+                groupFormed = false;
+                groupState = GROUP_DOWN;
+                clientConnectAttempted.clear();
+                handler.removeCallbacks(poll);
+                if (manager == null || channel == null) {
+                    return;
+                }
+                try {
+                    manager.stopListening(channel, logged("stopListening"));
+                    removeGroupQuietly("removeGroup");
+                    clearWfdInfo();
+                    removeApprovers();
+                } catch (Throwable err) {
+                    Log.w(TAG, "stopAdvertising failed", err);
+                }
+                Log.i(TAG, "broadcast off");
+            } finally {
+                if (onStopped != null) onStopped.run();
             }
-            Log.i(TAG, "broadcast off");
         });
     }
 

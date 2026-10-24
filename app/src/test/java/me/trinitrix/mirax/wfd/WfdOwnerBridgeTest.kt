@@ -268,6 +268,108 @@ class WfdOwnerBridgeTest {
         assertThat(delayedTasks).hasSize(1)
     }
 
+    @Test
+    fun shizukuAdvertise_waits_for_helper_stop_to_finish() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.mainPoster = { mainTasks.addLast(it) }
+        WfdOwnerBridge.delayedMainPoster = { _, _ -> }
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+        WfdOwnerBridge.shizukuAdvertiser = { _, _ -> calls += "SHIZUKU_ADVERTISE"; true }
+        val command = WfdAdvertiseCommand(WfdOwner.SHIZUKU, "Desk", setOf(VideoMode(1280, 720, 60)))
+
+        WfdOwnerBridge.sync(context, command)
+        assertThat(calls).isEmpty()
+        ioTasks.removeFirst().run()
+        assertThat(calls).containsExactly("STOP_ADVERTISE")
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(calls).containsExactly("STOP_ADVERTISE", "SHIZUKU_ADVERTISE").inOrder()
+    }
+
+    @Test
+    fun unconfirmedHelperStop_does_not_start_Shizuku() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val results = mutableListOf<Boolean>()
+        var started = false
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.mainPoster = { mainTasks.addLast(it) }
+        WfdOwnerBridge.delayedMainPoster = { _, _ -> }
+        WfdOwnerBridge.helperExchange = { _, _ -> "ERR stop timed out" }
+        WfdOwnerBridge.shizukuAdvertiser = { _, _ -> started = true; true }
+        WfdOwnerBridge.armResultConsumer = { results += it }
+        WfdOwnerBridge.sync(ContextWrapper(null),
+            WfdAdvertiseCommand(WfdOwner.SHIZUKU, "Desk", setOf(VideoMode(1280, 720, 60))))
+        ioTasks.removeFirst().run()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(started).isFalse()
+        assertThat(results).containsExactly(false)
+    }
+
+    @Test
+    fun endSession_does_not_block_the_main_failure_effect() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.mainPoster = { it.run() }
+        WfdOwnerBridge.delayedMainPoster = { _, _ -> }
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+        WfdOwnerBridge.sync(ContextWrapper(null),
+            WfdAdvertiseCommand(WfdOwner.HELPER, "Desk", setOf(VideoMode(1280, 720, 60))))
+        ioTasks.removeFirst().run()
+        calls.clear()
+        WfdOwnerBridge.endSession()
+        assertThat(calls).isEmpty()
+        ioTasks.removeFirst().run()
+        assertThat(calls).containsExactly("END")
+    }
+
+    @Test
+    fun oldShizukuDisconnect_cannot_cancel_helper_listening_watch() {
+        val stale = WfdOwnerBridge.createShizukuConnection()
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val delayed = ArrayDeque<Runnable>()
+        val results = mutableListOf<Boolean>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.mainPoster = { mainTasks.addLast(it) }
+        WfdOwnerBridge.delayedMainPoster = { task, _ -> delayed.addLast(task) }
+        WfdOwnerBridge.helperExchange = { command, _ -> if (command == "LISTENING") "YES" else "OK" }
+        WfdOwnerBridge.armResultConsumer = { results += it }
+        WfdOwnerBridge.sync(ContextWrapper(null),
+            WfdAdvertiseCommand(WfdOwner.HELPER, "Desk", setOf(VideoMode(1280, 720, 60))))
+        ioTasks.removeFirst().run()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        stale.onServiceDisconnected(null)
+        delayed.removeFirst().run()
+        while (ioTasks.isNotEmpty()) ioTasks.removeFirst().run()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(results).containsExactly(true)
+    }
+
+    @Test
+    fun oldShizukuBindingDisconnect_cannot_clear_a_newer_binding_command() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.mainPoster = { mainTasks.addLast(it) }
+        WfdOwnerBridge.delayedMainPoster = { _, _ -> }
+        WfdOwnerBridge.helperExchange = { _, _ -> "OK" }
+        WfdOwnerBridge.shizukuAdvertiser = { _, _ -> true }
+        val command = WfdAdvertiseCommand(WfdOwner.SHIZUKU, "Desk", setOf(VideoMode(1280, 720, 60)))
+        WfdOwnerBridge.sync(ContextWrapper(null), command)
+        val stale = WfdOwnerBridge.createShizukuConnection()
+        WfdOwnerBridge.createShizukuConnection()
+        ioTasks.removeFirst().run()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        stale.onServiceDisconnected(null)
+        WfdOwnerBridge.sync(ContextWrapper(null), command)
+        assertThat(ioTasks).isEmpty()
+    }
+
     /**
      * Stand-in for the privileged owner process: records the command the
      * session emits without touching WifiP2pManager.

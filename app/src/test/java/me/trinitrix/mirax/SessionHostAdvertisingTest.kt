@@ -255,4 +255,23 @@ class SessionHostAdvertisingTest {
         assertThat(refreshed).isTrue()
         assertThat(handedOffCommands.single()?.modes).contains(VideoMode(2400, 1080, 60))
     }
+
+    @Test
+    fun useThisScreen_does_not_overwrite_a_later_manual_resolution() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        SessionHost.ioRunner = { ioTasks.addLast(it) }
+        SessionHost.mainPoster = { mainTasks.addLast(it) }
+        SessionHost.displayWmSizeReader = { WmSizeReading(1080, 2400, null, null) }
+        val session = MiraxSession(
+            SessionSettings(advertisingEnabled = true, provisioningConsumed = true), TestConnectionHistory(),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        SessionHost.scheduleUseThisScreen(session, 2, { 90 }, {})
+        session.handle(SessionAction.PreferredModeFieldEdited)
+        session.handle(SessionAction.CommitPreferredModeText("1920x1080@60"))
+        while (ioTasks.isNotEmpty()) ioTasks.removeFirst().run()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(session.snapshot().preferredModeText).isEqualTo("1920×1080@60")
+    }
 }

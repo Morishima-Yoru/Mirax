@@ -49,6 +49,10 @@ class MiraxSession(
     private var sourceDeviceName: String? = null
     var sourceNameGeneration: Long = 0L
         private set
+
+    /** Invalidates pending display calibration when the user edits the preferred mode. */
+    internal var preferredModeGeneration: Long = 0L
+        private set
     private var miraxDisplayId: Int = 0
     private var pictureRotationDegrees: Int = 0
     private var overlayGranted: Boolean = false
@@ -193,9 +197,11 @@ class MiraxSession(
                 displayNameOverride = normalizeOverride(action.value)
             }
             SessionAction.PreferredModeFieldEdited -> {
+                preferredModeGeneration++
                 consumeProvisioning()
             }
             is SessionAction.CommitPreferredModeText -> {
+                preferredModeGeneration++
                 caps.commitPreferredModeText(action.text)
             }
             is SessionAction.SetStandardModeChecked -> {

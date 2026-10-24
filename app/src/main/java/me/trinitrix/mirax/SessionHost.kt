@@ -523,6 +523,7 @@ object SessionHost {
             return snapshot
         }
         val generation = useThisScreenGeneration.incrementAndGet()
+        val preferredModeGeneration = session.preferredModeGeneration
         calibrationInFlightCount.incrementAndGet()
         ioRunner(
             Runnable {
@@ -537,6 +538,7 @@ object SessionHost {
                         try {
                             val current = session.snapshot()
                             if (useThisScreenGeneration.get() == generation &&
+                                session.preferredModeGeneration == preferredModeGeneration &&
                                 reading != null &&
                                 current.canUseThisScreen && current.miraxDisplayId == displayId
                             ) {

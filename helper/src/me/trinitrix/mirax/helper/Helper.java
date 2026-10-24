@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
@@ -259,8 +260,10 @@ public final class Helper {
             return;
         }
         if ("STOP_ADVERTISE".equals(line)) {
-            beacon.stopAdvertising();
-            writeLine(out, "OK");
+            CountDownLatch stopped = new CountDownLatch(1);
+            beacon.stopAdvertising(stopped::countDown);
+            writeLine(out, stopped.await(COMMAND_TIMEOUT_MS - 500, TimeUnit.MILLISECONDS)
+                    ? "OK" : "ERR stop timed out");
             return;
         }
         if (line.startsWith("ADVERTISE\t") || line.startsWith("ADVERTISE ")) {
