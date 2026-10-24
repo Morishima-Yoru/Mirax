@@ -10,6 +10,7 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -53,9 +54,13 @@ class ConnectionHistoryImpl(
 
     private val gson = Gson()
 
-    // In-memory state
+    private val stateLock = Any()
     private var openRun: OpenConnectionRun? = null
     private val runs: MutableList<ConnectionRun> = mutableListOf()
+    private var loaded = false
+    private var changedBeforeLoad = false
+    private var clearedBeforeLoad = false
+    private val pendingWrites = Channel<List<ConnectionRun>>(Channel.CONFLATED)
 
     companion object {
         private const val TAG = "ConnectionHistory"
@@ -68,34 +73,51 @@ class ConnectionHistoryImpl(
 
     init {
         loadRuns()
+        coroutineScope.launch(Dispatchers.IO) {
+            for (snapshot in pendingWrites) {
+                try {
+                    val json = gson.toJson(snapshot)
+                    dataStore.edit { prefs ->
+                        prefs[stringPreferencesKey(RUNS_KEY)] = json
+                    }
+                } catch (err: CancellationException) {
+                    throw err
+                } catch (err: Exception) {
+                    Log.w(TAG, "Failed to persist connection history", err)
+                }
+            }
+        }
     }
 
     private fun loadRuns() {
         coroutineScope.launch(Dispatchers.IO) {
-            val flow: kotlinx.coroutines.flow.Flow<Preferences> = dataStore.data
-            val prefs: Preferences = flow.first()
-            val json = prefs[stringPreferencesKey(RUNS_KEY)] ?: ""
-            if (json.isNotBlank()) {
-                val loadedRuns = gson.fromJson<List<ConnectionRun>>(json, Companion.getRunsType())
-                runs.clear()
-                runs.addAll(loadedRuns)
+            try {
+                val json = dataStore.data.first()[stringPreferencesKey(RUNS_KEY)] ?: ""
+                val saved = if (json.isBlank()) emptyList() else
+                    gson.fromJson<List<ConnectionRun>>(json, getRunsType()) ?: emptyList()
+                synchronized(stateLock) {
+                    if (!clearedBeforeLoad) {
+                        runs.addAll(saved)
+                        trimToLimit()
+                    }
+                    loaded = true
+                    if (changedBeforeLoad) persistRuns()
+                }
+            } catch (err: CancellationException) {
+                throw err
+            } catch (err: Exception) {
+                Log.w(TAG, "Failed to load connection history", err)
+                // Never replace unreadable saved history with a partial in-memory list.
             }
         }
     }
 
     private fun persistRuns() {
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                val json = gson.toJson(runs)
-                dataStore.edit { prefs ->
-                    prefs[stringPreferencesKey(RUNS_KEY)] = json
-                }
-            } catch (err: CancellationException) {
-                throw err
-            } catch (err: Exception) {
-                Log.w(TAG, "Failed to persist connection history", err)
-            }
+        if (!loaded) {
+            changedBeforeLoad = true
+            return
         }
+        pendingWrites.trySend(runs.toList())
     }
 
     private class OpenConnectionRun(
@@ -105,36 +127,36 @@ class ConnectionHistoryImpl(
         val lines: MutableList<String> = mutableListOf(),
     )
 
-    override fun start(host: String, configuration: List<ConnectionRunFact>) {
+    override fun start(host: String, configuration: List<ConnectionRunFact>) = synchronized(stateLock) {
         if (openRun != null) {
             finish(succeeded = false, metadata = listOf(ConnectionRunFact("outcome", "closed by a newer attempt")))
         }
         openRun = OpenConnectionRun(
             remoteHost = host,
             startedAtEpochMs = System.currentTimeMillis(),
-            configuration = configuration,
+            configuration = configuration.toList(),
         )
     }
 
-    override fun log(line: String) {
-        val run = openRun ?: return
+    override fun log(line: String) = synchronized(stateLock) {
+        val run = openRun ?: return@synchronized
         val text = line.trim()
-        if (text.isEmpty()) return
+        if (text.isEmpty()) return@synchronized
         if (run.lines.size >= MAX_LOG_LINES) {
             run.lines.removeAt(0)
         }
         run.lines.add(text)
     }
 
-    override fun finish(succeeded: Boolean, metadata: List<ConnectionRunFact>) {
-        val run = openRun ?: return
+    override fun finish(succeeded: Boolean, metadata: List<ConnectionRunFact>) = synchronized(stateLock) {
+        val run = openRun ?: return@synchronized
         openRun = null
         val finishedRun = ConnectionRun(
             succeeded = succeeded,
             startedAtEpochMs = run.startedAtEpochMs,
             endedAtEpochMs = System.currentTimeMillis(),
             remoteHost = run.remoteHost,
-            metadata = metadata,
+            metadata = metadata.toList(),
             configuration = run.configuration,
             log = run.lines.joinToString("\n"),
         )
@@ -149,10 +171,10 @@ class ConnectionHistoryImpl(
         }
     }
 
-    override fun runs(): List<ConnectionRun> = runs.toList()
+    override fun runs(): List<ConnectionRun> = synchronized(stateLock) { runs.toList() }
 
-    override fun activeRun(): ConnectionRun? {
-        return openRun?.let {
+    override fun activeRun(): ConnectionRun? = synchronized(stateLock) {
+        openRun?.let {
             ConnectionRun(
                 succeeded = false,
                 startedAtEpochMs = it.startedAtEpochMs,
@@ -165,11 +187,14 @@ class ConnectionHistoryImpl(
         }
     }
 
-    override fun currentHandshakeLog(): String = openRun?.lines?.joinToString("\n") ?: ""
+    override fun currentHandshakeLog(): String = synchronized(stateLock) {
+        openRun?.lines?.joinToString("\n") ?: ""
+    }
 
     /** Clear finished runs now and schedule their DataStore update. */
-    override fun clear() {
+    override fun clear() = synchronized(stateLock) {
         runs.clear()
+        if (!loaded) clearedBeforeLoad = true
         persistRuns()
     }
 }
