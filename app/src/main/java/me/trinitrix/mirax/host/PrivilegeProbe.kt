@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.util.Log
+import me.trinitrix.mirax.helper.Helper
 import me.trinitrix.mirax.session.PrivilegeReport
 import rikka.shizuku.Shizuku
 import java.io.IOException
@@ -17,6 +18,7 @@ import java.io.IOException
 object PrivilegeProbe {
     private const val TAG = "MiraxPrivilege"
     private const val REQUEST_CODE = 0x4D58
+    private const val UI_PROBE_TIMEOUT_MS = 250
 
     /**
      * Observe current privilege paths.
@@ -51,7 +53,7 @@ object PrivilegeProbe {
         return PrivilegeReport(
             shizukuServiceRunning = shizuku.serviceRunning,
             shizukuAuthorized = shizuku.authorized,
-            helperRunning = isHelperRunning(),
+            helperRunning = helperUid(UI_PROBE_TIMEOUT_MS) != null,
             rootAvailable = RootHelper.availableCached(),
         )
     }
@@ -59,10 +61,15 @@ object PrivilegeProbe {
     /** Whether the privileged helper responds to commands. */
     fun isHelperRunning(): Boolean = probeHelper()
 
-    /** UID reported by the process currently bound to the helper socket. */
-    fun helperUid(): Int? {
+    /**
+     * UID reported by the process currently bound to the helper socket.
+     *
+     * @param timeoutMs maximum wait for a responsive helper
+     * @return reported UID, or null when no helper responds within the deadline
+     */
+    fun helperUid(timeoutMs: Int = Helper.COMMAND_TIMEOUT_MS): Int? {
         return try {
-            val response = HelperClient.exchange("UID")
+            val response = HelperClient.exchange("UID", timeoutMs = timeoutMs)
             response.toIntOrNull() ?: run {
                 Log.w(TAG, "Helper returned invalid UID: $response")
                 null

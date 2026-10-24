@@ -19,11 +19,17 @@ object HelperClient {
     /**
      * @param command command without the trailing newline
      * @param readAll whether the response may contain multiple lines
+     * @param timeoutMs maximum wait for the entire exchange
      * @return the response from the helper
      * @throws IOException if the exchange fails or expires
      */
     @Throws(IOException::class)
-    fun exchange(command: String, readAll: Boolean = false): String {
+    fun exchange(
+        command: String,
+        readAll: Boolean = false,
+        timeoutMs: Int = Helper.COMMAND_TIMEOUT_MS,
+    ): String {
+        require(timeoutMs > 0) { "Helper timeout must be positive" }
         LocalSocket().use { socket ->
             val deadline = deadlines.schedule({
                 try {
@@ -31,9 +37,9 @@ object HelperClient {
                 } catch (err: IOException) {
                     Log.w(TAG, "closing timed-out exchange failed", err)
                 }
-            }, Helper.COMMAND_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            }, timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             try {
-                socket.setSoTimeout(Helper.COMMAND_TIMEOUT_MS)
+                socket.setSoTimeout(timeoutMs)
                 socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
                 socket.outputStream.write("$command\n".toByteArray(StandardCharsets.UTF_8))
                 socket.outputStream.flush()
