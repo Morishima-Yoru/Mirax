@@ -11,7 +11,6 @@ import me.trinitrix.mirax.SessionHost
 import me.trinitrix.mirax.wm.WmSize
 import me.trinitrix.mirax.session.ConnectionRunFact
 import me.trinitrix.mirax.session.SessionAction
-import me.trinitrix.mirax.session.PreferredModeCorrection
 import me.trinitrix.mirax.session.StandardVideoModes
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
@@ -61,7 +60,6 @@ object SinkConnectionController {
     private const val INTERACTIVE_BITRATE_FLOOR_BPS = 12_000_000L
     private const val INTERACTIVE_BITRATE_CAP_BPS = 20_000_000L
     /** Interactive refresh ceiling — resolution stays Settings/wm-owned. */
-    private const val INTERACTIVE_MAX_FPS = 30
     /**
      * Gap since the previous UIBC input before a touch may request one IDR.
      * Idle-only: mid-gesture IDR was ~500ms Windows RTT and caused cursor drift
@@ -332,21 +330,6 @@ object SinkConnectionController {
         var lastSelected: VideoMode? = null
         var lastLatencyMode = ""
         val offer = connectionOffer(command)
-        // Settings own resolution. Interactive only remaps refresh >30 → 30 so
-        // Win11 cannot pick *@60 (that path pinned ~550 ms bursts + sub‑Mbps ABR
-        // on HA1CSQTM). Do not inject or lock width/height.
-        val advertiseModes = offer.modes
-            .plus(if (offer.touchEnabled) {
-                remappedInteractiveRefresh(offer.modes)
-            } else {
-                emptySet()
-            })
-            .toSet()
-        val advertisePreferred = if (offer.touchEnabled) {
-            offer.preferred?.let { remappedInteractiveRefresh(it) } ?: offer.preferred
-        } else {
-            offer.preferred
-        }
         val advertiseBitrate = if (offer.touchEnabled) {
             maxOf(offer.maxVideoBitrateBps, INTERACTIVE_BITRATE_FLOOR_BPS)
                 .coerceAtMost(INTERACTIVE_BITRATE_CAP_BPS)
@@ -357,13 +340,13 @@ object SinkConnectionController {
             note(
                 "interactive offer bitrate=${advertiseBitrate / 1_000}kbps " +
                     "microsoft_max_bitrate=$advertiseBitrate " +
-                    "preferred=${advertisePreferred?.format() ?: "none"} modes=${advertiseModes.size}",
+                    "preferred=${offer.preferred?.format() ?: "none"} modes=${offer.modes.size}",
             )
         }
         val session = RtspSinkSession(
             WfdCapabilityTable(
-                advertiseModes,
-                advertisePreferred,
+                offer.modes,
+                offer.preferred,
                 offer.broadcastName,
                 offer.touchEnabled,
                 advertiseBitrate,
@@ -704,27 +687,6 @@ object SinkConnectionController {
     )
 
     /**
-     * Keep width/height; cap refresh at [INTERACTIVE_MAX_FPS] for touch sessions.
-     */
-    private fun remappedInteractiveRefresh(mode: VideoMode): VideoMode {
-        val remapped = if (mode.refreshHz <= INTERACTIVE_MAX_FPS) {
-            mode
-        } else {
-            VideoMode(mode.width, mode.height, INTERACTIVE_MAX_FPS)
-        }
-        val level51Compliant = PreferredModeCorrection.correct(
-            remapped.width, remapped.height, remapped.refreshHz
-        )
-        return level51Compliant ?: run {
-            Log.w(TAG, "interactive remap ${mode.format()} exceeds Level 5.1, keeping original")
-            mode
-        }
-    }
-
-    private fun remappedInteractiveRefresh(modes: Set<VideoMode>): Set<VideoMode> =
-        modes.map(::remappedInteractiveRefresh).toSet()
-
-    /**
      * Read wm size and freeze the M3 offer on the main thread before RTSP.
      * Falls back to the listen-time command if the session does not answer.
      */
@@ -754,7 +716,7 @@ object SinkConnectionController {
             }
         }
         if (!latch.await(2, TimeUnit.SECONDS) || box.get() == null) {
-            val preferred = fallback.modes.firstOrNull { !WfdVideoFormatCodec.isStandardMode(it) }
+            val preferred = fallback.modes.firstOrNull { WfdVideoFormatCodec.isCustomMode(it) }
             return ConnectionOffer(
                 modes = fallback.modes,
                 preferred = preferred,

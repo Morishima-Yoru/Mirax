@@ -36,6 +36,7 @@
     <string name="use_this_screen">Use this screen</string>
     <string name="standard_modes_label">Standard modes</string>
     <string name="modes_all_refresh_rates">All refresh rates</string>
+    <string name="microsoft_modes_hint">Microsoft 3:2 fallback modes. Custom modes take priority. Changes apply to the next connection.</string>
     <string name="settings_language_title">Language</string>
     <string name="language_follow_system">Follow system</string>
     <string name="language_traditional_chinese">Traditional Chinese</string>
