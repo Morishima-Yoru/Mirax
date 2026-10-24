@@ -86,3 +86,40 @@ Tests must exercise external behavior through existing component boundaries, foc
 - Bits 21 to 47 are reserved by Microsoft and must be masked to zero in all transmitted bitmaps.
 - Source references: [Microsoft parameter](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wfdpe/2d701496-f94c-402a-aa10-c61bb7e74949), [bitmap table](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wfdpe/e03b7049-d663-460f-bb15-82276f6ca476), [product behavior](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wfdpe/6b66a34f-8b8b-461d-8261-6f285248c3b7).
 - This is a local implementation spec, not a published GitHub issue or an applied tracker label.
+
+## Device Evidence — 2026-10-24
+
+The user authorized a different phone, `RFCW91N2T2T` (Samsung SM-F946U,
+Android 16/API 36). No commands targeted the occupied phone. The corrected
+implementation is commit `e4ddf75`; its deployed APK was pulled back and matched
+SHA256 `CF587735D9C9C7AC4E8821AC84E4C9A19CE589E7E66EBF44975603377B223D31`.
+
+- Real settings UI passed Microsoft opt-in, individual/all-refresh toggles,
+  disk persistence, and process-restart restoration. Shizuku/shell WFD listening
+  and real floating-ball display, drag/snap, and return also passed.
+- With only `2160x1440@30` and standard `640x480@60` enabled, no custom modes,
+  and automatic wm-size injection disabled, Windows source
+  `MSMiracastSource/10.00.26100.6584` selected
+  `microsoft_video_formats: 000000000008` in M4. M3 EDID advertised a 2160×1440
+  DTD, and `c2.qti.avc.decoder` decoded the real Windows desktop at that size and
+  refresh. Sampled counters advanced with zero pending frames and roughly
+  27–29 FPS; this is not a throughput benchmark.
+- Fit, Crop, Stretch, and 1:1 were checked during that Microsoft-mode stream.
+  A foreground/hit-test-gated Windows probe received four actual `PT_TOUCH`
+  downs and a drag from Android-injected gestures. Coordinate error against
+  the measured Fit surface was at most one picture pixel per axis in four samples.
+  The diagnostic probe selected the receiver monitor with per-monitor DPI
+  awareness; early timing/readiness-rejected attempts are not input-loss proof.
+- Host verification after the fix: 19 suites, 296 tests, no failures/errors or
+  skipped tests; Lint has zero errors and 108 existing warnings; Debug APK
+  assembly passed. An initial UIBC loopback timeout passed a focused and full
+  rerun. A separately interrupted Lint run passed when rerun with `--no-daemon`.
+- Original settings, one-minute broadcast timeout, overlay permission app-op,
+  and Windows input consent were restored. Projection and advertising stopped;
+  the corrected APK and real connection history remain on the new phone.
+
+Raw evidence is retained outside Git under
+`C:/Users/User/AppData/Local/Temp/opencode/mirax/20261024-newphone-RFCW91N2T2T/`.
+This verifies one Microsoft mode on one source/device combination, not all 15
+selectable modes, every OEM/root path, custom-first source selection, or
+physical multitouch/S Pen pressure, buttons, and coordinate calibration.
