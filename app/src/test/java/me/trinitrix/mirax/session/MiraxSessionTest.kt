@@ -655,25 +655,53 @@ class MiraxSessionTest {
     }
 
     @Test
+    fun automaticScreenSizeDoesNotInjectAnUncheckedMicrosoftSiblingRefresh() {
+        val selected = VideoMode(2160, 1440, 60)
+        val sibling = VideoMode(2160, 1440, 30)
+        val session = sessionWithBroadcast(
+            SessionSettings(advertisingEnabled = true, checkedStandardModes = setOf(selected)),
+        )
+        val reading = WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)
+
+        session.handle(SessionAction.FreezeConnectionOffer(reading))
+
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(selected)
+        assertThat(session.snapshot().connectionPreferredMode).isNull()
+
+        session.handle(SessionAction.ConnectionEnded)
+        session.handle(SessionAction.SetStandardModeChecked(sibling, checked = true))
+        session.handle(SessionAction.SetAdvertising(true))
+        session.handle(SessionAction.BeaconListening)
+        session.handle(SessionAction.FreezeConnectionOffer(reading))
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(selected, sibling)
+        assertThat(session.snapshot().connectionPreferredMode).isEqualTo(sibling)
+    }
+
+    @Test
     fun microsoftSettingEditsDoNotMutateFrozenOfferOrSelectedResolution() {
         val mode = VideoMode(2160, 1440, 60)
+        val oldSibling = VideoMode(2160, 1440, 24)
+        val newSibling = VideoMode(2160, 1440, 30)
         val session = sessionWithBroadcast(
             SessionSettings(
                 advertisingEnabled = true,
-                checkedStandardModes = setOf(mode),
+                checkedStandardModes = setOf(mode, oldSibling),
                 autoAddWmSizeOnConnect = false,
                 touchEnabled = false,
             ),
         )
         session.handle(SessionAction.FreezeConnectionOffer(null))
-        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode)
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode, oldSibling)
 
         session.handle(SessionAction.SetStandardModeChecked(mode, checked = false))
+        session.handle(SessionAction.SetStandardModeChecked(oldSibling, checked = false))
+        session.handle(SessionAction.SetStandardModeChecked(newSibling, checked = true))
         assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(mode)
-        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode)
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode, oldSibling)
 
         session.handle(SessionAction.SourceSelectedMode(mode))
         session.handle(SessionAction.EnteredPlay)
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode, oldSibling)
         assertThat(session.snapshot().selectedMode).isEqualTo(mode)
         assertThat(session.snapshot().currentResolutionText).isEqualTo("2160×1440@60")
     }

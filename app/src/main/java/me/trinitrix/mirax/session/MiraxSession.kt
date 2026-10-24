@@ -524,15 +524,17 @@ fun snapshot(): SessionSnapshot {
         if (resolveOwner(privilege) == WfdOwner.NONE || !advertisingState.advertisingEnabledState || !wifiEnabled) {
             return
         }
+        val savedModes = caps.resolveNextAdvertisementModes()
         val injectedMode = if (caps.autoAddWmSizeOnConnect) {
             modeFromWmSize(reading, display.touchEnabled, pictureRotationDegrees)
+                ?.takeIf { !MicrosoftVideoModes.contains(it) || it in savedModes }
         } else {
             null
         }
         val finalOfferedModes = if (caps.autoAddWmSizeOnConnect && injectedMode != null) {
-            caps.resolveNextAdvertisementModes() + injectedMode
+            savedModes + injectedMode
         } else {
-            caps.resolveNextAdvertisementModes()
+            savedModes
         }
         val preferredMode = injectedMode ?: caps.customModes.firstOrNull() ?: caps.preferredMode
         activeConnection.freezeOffer(
