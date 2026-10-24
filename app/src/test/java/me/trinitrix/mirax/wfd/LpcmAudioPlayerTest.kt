@@ -316,6 +316,27 @@ class LpcmAudioPlayerTest {
     }
 
     @Test
+    fun dispatcherCreationFailureDoesNotEscapeToTheConnectionCaller() {
+        var attempts = 0
+        val failingPlayer = LpcmAudioPlayer(
+            nowMillis = { scheduler.nowMillis },
+            createDispatcher = {
+                attempts++
+                throw IllegalStateException("Audio worker unavailable")
+            },
+            createOutput = { output },
+        )
+        try {
+            failingPlayer.start()
+            failingPlayer.submit(pcm(7_200))
+            assertThat(attempts).isEqualTo(1)
+            assertThat(output.prepareCount).isEqualTo(0)
+        } finally {
+            failingPlayer.stop()
+        }
+    }
+
+    @Test
     fun failedStartReleasesItsOutput() {
         output.startResult = false
         player.start()

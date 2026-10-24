@@ -40,7 +40,12 @@ internal class LpcmAudioPlayer(
     @Synchronized
     fun start() {
         stop()
-        val dispatcher = createDispatcher()
+        val dispatcher = try {
+            createDispatcher()
+        } catch (err: RuntimeException) {
+            Log.e(TAG, "Audio worker creation failed", err)
+            return
+        }
         val playback = Playback(nowMillis() + PRELOAD_TIMEOUT_MS)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
         active = playback
