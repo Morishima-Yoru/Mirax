@@ -6,10 +6,16 @@ import android.os.Looper;
 import android.util.Log;
 import me.trinitrix.mirax.wfd.PrimarySinkBeacon;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -22,7 +28,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class Helper {
     public static final String SOCKET_NAME = "mirax-helper";
+    public static final int COMMAND_TIMEOUT_MS = 5000;
     private static final String TAG = "MiraxHelper";
+    private static final ScheduledExecutorService TIMEOUTS = Executors.newSingleThreadScheduledExecutor(
+            task -> {
+                Thread thread = new Thread(task, "mirax-helper-timeouts");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private static final AtomicBoolean RUNNING = new AtomicBoolean(true);
     private static PrimarySinkBeacon beacon;
@@ -69,12 +82,29 @@ public final class Helper {
     private static void serve(LocalServerSocket server) {
         try (server) {
             while (RUNNING.get()) {
-                try (LocalSocket client = server.accept()) {
-                    handleClient(client);
-                } catch (Exception err) {
-                    if (RUNNING.get()) {
-                        Log.w(TAG, "client exchange failed", err);
+                LocalSocket accepted;
+                try {
+                    accepted = server.accept();
+                } catch (IOException err) {
+                    if (RUNNING.get()) Log.w(TAG, "accept failed", err);
+                    continue;
+                }
+                try (LocalSocket client = accepted) {
+                    client.setSoTimeout(COMMAND_TIMEOUT_MS);
+                    ScheduledFuture<?> deadline = TIMEOUTS.schedule(() -> {
+                        try {
+                            client.close();
+                        } catch (IOException err) {
+                            Log.w(TAG, "closing timed-out client failed", err);
+                        }
+                    }, COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                    try {
+                        handleClient(client);
+                    } finally {
+                        deadline.cancel(false);
                     }
+                } catch (Exception err) {
+                    Log.w(TAG, "client exchange failed", err);
                 }
             }
         } catch (Exception err) {
@@ -82,13 +112,31 @@ public final class Helper {
         }
     }
 
-    private static void handleClient(LocalSocket client) throws Exception {
-        BufferedReader reader = new BufferedReader(
-                new InputStreamReader(client.getInputStream(), StandardCharsets.UTF_8));
-        String line = reader.readLine();
-        if (line == null || line.isEmpty()) {
-            return;
+    /**
+     * Reads one complete command frame, rejecting EOF before a newline.
+     *
+     * @param input client stream
+     * @return decoded command
+     * @throws IOException on incomplete or oversized input
+     */
+    static String readCommand(InputStream input) throws IOException {
+        ByteArrayOutputStream frame = new ByteArrayOutputStream();
+        int value;
+        while ((value = input.read()) != -1) {
+            if (value == '\n') {
+                String line = frame.toString(StandardCharsets.UTF_8);
+                if (line.endsWith("\r")) line = line.substring(0, line.length() - 1);
+                if (line.isEmpty()) throw new IOException("empty helper command");
+                return line;
+            }
+            if (frame.size() >= 4096) throw new IOException("helper command too long");
+            frame.write(value);
         }
+        throw new IOException("incomplete helper command");
+    }
+
+    private static void handleClient(LocalSocket client) throws Exception {
+        String line = readCommand(client.getInputStream());
         OutputStream out = client.getOutputStream();
         if ("UID".equals(line)) {
             writeLine(out, Integer.toString(android.os.Process.myUid()));
@@ -166,6 +214,12 @@ public final class Helper {
                     : new ProcessBuilder("wm", "size", "-d", Integer.toString(displayId));
             builder.redirectErrorStream(true);
             Process process = builder.start();
+            // shortcut: wm size output is small; use a bounded wait before reading it.
+            if (!process.waitFor(3, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                Log.w(TAG, "wm size timed out");
+                return "";
+            }
             String output;
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {

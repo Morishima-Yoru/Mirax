@@ -4,14 +4,12 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.net.LocalSocket
-import android.net.LocalSocketAddress
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import me.trinitrix.mirax.SessionHost
-import me.trinitrix.mirax.helper.Helper
+import me.trinitrix.mirax.host.HelperClient
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
@@ -19,9 +17,7 @@ import me.trinitrix.mirax.session.WfdOwner
 import me.trinitrix.mirax.shell.IMiraxShellService
 import me.trinitrix.mirax.shell.MiraxShellUserService
 import rikka.shizuku.Shizuku
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.nio.charset.StandardCharsets
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -349,25 +345,20 @@ object WfdOwnerBridge {
 
     private fun sendHelperAdvertise(command: WfdAdvertiseCommand): Boolean {
         val line = "ADVERTISE\t${sanitizeName(command.broadcastName)}\t${encodeModes(command.modes)}"
-        return exchangeHelper(line) != null
+        return exchangeHelper(line) == "OK"
     }
 
     private fun sendHelperQuietly(command: String) {
-        exchangeHelper(command)
+        if (exchangeHelper(command) != "OK") Log.w(TAG, "helper command failed: $command")
     }
 
     private fun exchangeHelper(command: String, readAll: Boolean = false): String? {
         return try {
-            LocalSocket().use { socket ->
-                socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
-                socket.outputStream.write("$command\n".toByteArray(StandardCharsets.UTF_8))
-                socket.outputStream.flush()
-                BufferedReader(InputStreamReader(socket.inputStream, StandardCharsets.UTF_8)).use { reader ->
-                    if (readAll) reader.readText() else reader.readLine()
-                }
+            HelperClient.exchange(command, readAll).also { response ->
+                if (response.startsWith("ERR")) Log.w(TAG, "helper rejected $command: $response")
             }
-        } catch (err: Exception) {
-            Log.d(TAG, "helper exchange failed: $command", err)
+        } catch (err: IOException) {
+            Log.w(TAG, "helper exchange failed: $command", err)
             null
         }
     }
