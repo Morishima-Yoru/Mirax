@@ -81,7 +81,6 @@
 
     <string name="picture_title">Mirax display</string>
     <string name="picture_connected">Connected</string>
-    <string name="picture_press_back_again">Press Back again to end this connection</string>
     <string name="end_connection_confirm_message">End this Miracast connection?</string>
     <string name="end_connection_confirm_action">End connection</string>
     <string name="control_panel_casting_status">Projection active</string>
@@ -102,6 +101,12 @@
     <string name="control_panel_touch_input">Touch input</string>
     <string name="control_panel_avoid_cutout">Avoid display cutout</string>
     <string name="control_panel_close">Close control panel</string>
+    <string name="control_panel_open">Open projection controls</string>
+    <string name="control_panel_entry_hint">Drag to move; release to dock at an edge</string>
+    <string name="control_panel_entry_title">Projection controls shortcut</string>
+    <string name="control_panel_entry_button">Translucent edge handle</string>
+    <string name="control_panel_entry_volume">Hold volume key</string>
+    <string name="control_panel_entry_setting_hint">Choose one shortcut. In volume key mode, tap to adjust media volume; hold to open controls. The home-screen floating ball is a separate setting.</string>
     <string name="control_panel_rotate">Switch orientation</string>
     <string name="control_panel_other_settings">Other settings</string>
     <string name="press_back_again_to_leave">Press Back again to leave</string>

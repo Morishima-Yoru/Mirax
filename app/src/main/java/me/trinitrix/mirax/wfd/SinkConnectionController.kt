@@ -205,7 +205,7 @@ object SinkConnectionController {
                             finishConnectionRun(succeeded = false, selected = null)
                             continue
                         }
-                        beginConnectionRun(state.sourceAddress)
+                        postBeginConnectionRun(state, gen)
                         note(
                             if (state.phoneIsOwner) {
                                 "P2P group up (phone is GO); dialing Windows RTSP"
@@ -655,6 +655,22 @@ object SinkConnectionController {
         }
     }
 
+    /**
+     * Dispatch a ready source only if its controller is still current when the main queue runs.
+     *
+     * @param group source captured by the controller worker
+     * @param gen controller generation that observed the source
+     */
+    private fun postBeginConnectionRun(group: P2pGroupState.Up, gen: Int) {
+        val ctx = appContext ?: return
+        mainHandler.post {
+            val action = beginConnectionRunAction(group, gen, generation.get()) ?: return@post
+            if (running.get() && !endedByUser.get()) {
+                SessionHost.dispatchConnectionEvent(ctx, action)
+            }
+        }
+    }
+
     private fun postAction(action: SessionAction) {
         val ctx = appContext ?: return
         mainHandler.post {
@@ -710,10 +726,6 @@ object SinkConnectionController {
             )
         }
         return box.get()
-    }
-
-    private fun beginConnectionRun(host: String) {
-        postAction(SessionAction.BeginConnectionRun(host))
     }
 
     private fun finishConnectionRun(succeeded: Boolean, selected: VideoMode?) {
@@ -795,3 +807,22 @@ object SinkConnectionController {
     private val MICROSOFT_MAX_BITRATE_LINE =
         Regex("microsoft_max_bitrate:\\s*(\\d+)", RegexOption.IGNORE_CASE)
 }
+
+/**
+ * Translate a ready group into the connection event dispatched by the sink.
+ *
+ * @param group current source reported by the privileged owner
+ * @param expectedGeneration controller generation that observed the source
+ * @param currentGeneration controller generation when its queued event is consumed
+ * @return the connection run action, or null when its controller was stopped or replaced
+ */
+internal fun beginConnectionRunAction(
+    group: P2pGroupState.Up,
+    expectedGeneration: Int,
+    currentGeneration: Int,
+): SessionAction.BeginConnectionRun? =
+    if (expectedGeneration == currentGeneration) {
+        SessionAction.BeginConnectionRun(group.sourceAddress, group.sourceDeviceName)
+    } else {
+        null
+    }

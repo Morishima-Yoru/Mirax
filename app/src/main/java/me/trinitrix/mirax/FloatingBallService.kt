@@ -124,7 +124,10 @@ class FloatingBallService : Service() {
             setImageResource(R.drawable.ic_mirax_mark)
             scaleType = ImageView.ScaleType.FIT_CENTER
             contentDescription = getString(R.string.app_name)
-            elevation = 8 * density
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(getColor(R.color.mirax_background))
+            }
         }
         ballParams = overlayParams(ballSize, ballSize, Gravity.TOP or Gravity.START).apply {
             x = screen.first - ballSize - edgeX

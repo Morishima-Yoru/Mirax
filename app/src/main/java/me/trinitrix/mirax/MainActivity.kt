@@ -50,6 +50,7 @@ import me.trinitrix.mirax.host.PrivilegeProbe
 import me.trinitrix.mirax.session.AppLanguage
 import me.trinitrix.mirax.session.BroadcastNameRules
 import me.trinitrix.mirax.session.ConnectionRun
+import me.trinitrix.mirax.session.ControlPanelEntry
 import me.trinitrix.mirax.session.DeviceNameReport
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.MiraxDisplayReport
@@ -815,7 +816,7 @@ class MainActivity : AppCompatActivity() {
                 .joinToString { "${it.mode.format()}=${it.checked}" }
             Page.SCALE -> snapshot.pictureScale.name
             Page.LANGUAGE -> snapshot.languagePreference.name
-            Page.ADVANCED -> "${snapshot.showDebugMessages}|${snapshot.cameraCutoutAffectsLayout}|${snapshot.broadcastAutoStopMinutes}"
+            Page.ADVANCED -> "${snapshot.showDebugMessages}|${snapshot.cameraCutoutAffectsLayout}|${snapshot.broadcastAutoStopMinutes}|${snapshot.controlPanelEntry}"
             Page.COMPATIBILITY ->
                 "${snapshot.showCompatibilityNotice}|${snapshot.wfdOwner}|${snapshot.rootAvailable}"
             Page.HISTORY -> snapshot.connectionRuns.joinToString { "${it.startedAtEpochMs}:${it.succeeded}" } + historyOpen.joinToString()
@@ -868,6 +869,7 @@ class MainActivity : AppCompatActivity() {
             Page.ADVANCED -> {
                 updateSwitch(root, "debug", snapshot.showDebugMessages)
                 updateSwitch(root, "cutout", snapshot.cameraCutoutAffectsLayout)
+                restyleChoices(root, "control-panel-entry", snapshot.controlPanelEntry.name)
                 contentColumn(root).findViewWithTag<TextView>("auto-stop")?.text =
                     getString(R.string.broadcast_auto_stop_value, snapshot.broadcastAutoStopMinutes)
             }
@@ -1966,12 +1968,33 @@ class MainActivity : AppCompatActivity() {
     private fun buildAdvanced(snapshot: SessionSnapshot): LinearLayout {
         val column = column()
         column.addView(pageTitle(getString(R.string.nav_advanced)))
+        column.addView(section(getString(R.string.control_panel_entry_title)))
+        val entryChoices = choiceStack("control-panel-entry")
+        val entries = listOf(
+            ControlPanelEntry.FLOATING_BUTTON to getString(R.string.control_panel_entry_button),
+            ControlPanelEntry.VOLUME_KEYS to getString(R.string.control_panel_entry_volume),
+        )
+        for ((entry, label) in entries) {
+            entryChoices.addView(choiceChip(label, entry.name, entry == snapshot.controlPanelEntry) {
+                if (updatingControls || entry == MiraxApp.instance.session.snapshot().controlPanelEntry) {
+                    return@choiceChip
+                }
+                render(SessionHost.setControlPanelEntry(this, entry))
+            })
+        }
+        column.addView(entryChoices)
+        column.addView(hint(getString(R.string.control_panel_entry_setting_hint)).apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(8)
+        })
         column.addView(switchRow(getString(R.string.debug_messages), snapshot.showDebugMessages) { enabled ->
             val session = MiraxApp.instance.session
             session.handle(SessionAction.SetShowDebugMessages(enabled))
             persist(session)
             render(session.snapshot())
-        }.apply { tag = "debug" })
+        }.apply {
+            tag = "debug"
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(28)
+        })
         
         column.addView(switchRow(
             getString(R.string.camera_cutout_affects_layout),

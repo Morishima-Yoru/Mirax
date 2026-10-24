@@ -47,22 +47,9 @@ internal class ActiveConnectionState {
     val controlPanelExpandedState: Boolean
         get() = controlPanelExpanded
 
-    /** Set panel visibility and clear the pending Back confirmation when closing it. */
+    /** Set panel visibility. */
     fun setControlPanelExpanded(value: Boolean) {
         controlPanelExpanded = value
-        if (!value) {
-            backEndsConnectionPending = false
-        }
-    }
-
-    var backEndsConnectionPending: Boolean = false
-        private set
-
-    val backEndsConnectionPendingState: Boolean
-        get() = backEndsConnectionPending
-
-    fun setBackEndsConnectionPending(value: Boolean) {
-        backEndsConnectionPending = value
     }
 
     fun onPrePlayProgress(advertisedModes: Set<VideoMode>) {
@@ -97,7 +84,6 @@ internal class ActiveConnectionState {
         if (_phase == ConnectionPhase.OFFER_FROZEN || _phase == ConnectionPhase.NEGOTIATING || _phase == ConnectionPhase.NONE) {
             _phase = ConnectionPhase.PLAYING
             awayOnHomeScreen = false
-            backEndsConnectionPending = false
         } else {
             Log.w(TAG, "onPlayStarted called in invalid phase $_phase, ending connection")
             _phase = ConnectionPhase.ENDED
@@ -106,7 +92,6 @@ internal class ActiveConnectionState {
 
     fun onConnectionEnded() {
         _phase = ConnectionPhase.ENDED
-        backEndsConnectionPending = false
         controlPanelExpanded = false
         awayOnHomeScreen = false
         _selectedMode = null
@@ -135,31 +120,13 @@ internal class ActiveConnectionState {
         connectionPreferredModeInternal = mode
         connectionAdvertisedModesInternal = setOf(mode)
         awayOnHomeScreen = false
-        backEndsConnectionPending = false
         controlPanelExpanded = false
     }
 
-    sealed interface BackResult {
-        data object ExpandControlPanel : BackResult
-        data object RequestEnd : BackResult
-        data object ArmedSecondBack : BackResult
-    }
-
-    /** @return the next Back action for the current connection and panel state. */
-    fun onSystemBack(): BackResult {
-        if (_phase != ConnectionPhase.PLAYING) {
-            return BackResult.ArmedSecondBack
+    /** Close an expanded control panel without affecting the connection. */
+    fun onSystemBack() {
+        if (isConnected) {
+            controlPanelExpanded = false
         }
-        if (!controlPanelExpanded) {
-            if (backEndsConnectionPending) {
-                backEndsConnectionPending = false
-                return BackResult.RequestEnd
-            }
-            controlPanelExpanded = true
-            return BackResult.ExpandControlPanel
-        }
-        controlPanelExpanded = false
-        backEndsConnectionPending = true
-        return BackResult.ArmedSecondBack
     }
 }
