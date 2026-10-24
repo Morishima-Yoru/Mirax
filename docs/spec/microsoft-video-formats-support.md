@@ -49,6 +49,8 @@ Use the existing H.264 Level 5.1 validator: at most 36,864 macroblocks/frame and
 ### 4. Dynamic RTSP M3 Bitmap Generation
 The 12-digit hex string is generated from the enabled connection offer intersected with supported Microsoft modes. With no enabled mode, return `000000000000`; bits 21–47 remain clear. Fixed Microsoft modes are not duplicated into the literal custom-format parameter, so they cannot displace native custom modes there. Filter unsupported Microsoft modes even when restored through preferred/custom settings. The existing interactive refresh workaround must not synthesize an unchecked Microsoft sibling refresh.
 
+Prepare interactive refresh alternatives inside capability assembly so production and RTSP tests use the same offer. A standard mode may gain a lower refresh only when that alternative is also in the standard table: do not invent VGA@30 or PAL@30 literal modes that displace the user's Microsoft EDID preference. Explicit user-defined custom modes, including custom VGA refreshes and the Fold low-latency alternative, remain valid.
+
 ### 5. EDID Detailed Timing Descriptor Integration
 When an offered 3:2 mode is preferred, reuse the existing EDID builder to emit one 128-byte block with matching DTD dimensions, timing, and checksum. The monitor range descriptor must include that timing, including 24 Hz and lower horizontal frequencies. Without an explicit preferred mode, literal custom modes remain ahead of Microsoft modes as EDID candidates. EDID is a hint, not an instruction Windows must obey.
 
