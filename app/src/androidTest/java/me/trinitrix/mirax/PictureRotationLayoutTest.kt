@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.SurfaceHolder
@@ -63,6 +64,9 @@ class PictureRotationLayoutTest {
         val timeline = File(artifacts, "timeline.txt")
         val painter = StaticPicture(timeline)
         Log.i(TAG, "Rotation tracer artifacts: $artifacts")
+        instrumentation.sendStatus(0, Bundle().apply {
+            putString("stream", "Rotation tracer artifacts: $artifacts\n")
+        })
         var scenario: ActivityScenario<PictureActivity>? = null
         var holder: SurfaceHolder? = null
         try {
@@ -85,11 +89,11 @@ class PictureRotationLayoutTest {
                 PictureActivity.refreshIfShowing()
                 holder = pictureSurface(activity).holder.also { it.addCallback(painter) }
             }
-            awaitScene(active, 0)
+            awaitScene(active, 0, artifacts, "initial")
             painter.draw(checkNotNull(holder))
             for ((label, rotation) in listOf("before" to 0, "rotated" to 1, "returned" to 0)) {
                 if (label != "before") device.executeShellCommand("cmd window user-rotation lock $rotation")
-                awaitScene(active, rotation)
+                awaitScene(active, rotation, artifacts, label)
                 assertComposition(active, rotation, artifacts, label)
                 active.onActivity { activity ->
                     assertThat(activity).isSameInstanceAs(initialActivity)
@@ -142,6 +146,8 @@ class PictureRotationLayoutTest {
         val buffer: Rect,
         val requestedWidth: Int,
         val requestedHeight: Int,
+        val mode: VideoMode?,
+        val scale: PictureScale,
         val ready: Boolean,
     ) {
         /** @return the independently calculated centered 16:9 rectangle in screen coordinates */
@@ -161,6 +167,7 @@ class PictureRotationLayoutTest {
         scenario.onActivity { activity ->
             val surface = pictureSurface(activity)
             val stage = surface.parent as FrameLayout
+            val snapshot = app.session.snapshot()
             fun bounds(view: android.view.View): Rect {
                 val location = IntArray(2)
                 view.getLocationOnScreen(location)
@@ -182,6 +189,8 @@ class PictureRotationLayoutTest {
                 buffer = Rect(surface.holder.surfaceFrame),
                 requestedWidth = surface.layoutParams.width,
                 requestedHeight = surface.layoutParams.height,
+                mode = snapshot.selectedMode,
+                scale = snapshot.pictureScale,
                 ready = surface.holder.surface.isValid && !stage.isLayoutRequested && !stage.isInLayout,
             )
         }
@@ -189,15 +198,35 @@ class PictureRotationLayoutTest {
     }
 
     /** Wait for the display transition separately from the bounded compositor-convergence check. */
-    private fun awaitScene(scenario: ActivityScenario<PictureActivity>, rotation: Int) {
+    private fun awaitScene(
+        scenario: ActivityScenario<PictureActivity>,
+        rotation: Int,
+        artifacts: File,
+        label: String,
+    ) {
         val deadline = SystemClock.uptimeMillis() + 10_000
         var last: Scene
         do {
             last = scene(scenario)
+            File(artifacts, "timeline.txt").appendText("${SystemClock.uptimeMillis()} $label transition $last\n")
             if (last.rotation == rotation && last.ready && !last.panel.isEmpty && last.picture.width() > 0) return
             SystemClock.sleep(25)
         } while (SystemClock.uptimeMillis() < deadline)
-        throw AssertionError("Display transition did not settle: target=$rotation scene=$last")
+        val failure = AssertionError("Display transition did not settle: target=$rotation scene=$last artifacts=$artifacts")
+        Log.e(TAG, "$label transition failed", failure)
+        try {
+            instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                try {
+                    saveCapture(bitmap, artifacts, label)
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+        } catch (captureFailure: Exception) {
+            Log.e(TAG, "Could not retain $label transition capture", captureFailure)
+            failure.addSuppressed(captureFailure)
+        }
+        throw failure
     }
 
     /** Check independent geometry and whole-display pixels without refreshing the static source. */
@@ -211,6 +240,7 @@ class PictureRotationLayoutTest {
         var failure = "No display capture"
         var lastCapture: Bitmap? = null
         var lastScene: Scene? = null
+        var primaryFailure: Throwable? = null
         try {
             do {
                 val before = scene(scenario)
@@ -225,7 +255,7 @@ class PictureRotationLayoutTest {
                         else -> compositionProblem(lastScene, bitmap)
                     }.orEmpty()
                     File(artifacts, "timeline.txt").appendText(
-                        "${SystemClock.uptimeMillis()} $label $lastScene " +
+                        "${SystemClock.uptimeMillis()} $label $lastScene expected=${lastScene.expectedPicture()} " +
                             "capture=${bitmap.width}x${bitmap.height} result=$failure\n",
                     )
                     if (failure.isEmpty()) return
@@ -233,17 +263,28 @@ class PictureRotationLayoutTest {
                 SystemClock.sleep(25)
             } while (SystemClock.uptimeMillis() < deadline)
             throw AssertionError("$label: $failure; scene=$lastScene artifacts=$artifacts")
+        } catch (error: Throwable) {
+            primaryFailure = error
+            throw error
         } finally {
-            lastCapture?.let { bitmap ->
-                try {
-                    File(artifacts, "$label.png").outputStream().use { output ->
-                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "Cannot save display capture" }
-                    }
-                } finally {
-                    bitmap.recycle()
-                }
+            try {
+                lastCapture?.let { saveCapture(it, artifacts, label) }
+            } catch (captureFailure: Exception) {
+                Log.e(TAG, "Could not retain $label capture", captureFailure)
+                val primary = primaryFailure
+                if (primary == null) throw captureFailure
+                primary.addSuppressed(captureFailure)
+            } finally {
+                lastCapture?.recycle()
+                Log.i(TAG, "$label: $lastScene file=$artifacts/$label.png $failure")
             }
-            Log.i(TAG, "$label: $lastScene file=$artifacts/$label.png $failure")
+        }
+    }
+
+    /** Save a whole-display bitmap; the caller retains ownership and must recycle it. */
+    private fun saveCapture(bitmap: Bitmap, artifacts: File, label: String) {
+        File(artifacts, "$label.png").outputStream().use { output ->
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "Cannot save display capture" }
         }
     }
 
@@ -280,6 +321,19 @@ class PictureRotationLayoutTest {
                 abs(left / scaleX - expected.left) > 2 || abs((right + 1) / scaleX - expected.right) > 2 ||
                 abs(top / scaleY - expected.top) > 2 || abs((bottom + 1) / scaleY - expected.bottom) > 2
             ) return "Composited border differs: expected=$expected markers=($left,$top,$right,$bottom) scene=$scene"
+            val innerLeft = (left..right).firstOrNull { !sameColor(bitmap.getPixel(it, y), Color.MAGENTA) }
+            val innerRight = (left..right).lastOrNull { !sameColor(bitmap.getPixel(it, y), Color.MAGENTA) }
+            val innerTop = (top..bottom).firstOrNull { !sameColor(bitmap.getPixel(x, it), Color.MAGENTA) }
+            val innerBottom = (top..bottom).lastOrNull { !sameColor(bitmap.getPixel(x, it), Color.MAGENTA) }
+            val borderWidth = expected.width() * SOURCE_BORDER_PX / 1920.0
+            val borderHeight = expected.height() * SOURCE_BORDER_PX / 1080.0
+            if (innerLeft == null || innerRight == null || innerTop == null || innerBottom == null ||
+                abs(innerLeft / scaleX - expected.left - borderWidth) > 2 ||
+                abs((innerRight + 1) / scaleX - expected.right + borderWidth) > 2 ||
+                abs(innerTop / scaleY - expected.top - borderHeight) > 2 ||
+                abs((innerBottom + 1) / scaleY - expected.bottom + borderHeight) > 2
+            ) return "Composited inner border differs: expected=$expected markers=" +
+                "($innerLeft,$innerTop,$innerRight,$innerBottom) scene=$scene"
         }
         val samples = listOf(
             Triple(0.1, 0.1, Color.RED), Triple(0.9, 0.1, Color.GREEN),
@@ -359,10 +413,10 @@ class PictureRotationLayoutTest {
                 paint.color = Color.WHITE
                 canvas.drawRect(halfWidth * 0.9f, halfHeight * 0.9f, halfWidth * 1.1f, halfHeight * 1.1f, paint)
                 paint.color = Color.MAGENTA
-                canvas.drawRect(0f, 0f, canvas.width.toFloat(), 12f, paint)
-                canvas.drawRect(0f, canvas.height - 12f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
-                canvas.drawRect(0f, 0f, 12f, canvas.height.toFloat(), paint)
-                canvas.drawRect(canvas.width - 12f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
+                canvas.drawRect(0f, 0f, canvas.width.toFloat(), SOURCE_BORDER_PX, paint)
+                canvas.drawRect(0f, canvas.height - SOURCE_BORDER_PX, canvas.width.toFloat(), canvas.height.toFloat(), paint)
+                canvas.drawRect(0f, 0f, SOURCE_BORDER_PX, canvas.height.toFloat(), paint)
+                canvas.drawRect(canvas.width - SOURCE_BORDER_PX, 0f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
             } finally {
                 holder.unlockCanvasAndPost(canvas)
             }
@@ -390,5 +444,6 @@ class PictureRotationLayoutTest {
 
     private companion object {
         const val TAG = "PictureRotationTest"
+        const val SOURCE_BORDER_PX = 12f
     }
 }
