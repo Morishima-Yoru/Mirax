@@ -126,6 +126,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var debugOverlay: DebugOverlayView
     private val debugOverlayHandler = Handler(Looper.getMainLooper())
     private val debugOverlayRunnable = Runnable { updateDebugOverlayPeriodic() }
+    private val pictureLayoutRunnable = Runnable { layoutPicture() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -378,6 +379,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onStop() {
+        stage.removeCallbacks(pictureLayoutRunnable)
         endPictureContacts()
         pictureContacts.cancelAll()
         stage.systemGestureExclusionRects = emptyList()
@@ -405,7 +407,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         MiraxApp.instance.session.report(
             PictureRotationReport(SessionHost.pictureRotationDegrees(this, displayId = null)),
         )
-        layoutPicture()
         stage.removeView(controlPanelRoot)
         buildControlPanel()
         stage.addView(
@@ -420,6 +421,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onDestroy() {
+        stage.removeCallbacks(pictureLayoutRunnable)
         endPictureContacts()
         debugOverlay.onPositionChanged = null
         controlButton.onPositionChanged = null
@@ -1127,6 +1129,12 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun layoutPicture() {
+        if (stage.isInLayout) {
+            // Apply child parameters after the parent traversal so measured bounds can catch up.
+            stage.removeCallbacks(pictureLayoutRunnable)
+            stage.post(pictureLayoutRunnable)
+            return
+        }
         if (stage.width <= 0 || stage.height <= 0) {
             endPictureContacts()
             lastPictureFrame = null

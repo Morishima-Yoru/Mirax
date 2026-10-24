@@ -41,7 +41,21 @@ class PictureRotationLayoutTest {
 
     /** A round trip must converge without changing scale or submitting replacement picture frames. */
     @Test
-    fun proportional_rotationRoundTrip_keepsStaticPictureCentered() {
+    fun proportional_rotationRoundTrip_keepsStaticPictureCentered() = verifyRotationSequence(
+        listOf("before" to 0, "rotated" to 1, "returned" to 0),
+    )
+
+    /** Repeated quarter turns and same-axis half turns must not leave a stale picture. */
+    @Test
+    fun proportional_twentyRotations_keepsStaticPictureCentered() {
+        val rotations = listOf(1, 3, 2, 0)
+        verifyRotationSequence(listOf("before" to 0) + List(20) { index ->
+            "turn-${index + 1}" to rotations[index % rotations.size]
+        })
+    }
+
+    /** @param checkpoints ordered display rotations, each verified without changing presentation settings */
+    private fun verifyRotationSequence(checkpoints: List<Pair<String, Int>>) {
         val session = app.session
         val original = session.snapshot()
         val originalSettings = session.exportSettings()
@@ -91,7 +105,7 @@ class PictureRotationLayoutTest {
             }
             awaitScene(active, 0, artifacts, "initial")
             painter.draw(checkNotNull(holder))
-            for ((label, rotation) in listOf("before" to 0, "rotated" to 1, "returned" to 0)) {
+            for ((label, rotation) in checkpoints) {
                 if (label != "before") device.executeShellCommand("cmd window user-rotation lock $rotation")
                 awaitScene(active, rotation, artifacts, label)
                 assertComposition(active, rotation, artifacts, label)
