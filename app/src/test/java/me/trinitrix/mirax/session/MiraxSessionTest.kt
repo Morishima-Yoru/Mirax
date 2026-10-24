@@ -592,6 +592,7 @@ class MiraxSessionTest {
         )
     }
 
+    /** Verifies opt-in Microsoft selections survive settings export and restoration. */
     @Test
     fun microsoftModesAreOptInAndRetainedAcrossSettingsRestore() {
         val session = freshSession()
@@ -611,6 +612,70 @@ class MiraxSessionTest {
         assertThat(restored.exportSettings().checkedStandardModes).doesNotContain(mode)
     }
 
+    /** Verifies first-time provisioning cannot opt into a Microsoft mode in either orientation. */
+    @Test
+    fun automaticProvisioningDoesNotEnableUncheckedMicrosoftModes() {
+        for (rotation in listOf(0, 90)) {
+            val session = freshSession()
+            session.report(PrivilegeReport(helperRunning = true))
+            session.report(PictureRotationReport(degrees = rotation))
+            val reading = if (rotation == 0) {
+                WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)
+            } else {
+                WmSizeReading(physicalWidth = 1440, physicalHeight = 2160)
+            }
+
+            session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+
+            assertThat(session.snapshot().preferredMode).isNull()
+            assertThat(session.snapshot().microsoftModes.any { it.checked }).isFalse()
+            assertThat(session.snapshot().nextAdvertisementModes)
+                .containsExactlyElementsIn(StandardVideoModes.DEFAULT_CHECKED)
+            assertThat(session.exportSettings().provisioningConsumed).isTrue()
+            assertThat(session.exportSettings().preferredMode).isNull()
+            session.report(PrivilegeReport())
+            session.report(PrivilegeReport(helperRunning = true))
+            assertThat(session.snapshot().effects)
+                .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+        }
+    }
+
+    /** Verifies provisioning can prefer a Microsoft mode already explicitly enabled. */
+    @Test
+    fun automaticProvisioningRetainsExplicitMicrosoftOptIn() {
+        val mode = VideoMode(2160, 1440, 60)
+        val session = freshSession()
+        session.handle(SessionAction.SetStandardModeChecked(mode, checked = true))
+        session.report(PrivilegeReport(helperRunning = true))
+
+        session.handle(
+            SessionAction.ApplyProvisioningWmSize(WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)),
+        )
+
+        assertThat(session.snapshot().preferredMode).isEqualTo(mode)
+        assertThat(session.snapshot().nextAdvertisementModes).contains(mode)
+        assertThat(session.exportSettings().checkedStandardModes).contains(mode)
+    }
+
+    /** Verifies provisioning does not enable a sibling refresh of an opted-in Microsoft mode. */
+    @Test
+    fun automaticProvisioningDoesNotPromoteAnUncheckedMicrosoftSibling() {
+        val selected = VideoMode(2160, 1440, 30)
+        val session = freshSession()
+        session.handle(SessionAction.SetStandardModeChecked(selected, checked = true))
+        session.report(PrivilegeReport(helperRunning = true))
+
+        session.handle(
+            SessionAction.ApplyProvisioningWmSize(WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)),
+        )
+
+        assertThat(session.snapshot().preferredMode).isNull()
+        assertThat(session.snapshot().nextAdvertisementModes).contains(selected)
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(VideoMode(2160, 1440, 60))
+        assertThat(session.exportSettings().checkedStandardModes).contains(selected)
+    }
+
+    /** Verifies the picker exposes supported modes and applies bulk selection changes. */
     @Test
     fun microsoftPickerShowsOnlySupportedModesAndBulkSelectionUpdatesRows() {
         val session = freshSession()
@@ -637,6 +702,7 @@ class MiraxSessionTest {
         assertThat(session.snapshot().nextAdvertisementModes).containsNoneIn(expected)
     }
 
+    /** Verifies restored custom settings cannot advertise unsupported Microsoft modes. */
     @Test
     fun restoredOversizedMicrosoftModesCannotBypassOfferLimitsThroughCustomSettings() {
         val safe = VideoMode(2160, 1440, 60)
@@ -654,6 +720,7 @@ class MiraxSessionTest {
         assertThat(session.exportSettings().customModes).containsExactlyElementsIn(oversized)
     }
 
+    /** Verifies automatic screen sizing never enables an unchecked Microsoft refresh. */
     @Test
     fun automaticScreenSizeDoesNotInjectAnUncheckedMicrosoftSiblingRefresh() {
         val selected = VideoMode(2160, 1440, 60)
@@ -677,6 +744,7 @@ class MiraxSessionTest {
         assertThat(session.snapshot().connectionPreferredMode).isEqualTo(sibling)
     }
 
+    /** Verifies setting changes preserve the frozen offer and active source selection. */
     @Test
     fun microsoftSettingEditsDoNotMutateFrozenOfferOrSelectedResolution() {
         val mode = VideoMode(2160, 1440, 60)

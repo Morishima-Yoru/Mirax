@@ -107,13 +107,22 @@ internal class CapsAndProvisioning(
         PreferredModeCorrection.correct(width, height, refresh)?.let { preferredMode = it }
     }
 
+    /**
+     * Applies one-time screen provisioning without opting into an unselected Microsoft mode.
+     *
+     * @param reading screen dimensions reported by the privileged host
+     * @param pictureRotationDegrees rotation used to resolve visible picture axes
+     * @return whether this call consumed the pending provisioning read
+     */
     fun applyProvisioningWmSize(reading: WmSizeReading, pictureRotationDegrees: Int): Boolean {
         if (provisioningConsumed || preferredMode != null) {
             consumeProvisioning()
             return false
         }
         val (width, height) = visiblePictureAxes(reading.chosenWidth, reading.chosenHeight, pictureRotationDegrees)
-        PreferredModeCorrection.correct(width, height, 60)?.let { preferredMode = it }
+        PreferredModeCorrection.correct(width, height, 60)
+            ?.takeIf { !MicrosoftVideoModes.contains(it) || it in resolveNextAdvertisementModes() }
+            ?.let { preferredMode = it }
         consumeProvisioning()
         return true
     }

@@ -20,6 +20,7 @@ class WfdProtocolTest {
         foldPreferred,
     )
 
+    /** Verifies M3 advertises only enabled Microsoft modes within the static limits. */
     @Test
     fun m3MicrosoftFormatsAdvertiseOnlyEnabledModesWithinLevel51() {
         val modes = defaults + setOf(
@@ -41,6 +42,7 @@ class WfdProtocolTest {
         assertThat(response).contains("microsoft_video_formats: 000000020011\r\n")
     }
 
+    /** Verifies interactive standard fallbacks cannot displace the Microsoft EDID timing. */
     @Test
     fun interactiveStandardFallbackDoesNotInventCustomModesAheadOfMicrosoftEdid() {
         val microsoft = VideoMode(2160, 1440, 30)
@@ -63,6 +65,7 @@ class WfdProtocolTest {
         }
     }
 
+    /** Verifies an explicit custom VGA refresh keeps its custom-format priority. */
     @Test
     fun interactiveExplicitCustomVgaStillTakesPriority() {
         val custom = VideoMode(640, 480, 30)
@@ -78,6 +81,7 @@ class WfdProtocolTest {
         assertThat(response).contains("microsoft_video_formats: 000000000008\r\n")
     }
 
+    /** Verifies the Fold custom offer retains its calibrated low-latency alternative. */
     @Test
     fun interactiveFoldOfferRetainsItsLowLatencyCustomRefresh() {
         val session = RtspSinkSession(
@@ -95,6 +99,7 @@ class WfdProtocolTest {
         assertThat(edid[54] or (edid[55] shl 8)).isEqualTo(13063)
     }
 
+    /** Verifies a valid Microsoft M4 selection outranks standard formats in either order. */
     @Test
     fun m4MicrosoftSelectionWinsOverStandardRegardlessOfParameterOrder() {
         val microsoft = "microsoft_video_formats: 000000000010\r\n"
@@ -111,6 +116,7 @@ class WfdProtocolTest {
         }
     }
 
+    /** Verifies Microsoft modes leave literal custom formats and their EDID timing intact. */
     @Test
     fun m3MicrosoftModesDoNotDisplaceLiteralCustomModesOrNativeEdid() {
         val modes = linkedSetOf(
@@ -138,6 +144,7 @@ class WfdProtocolTest {
         assertThat(edid.sum() and 0xFF).isEqualTo(0)
     }
 
+    /** Verifies a preferred 24 Hz Microsoft mode fits the EDID timing and range descriptor. */
     @Test
     fun m3PreferredMicrosoft24HzModeHasMatchingEdidAndInclusiveTimingRange() {
         val mode = VideoMode(2160, 1440, 24)
@@ -159,6 +166,7 @@ class WfdProtocolTest {
         assertThat(edid.sum() and 0xFF).isEqualTo(0)
     }
 
+    /** Verifies every supported Microsoft bit round-trips without setting reserved bits. */
     @Test
     fun microsoftTableBitsRoundTripAtRtspBoundaryWithReservedBitsClear() {
         // Independent MS-WFDPE 2.7.1.2.1 wire fixtures; Level 5.1 excludes six entries.
@@ -194,6 +202,7 @@ class WfdProtocolTest {
         }
     }
 
+    /** Verifies a connection without Microsoft opt-in retains the all-zero bitmap. */
     @Test
     fun m3WithoutEnabledMicrosoftModesKeepsTheZeroBitmap() {
         val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax"))
@@ -204,6 +213,7 @@ class WfdProtocolTest {
         assertThat(response).contains("microsoft_video_formats: 000000000000\r\n")
     }
 
+    /** Verifies invalid Microsoft selections cannot override a valid standard fallback. */
     @Test
     fun m4MalformedReservedOversizedOrUnofferedMicrosoftSelectionsFallBackToStandard() {
         val rejected = listOf(
@@ -232,6 +242,7 @@ class WfdProtocolTest {
         }
     }
 
+    /** Verifies custom priority is order-independent and does not lock later requests. */
     @Test
     fun m4CustomSelectionWinsInEitherOrderButDoesNotLatchAcrossRequests() {
         val microsoft = "microsoft_video_formats: 000000000010\r\n"
