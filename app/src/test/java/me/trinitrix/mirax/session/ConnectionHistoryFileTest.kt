@@ -8,8 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Rule
@@ -33,14 +35,15 @@ class ConnectionHistoryFileTest {
             val scope = CoroutineScope(job + Dispatchers.IO)
             try {
                 val store = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
-                // Windows can reject a reader while DataStore atomically replaces the same file.
+                // Keep one observer across writes; production still receives the unwrapped store.
                 val snapshots = store.data.retryWhen { error, _ ->
                     if (error !is IOException) return@retryWhen false
                     delay(10)
                     true
-                }
+                }.shareIn(scope, SharingStarted.Eagerly, replay = 1)
+                withTimeout(20_000) { snapshots.first() }
                 val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
-                when (generation) {
+                val expected = when (generation) {
                     0 -> {
                         history.start("persisted-source", emptyList())
                         history.finish(true, emptyList())
@@ -66,8 +69,12 @@ class ConnectionHistoryFileTest {
                             snapshots.first { it[key]?.contains("after-clear") == true }
                         }
                         assertThat(history.runs().map { it.remoteHost }).containsExactly("after-clear")
+                        snapshots.first()
                     }
                 }
+                // DataStore can publish its cache before atomic file replacement completes.
+                val committed = withTimeout(20_000) { store.updateData { it } }
+                assertThat(committed[key]).isEqualTo(expected[key])
             } finally {
                 job.cancelAndJoin()
             }
