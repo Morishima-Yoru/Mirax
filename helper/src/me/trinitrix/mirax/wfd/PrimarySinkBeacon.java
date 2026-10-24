@@ -278,6 +278,8 @@ public final class PrimarySinkBeacon {
         handler.post(() -> {
             resetNameState();
             removeGroupQuietly("endSession");
+            // Keep requests enabled even when teardown produces no group-down event.
+            armBroadcastApprover();
         });
     }
 
