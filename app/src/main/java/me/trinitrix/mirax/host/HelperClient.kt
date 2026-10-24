@@ -47,7 +47,6 @@ object HelperClient {
                 }
             }, timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             try {
-                socket.setSoTimeout(timeoutMs)
                 try {
                     socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
                 } catch (err: IOException) {
@@ -61,6 +60,7 @@ object HelperClient {
                     }
                     throw err
                 }
+                socket.setSoTimeout(timeoutMs)
                 socket.outputStream.write("$command\n".toByteArray(StandardCharsets.UTF_8))
                 socket.outputStream.flush()
                 val response = socket.inputStream.bufferedReader(StandardCharsets.UTF_8).use { reader ->

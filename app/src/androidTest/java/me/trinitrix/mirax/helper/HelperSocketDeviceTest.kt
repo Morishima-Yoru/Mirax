@@ -73,8 +73,8 @@ class HelperSocketDeviceTest {
         val stalled = List(2) { LocalSocket() }
         try {
             stalled.forEach { client ->
-                client.soTimeout = Helper.COMMAND_TIMEOUT_MS + 2_000
                 client.connect(LocalSocketAddress(Helper.SOCKET_NAME))
+                client.soTimeout = Helper.COMMAND_TIMEOUT_MS + 2_000
                 client.outputStream.write("UI".toByteArray(Charsets.UTF_8))
                 client.outputStream.flush()
             }
