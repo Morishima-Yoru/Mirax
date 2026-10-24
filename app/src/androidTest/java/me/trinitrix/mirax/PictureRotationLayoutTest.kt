@@ -59,7 +59,10 @@ class PictureRotationLayoutTest {
         check(originalAngle in listOf("0", "1", "2", "3")) { "Unexpected rotation angle: $originalAngle" }
         val originalDisplayRotation = device.displayRotation
         val artifacts = File(app.cacheDir, "picture-rotation-${System.currentTimeMillis()}")
-        val painter = StaticPicture()
+        check(artifacts.isDirectory || artifacts.mkdirs()) { "Cannot create $artifacts" }
+        val timeline = File(artifacts, "timeline.txt")
+        val painter = StaticPicture(timeline)
+        Log.i(TAG, "Rotation tracer artifacts: $artifacts")
         var scenario: ActivityScenario<PictureActivity>? = null
         var holder: SurfaceHolder? = null
         try {
@@ -132,6 +135,8 @@ class PictureRotationLayoutTest {
     private data class Scene(
         val rotation: Int,
         val window: Rect,
+        val stage: Rect,
+        val padding: Rect,
         val panel: Rect,
         val picture: Rect,
         val buffer: Rect,
@@ -170,6 +175,8 @@ class PictureRotationLayoutTest {
             result = Scene(
                 rotation = checkNotNull(activity.display).rotation,
                 window = Rect(activity.windowManager.currentWindowMetrics.bounds),
+                stage = bounds(stage),
+                padding = Rect(stage.paddingLeft, stage.paddingTop, stage.paddingRight, stage.paddingBottom),
                 panel = panel,
                 picture = bounds(surface),
                 buffer = Rect(surface.holder.surfaceFrame),
@@ -202,31 +209,42 @@ class PictureRotationLayoutTest {
     ) {
         val deadline = SystemClock.uptimeMillis() + 2_000
         var failure = "No display capture"
-        do {
-            val before = scene(scenario)
-            val bitmap = instrumentation.uiAutomation.takeScreenshot()
-            if (bitmap != null) {
-                try {
-                    val after = scene(scenario)
+        var lastCapture: Bitmap? = null
+        var lastScene: Scene? = null
+        try {
+            do {
+                val before = scene(scenario)
+                val bitmap = instrumentation.uiAutomation.takeScreenshot()
+                if (bitmap != null) {
+                    lastCapture?.recycle()
+                    lastCapture = bitmap
+                    lastScene = scene(scenario)
                     failure = when {
-                        before != after || after.rotation != rotation || !after.ready -> "Geometry changed during capture"
-                        else -> compositionProblem(after, bitmap)
+                        before != lastScene || lastScene.rotation != rotation || !lastScene.ready ->
+                            "Geometry changed during capture"
+                        else -> compositionProblem(lastScene, bitmap)
                     }.orEmpty()
-                    if (failure.isEmpty() || SystemClock.uptimeMillis() >= deadline) {
-                        check(artifacts.isDirectory || artifacts.mkdirs()) { "Cannot create $artifacts" }
-                        File(artifacts, "$label.png").outputStream().use { output ->
-                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "Cannot save display capture" }
-                        }
-                        Log.i(TAG, "$label: $after capture=${bitmap.width}x${bitmap.height} file=$artifacts/$label.png $failure")
-                    }
+                    File(artifacts, "timeline.txt").appendText(
+                        "${SystemClock.uptimeMillis()} $label $lastScene " +
+                            "capture=${bitmap.width}x${bitmap.height} result=$failure\n",
+                    )
                     if (failure.isEmpty()) return
+                }
+                SystemClock.sleep(25)
+            } while (SystemClock.uptimeMillis() < deadline)
+            throw AssertionError("$label: $failure; scene=$lastScene artifacts=$artifacts")
+        } finally {
+            lastCapture?.let { bitmap ->
+                try {
+                    File(artifacts, "$label.png").outputStream().use { output ->
+                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "Cannot save display capture" }
+                    }
                 } finally {
                     bitmap.recycle()
                 }
             }
-            SystemClock.sleep(25)
-        } while (SystemClock.uptimeMillis() < deadline)
-        throw AssertionError("$label: $failure; artifacts=$artifacts")
+            Log.i(TAG, "$label: $lastScene file=$artifacts/$label.png $failure")
+        }
     }
 
     /** @return a user-visible geometry or compositor mismatch, or null when both agree */
@@ -245,6 +263,24 @@ class PictureRotationLayoutTest {
         val scaleX = bitmap.width.toDouble() / scene.window.width()
         val scaleY = bitmap.height.toDouble() / scene.window.height()
         if (abs(scaleX - scaleY) > 0.01) return "Capture orientation differs from logical window: $scene"
+        val panelLeft = (scene.panel.left * scaleX).roundToInt()
+        val panelRight = (scene.panel.right * scaleX).roundToInt().coerceAtMost(bitmap.width)
+        val panelTop = (scene.panel.top * scaleY).roundToInt()
+        val panelBottom = (scene.panel.bottom * scaleY).roundToInt().coerceAtMost(bitmap.height)
+        for (fraction in listOf(0.25, 0.75)) {
+            val x = ((expected.left + expected.width() * fraction) * scaleX).roundToInt()
+            val y = ((expected.top + expected.height() * fraction) * scaleY).roundToInt()
+            val row = panelLeft until panelRight
+            val column = panelTop until panelBottom
+            val left = row.firstOrNull { sameColor(bitmap.getPixel(it, y), Color.MAGENTA) }
+            val right = row.lastOrNull { sameColor(bitmap.getPixel(it, y), Color.MAGENTA) }
+            val top = column.firstOrNull { sameColor(bitmap.getPixel(x, it), Color.MAGENTA) }
+            val bottom = column.lastOrNull { sameColor(bitmap.getPixel(x, it), Color.MAGENTA) }
+            if (left == null || right == null || top == null || bottom == null ||
+                abs(left / scaleX - expected.left) > 2 || abs((right + 1) / scaleX - expected.right) > 2 ||
+                abs(top / scaleY - expected.top) > 2 || abs((bottom + 1) / scaleY - expected.bottom) > 2
+            ) return "Composited border differs: expected=$expected markers=($left,$top,$right,$bottom) scene=$scene"
+        }
         val samples = listOf(
             Triple(0.1, 0.1, Color.RED), Triple(0.9, 0.1, Color.GREEN),
             Triple(0.1, 0.9, Color.BLUE), Triple(0.9, 0.9, Color.YELLOW),
@@ -278,18 +314,21 @@ class PictureRotationLayoutTest {
             abs(Color.blue(actual) - Color.blue(expected)) <= 24
 
     /** Redraws only when a genuinely new Surface needs its initial static source image. */
-    private class StaticPicture : SurfaceHolder.Callback {
+    private class StaticPicture(private val timeline: File) : SurfaceHolder.Callback {
         private var newlyCreated = false
 
         /** Mark a real lifecycle transition; ordinary view size changes do not redraw the source. */
         override fun surfaceCreated(holder: SurfaceHolder) {
             newlyCreated = true
             Log.i(TAG, "Static source surface created")
+            timeline.appendText("${SystemClock.uptimeMillis()} surfaceCreated\n")
         }
 
         /** Supply a frame only after creation, not for every size or transform callback. */
         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-            Log.i(TAG, "Static source surface changed: ${width}x$height new=$newlyCreated")
+            val event = "surfaceChanged format=$format size=${width}x$height new=$newlyCreated"
+            Log.i(TAG, event)
+            timeline.appendText("${SystemClock.uptimeMillis()} $event\n")
             if (newlyCreated) {
                 draw(holder)
                 newlyCreated = false
@@ -300,6 +339,7 @@ class PictureRotationLayoutTest {
         override fun surfaceDestroyed(holder: SurfaceHolder) {
             newlyCreated = false
             Log.i(TAG, "Static source surface destroyed")
+            timeline.appendText("${SystemClock.uptimeMillis()} surfaceDestroyed\n")
         }
 
         /** @param holder valid source buffer to fill completely, independent of its display bounds */
@@ -318,6 +358,11 @@ class PictureRotationLayoutTest {
                 canvas.drawRect(halfWidth, halfHeight, canvas.width.toFloat(), canvas.height.toFloat(), paint)
                 paint.color = Color.WHITE
                 canvas.drawRect(halfWidth * 0.9f, halfHeight * 0.9f, halfWidth * 1.1f, halfHeight * 1.1f, paint)
+                paint.color = Color.MAGENTA
+                canvas.drawRect(0f, 0f, canvas.width.toFloat(), 12f, paint)
+                canvas.drawRect(0f, canvas.height - 12f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
+                canvas.drawRect(0f, 0f, 12f, canvas.height.toFloat(), paint)
+                canvas.drawRect(canvas.width - 12f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
             } finally {
                 holder.unlockCanvasAndPost(canvas)
             }
