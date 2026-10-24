@@ -19,14 +19,16 @@ import me.trinitrix.mirax.broadcast.EndConnectionConfirm
 import me.trinitrix.mirax.host.OverlayPermission
 import me.trinitrix.mirax.host.PrivilegeProbe
 import me.trinitrix.mirax.host.RootHelper
+import me.trinitrix.mirax.session.MiraxSession
 import me.trinitrix.mirax.session.PictureRotationReport
-import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionEffect
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.TileState
+import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.session.WfdOwner
+import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.tile.BroadcastTileService
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import me.trinitrix.mirax.wfd.WfdOwnerBridge
@@ -51,7 +53,7 @@ import me.trinitrix.mirax.wm.WmSize
 object SessionHost {
     private const val SOURCE_NAME_TIMEOUT_NS = 2_000_000_000L
     private val sourceNameScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     /**
      * Dashboard or other UI toggled the shared advertising switch.
      */
@@ -112,26 +114,56 @@ object SessionHost {
         val session = MiraxApp.instance.session
         WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
         maybeApplyProvisioningWmSize(appContext, session)
-        val snapshot = session.snapshot()
-        SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
-        SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
-        WifiRadio.sync(appContext, snapshot.advertisingEnabled)
-        BroadcastAutoStop.sync(snapshot)
-        AdvertisingKeepAliveService.sync(appContext, snapshot)
-        BroadcastStatusWidget.updateAll(appContext, snapshot)
-        BroadcastTileService.requestListening(appContext)
-        FloatingBallService.sync(appContext, snapshot)
-        applyEffects(appContext, snapshot)
-        // Apply one-shot effects before the owner receives the advertise command.
-        val afterEffects = MiraxApp.instance.session.snapshot()
-        WfdOwnerBridge.syncOwner(appContext, afterEffects.wfdOwner)
-        val advertiseOk = WfdOwnerBridge.sync(appContext, afterEffects.wfdAdvertise)
-        if (afterEffects.wfdAdvertise != null && !advertiseOk) {
+        return commitAdvertising(
+            session = session,
+            syncAdvertise = { command ->
+                WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
+                WfdOwnerBridge.sync(appContext, command)
+            },
+            applyEffects = { snapshot -> applyEffects(appContext, snapshot) },
+            publish = { snapshot ->
+                SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
+                SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
+                WifiRadio.sync(appContext, snapshot.advertisingEnabled)
+                BroadcastAutoStop.sync(snapshot)
+                AdvertisingKeepAliveService.sync(appContext, snapshot)
+                BroadcastStatusWidget.updateAll(appContext, snapshot)
+                BroadcastTileService.requestListening(appContext)
+                FloatingBallService.sync(appContext, snapshot)
+            },
+            syncSink = { command -> SinkConnectionController.sync(appContext, command) },
+        )
+    }
+
+    /**
+     * Reconcile owner acceptance before publishing a single final state to status surfaces.
+     * One-shot effects are consumed before handing the command to the owner.
+     *
+     * @param session session owning the advertising state
+     * @param syncAdvertise owner command boundary
+     * @param applyEffects one-shot effect boundary
+     * @param publish settings and status surfaces boundary
+     * @param syncSink receiver boundary
+     * @return the final state shown to the caller and external surfaces
+     */
+    internal fun commitAdvertising(
+        session: MiraxSession,
+        syncAdvertise: (WfdAdvertiseCommand?) -> Boolean,
+        applyEffects: (SessionSnapshot) -> Unit,
+        publish: (SessionSnapshot) -> Unit,
+        syncSink: (WfdAdvertiseCommand?) -> Unit,
+    ): SessionSnapshot {
+        applyEffects(session.snapshot())
+        val command = session.snapshot().wfdAdvertise
+        if (!syncAdvertise(command) && command != null) {
             session.handle(SessionAction.BeaconFailed)
-            applyEffects(appContext, session.snapshot())
+            applyEffects(session.snapshot())
+            syncAdvertise(session.snapshot().wfdAdvertise)
         }
-        SinkConnectionController.sync(appContext, afterEffects.wfdAdvertise)
-        return MiraxApp.instance.session.snapshot()
+        val finalSnapshot = session.snapshot()
+        publish(finalSnapshot)
+        syncSink(finalSnapshot.wfdAdvertise)
+        return finalSnapshot
     }
 
     /**
