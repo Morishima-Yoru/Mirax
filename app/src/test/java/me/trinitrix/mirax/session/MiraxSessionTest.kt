@@ -10,7 +10,7 @@ import org.junit.Test
  * actions, picture rotation, and connection events; assert phase, WFD owner,
  * tile/widget state, next advertisement set, preferred mode (including
  * visible-picture axes), selected mode, picture scale, the WFD advertise
- * command, Back confirm, and bottom-handle outputs. RTSP encode/decode stays
+ * command, Back panel dismissal, and bottom-handle outputs. RTSP encode/decode stays
  * behind this seam and is not asserted here. The picture activity is not a
  * second seam. Placement rectangles are covered by [PicturePlacementTest].
  */
@@ -1173,95 +1173,39 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun connected_firstSystemBack_opensControlPanel_keepsConnection() {
+    fun connected_systemBackOnlyClosesPanel_neverRequestsDisconnect() {
         val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
+        repeat(3) { session.handle(SessionAction.SystemBack) }
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.ConfirmEndConnection)
 
-        val snap = session.snapshot()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
-        assertThat(snap.advertisingEnabled).isTrue()
-        assertThat(snap.showPicture).isTrue()
-        assertThat(snap.controlPanelExpanded).isTrue()
-        assertThat(snap.effects).doesNotContain(SessionEffect.ConfirmEndConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun connected_secondSystemBack_armsForEnd_noConfirmYet() {
-        val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-
-        val snap = session.snapshot()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
-        assertThat(snap.effects).doesNotContain(SessionEffect.ConfirmEndConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun connected_thirdSystemBack_requestsEndConfirm_keepsConnectionUntilConfirmed() {
-        val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-
-        val snap = session.snapshot()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
-        assertThat(snap.effects).contains(SessionEffect.ConfirmEndConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
-
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.EndConnection)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
-        assertThat(session.snapshot().effects).contains(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun backConfirmPromise_survivesOtherActions_untilNextBackOrConnectionEnd() {
-        val session = MiraxSession(
-            SessionSettings(advertisingEnabled = true),
-            TestConnectionHistory(),
-        )
-        session.report(PrivilegeReport(helperRunning = true))
-        session.handle(SessionAction.BeaconListening)
-        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
-        session.handle(SessionAction.EnteredPlay)
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-
-        // Other actions must not cancel the armed second Back.
-        session.handle(SessionAction.SetLanguagePreference(LanguagePreference.ENGLISH))
-        session.handle(SessionAction.AcknowledgeEffects)
-
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-        assertThat(session.snapshot().effects).contains(SessionEffect.ConfirmEndConnection)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.EndConnection)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
-        assertThat(session.snapshot().advertisingEnabled).isTrue()
-        assertThat(session.snapshot().effects).contains(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun connectionEnded_clearsBackConfirm_soNextBackOpensPanelAgain() {
-        val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.ConnectionEnded)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
-
-        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
-        session.handle(SessionAction.EnteredPlay)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
-
-        session.handle(SessionAction.SystemBack)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        session.handle(SessionAction.ToggleControlPanel)
         assertThat(session.snapshot().controlPanelExpanded).isTrue()
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+        repeat(3) { session.handle(SessionAction.SystemBack) }
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.ConfirmEndConnection)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.DropActiveConnection)
+
+        session.handle(SessionAction.RequestEndConnection)
+        assertThat(session.snapshot().effects).contains(SessionEffect.ConfirmEndConnection)
+    }
+
+    @Test
+    fun connectionEnded_resetsControlPanel_andBackCannotOpenItOnNextConnection() {
+        val session = connectedSession()
+        session.handle(SessionAction.ToggleControlPanel)
+        assertThat(session.snapshot().controlPanelExpanded).isTrue()
+        session.handle(SessionAction.ConnectionEnded)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
         assertThat(session.snapshot().effects).doesNotContain(SessionEffect.ConfirmEndConnection)
     }
 
@@ -1294,6 +1238,30 @@ class MiraxSessionTest {
 
         session.handle(SessionAction.SetFloatingBallEnabled(true))
         assertThat(session.exportSettings().floatingBallEnabled).isTrue()
+    }
+
+    @Test
+    fun controlPanelEntry_defaultsChangesExportsAndReloads_independentlyOfFloatingBall() {
+        val session = freshSession()
+        assertThat(session.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.FLOATING_BUTTON)
+        assertThat(session.exportSettings().controlPanelEntry).isEqualTo(ControlPanelEntry.FLOATING_BUTTON)
+
+        session.handle(SessionAction.SetFloatingBallEnabled(false))
+        session.handle(SessionAction.SetControlPanelEntry(ControlPanelEntry.VOLUME_KEYS))
+        assertThat(session.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        assertThat(session.snapshot().floatingBallEnabled).isFalse()
+        val exported = session.exportSettings()
+        assertThat(exported.controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        assertThat(exported.floatingBallEnabled).isFalse()
+
+        val reloaded = MiraxSession(exported, TestConnectionHistory())
+        assertThat(reloaded.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        assertThat(reloaded.snapshot().floatingBallEnabled).isFalse()
+        reloaded.handle(SessionAction.SetFloatingBallEnabled(true))
+        assertThat(reloaded.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        reloaded.handle(SessionAction.SetControlPanelEntry(ControlPanelEntry.FLOATING_BUTTON))
+        assertThat(reloaded.snapshot().floatingBallEnabled).isTrue()
+        assertThat(reloaded.exportSettings().controlPanelEntry).isEqualTo(ControlPanelEntry.FLOATING_BUTTON)
     }
 
     @Test
@@ -1358,7 +1326,6 @@ class MiraxSessionTest {
         assertThat(snap.advertisingEnabled).isTrue()
         assertThat(snap.showFloatingBall).isFalse()
         assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.ShowPressBackAgainToEndToast)
     }
 
     @Test
@@ -1380,7 +1347,6 @@ class MiraxSessionTest {
         assertThat(snap.advertisingEnabled).isTrue()
         assertThat(snap.showFloatingBall).isFalse()
         assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.ShowPressBackAgainToEndToast)
     }
 
     @Test
@@ -1732,16 +1698,16 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun systemBackAndToggleControlPanel_shareExpandedState() {
+    fun systemBackClosesPanelOpenedByToggle_withoutPreventingReopening() {
         val session = connectedSession()
 
-        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.ToggleControlPanel)
         assertThat(session.snapshot().controlPanelExpanded).isTrue()
 
-        session.handle(SessionAction.ToggleControlPanel)
+        session.handle(SessionAction.SystemBack)
         assertThat(session.snapshot().controlPanelExpanded).isFalse()
 
-        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.ToggleControlPanel)
         assertThat(session.snapshot().controlPanelExpanded).isTrue()
     }
 
