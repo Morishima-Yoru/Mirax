@@ -213,31 +213,44 @@ public final class Helper {
                     ? new ProcessBuilder("wm", "size")
                     : new ProcessBuilder("wm", "size", "-d", Integer.toString(displayId));
             builder.redirectErrorStream(true);
-            Process process = builder.start();
-            // shortcut: wm size output is small; use a bounded wait before reading it.
-            if (!process.waitFor(3, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                Log.w(TAG, "wm size timed out");
-                return "";
-            }
-            String output;
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                StringBuilder text = new StringBuilder();
-                String row;
-                while ((row = reader.readLine()) != null) {
-                    if (text.length() > 0) {
-                        text.append('\n');
-                    }
-                    text.append(row);
-                }
-                output = text.toString();
-            }
-            process.waitFor();
-            return output;
+            return readWmSize(builder.start());
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "wm size interrupted", err);
+            return "";
         } catch (Exception err) {
             Log.w(TAG, "wm size failed", err);
             return "";
+        }
+    }
+
+    /**
+     * Reads the output of a wm-size child process after a bounded wait.
+     *
+     * @param process started wm-size process
+     * @return command output, or an empty string if the process does not finish
+     * @throws IOException when output cannot be read
+     * @throws InterruptedException when the current thread is interrupted
+     */
+    static String readWmSize(Process process) throws IOException, InterruptedException {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            try {
+                // shortcut: wm size emits short output with no surviving writers; use a timed drain if that changes.
+                if (!process.waitFor(3, TimeUnit.SECONDS)) {
+                    Log.w(TAG, "wm size timed out");
+                    return "";
+                }
+                StringBuilder text = new StringBuilder();
+                String row;
+                while ((row = reader.readLine()) != null) {
+                    if (text.length() > 0) text.append('\n');
+                    text.append(row);
+                }
+                return text.toString();
+            } finally {
+                if (process.isAlive()) process.destroyForcibly();
+            }
         }
     }
 
