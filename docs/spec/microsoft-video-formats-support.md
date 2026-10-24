@@ -49,6 +49,8 @@ Use the existing H.264 Level 5.1 validator: at most 36,864 macroblocks/frame and
 ### 4. Dynamic RTSP M3 Bitmap Generation
 The 12-digit hex string is generated from the enabled connection offer intersected with supported Microsoft modes. With no enabled mode, return `000000000000`; bits 21–47 remain clear. Fixed Microsoft modes are not duplicated into the literal custom-format parameter, so they cannot displace native custom modes there. Filter unsupported Microsoft modes even when restored through preferred/custom settings. The existing interactive refresh workaround must not synthesize an unchecked Microsoft sibling refresh.
 
+First-use automatic wm-size provisioning may prefer a fixed Microsoft mode only when it is already in the settings-owned offer. Otherwise consume that one-time read without enabling the mode or a sibling refresh; explicit user selections and ordinary Fold/custom provisioning keep their existing behavior.
+
 Prepare interactive refresh alternatives inside capability assembly so production and RTSP tests use the same offer. A standard mode may gain a lower refresh only when that alternative is also in the standard table: do not invent VGA@30 or PAL@30 literal modes that displace the user's Microsoft EDID preference. Explicit user-defined custom modes, including custom VGA refreshes and the Fold low-latency alternative, remain valid.
 
 ### 5. EDID Detailed Timing Descriptor Integration
@@ -123,3 +125,45 @@ Raw evidence is retained outside Git under
 This verifies one Microsoft mode on one source/device combination, not all 15
 selectable modes, every OEM/root path, custom-first source selection, or
 physical multitouch/S Pen pressure, buttons, and coordinate calibration.
+
+## Integration Readiness — 2026-10-24
+
+The feature branch incorporates `origin/dev` at
+`d882aaec1f74c2211ea15becf1b4cf7c12c922d4` through merge commit `fb25cdf`.
+The verified implementation candidate is `5d07ddd`, which also fixes the
+first-use provisioning opt-in bypass found during specification review.
+Conflict resolution preserves upstream source-name lifecycle checks and
+approver rearming, including the announcement guard on listening failures.
+The Microsoft decision is now [ADR 0007](../adr/0007-microsoft-video-formats-support.md);
+upstream's projection-control ADR 0006 keeps its existing identity.
+
+The integrated candidate passed 20 host test suites / 312 tests with zero
+failures, errors, or skips, Debug Lint with zero errors and 108 existing
+warnings, Debug and Release APK assembly, and instrumentation APK assembly.
+The independent helper javac/d8 build also passed. Instrumentation assembly
+does not mean those tests were run on a device. Release signing still uses
+the documented debug keystore for sideload/testing, not a production key.
+
+Three additional provisioning regressions cover both picture orientations,
+an explicitly enabled mode, and an unchecked sibling refresh. The new
+negative cases failed before the fix, then the full session suite and final
+verification command passed:
+
+```sh
+ANDROID_HOME='C:/Users/User/AppData/Local/Android/Sdk' ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest --no-daemon --console=plain --stacktrace
+```
+
+Candidate artifacts:
+
+| Artifact | SHA256 |
+| --- | --- |
+| Debug APK | `0B800C2BE8F174DAB8D11B3B8BA6B7E33E2CFC48C8C2000D0CA791944DED7F27` |
+| Release APK | `68690EF06A1AD49256D83F769CFEBAE01C51BB0D973863F84120C5662C8B8ED5` |
+| Standalone helper | `931D3E227FE8233E00F5BC241413A6E2C909BCD4C0601CB771CA92423DBBE4AA` |
+
+Evidence is retained under
+`C:/Users/User/AppData/Local/Temp/opencode/mirax/20261024-merge-ready-fb25cdf/`.
+The earlier hardware run certifies the archived `e4ddf75` APK only; the
+integrated APK has not been redeployed or hardware-tested in this closeout.
+Remote CI, branch-protection approval, push, and merging into `dev` are not
+performed by these local readiness checks.
