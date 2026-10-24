@@ -359,7 +359,7 @@ public final class PrimarySinkBeacon {
                 }
             });
             manager.requestPeers(channel, peers -> {
-                if (peers == null) {
+                if (generation != nameGeneration || !wanted || peers == null) {
                     return;
                 }
                 for (WifiP2pDevice device : peers.getDeviceList()) {
@@ -423,6 +423,7 @@ public final class PrimarySinkBeacon {
         nameRequestedGeneration = -1;
         requestedPeerMac = "";
         requestedPeerName = "";
+        removeApprovers();
     }
 
     /**
@@ -752,7 +753,7 @@ public final class PrimarySinkBeacon {
             return;
         }
         try {
-            manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, approver);
+            manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, createApprover());
             Log.i(TAG, "addExternalApprover broadcast pairingState=" + pairingState);
         } catch (Throwable err) {
             approverMacs.remove(mac);
@@ -951,7 +952,7 @@ public final class PrimarySinkBeacon {
             return;
         }
         try {
-            manager.addExternalApprover(channel, MacAddress.fromString(device.deviceAddress), approver);
+            manager.addExternalApprover(channel, MacAddress.fromString(device.deviceAddress), createApprover());
         } catch (Throwable err) {
             approverMacs.remove(device.deviceAddress);
             Log.w(TAG, "addExternalApprover failed for " + device.deviceAddress, err);
@@ -1024,85 +1025,99 @@ public final class PrimarySinkBeacon {
         for (String mac : approverMacs) {
             try {
                 manager.removeExternalApprover(channel, MacAddress.fromString(mac), logged("removeExternalApprover"));
-            } catch (Throwable ignored) {
+            } catch (Throwable err) {
+                Log.w(TAG, "removeExternalApprover failed for " + mac, err);
             }
         }
         approverMacs.clear();
     }
 
-    private final WifiP2pManager.ExternalApproverRequestListener approver =
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ? null
-                    : new WifiP2pManager.ExternalApproverRequestListener() {
-                @Override
-                public void onAttached(MacAddress deviceAddress) {
-                    Log.d(TAG, "approver attached " + deviceAddress);
+    /**
+     * Bind request-name updates to the lifecycle that registered this approver.
+     *
+     * @return listener whose callbacks cannot write into a newer lifecycle
+     */
+    private WifiP2pManager.ExternalApproverRequestListener createApprover() {
+        final int generation = nameGeneration;
+        return new WifiP2pManager.ExternalApproverRequestListener() {
+            @Override
+            public void onAttached(MacAddress deviceAddress) {
+                Log.d(TAG, "approver attached " + deviceAddress);
+            }
+
+            @Override
+            public void onDetached(MacAddress deviceAddress, int reason) {
+                if (generation != nameGeneration) {
+                    return;
+                }
+                Log.i(TAG, "approver detached " + deviceAddress + " reason=" + reason);
+                // REPLACE means a second registration is already stored.
+                // REMOVE is how the framework drops the approver after ACCEPT.
+                if (reason == WifiP2pManager.ExternalApproverRequestListener
+                        .APPROVER_DETACH_REASON_REPLACE) {
+                    return;
+                }
+                if (deviceAddress != null) {
+                    approverMacs.remove(deviceAddress.toString());
+                }
+                if (wanted) {
+                    armApproverForPairedDevices();
+                }
+            }
+
+            @Override
+            public void onConnectionRequested(int requestType, WifiP2pConfig config, WifiP2pDevice device) {
+                if (generation != nameGeneration) {
+                    Log.d(TAG, "Ignoring connection request from a previous beacon lifecycle");
+                    return;
+                }
+                String address = device != null && device.deviceAddress != null
+                        ? device.deviceAddress
+                        : (config != null ? config.deviceAddress : null);
+                if (address == null) {
+                    return;
+                }
+                // Prefer client (Windows as GO). Phh/MTK often wins GO with
+                // AUTO intent; Fold stays client. AOSP WifiDisplay uses MIN.
+                if (config != null) {
+                    int before = config.groupOwnerIntent;
+                    config.groupOwnerIntent = 0;
+                    Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
+                            + (device != null ? " \"" + device.deviceName + "\"" : "")
+                            + " pairingState=" + pairingState
+                            + " goIntent " + before + "→0");
+                } else {
+                    Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
+                            + (device != null ? " \"" + device.deviceName + "\"" : "")
+                            + " pairingState=" + pairingState);
                 }
 
-                @Override
-                public void onDetached(MacAddress deviceAddress, int reason) {
-                    Log.i(TAG, "approver detached " + deviceAddress + " reason=" + reason);
-                    // REPLACE means a second registration is already stored.
-                    // REMOVE is how the framework drops the approver after ACCEPT.
-                    if (reason == WifiP2pManager.ExternalApproverRequestListener
-                            .APPROVER_DETACH_REASON_REPLACE) {
-                        return;
-                    }
-                    if (deviceAddress != null) {
-                        approverMacs.remove(deviceAddress.toString());
-                    }
-                    if (wanted) {
-                        armApproverForPairedDevices();
-                    }
+                if (!wanted) {
+                    setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_REJECT);
+                    return;
                 }
+                requestedPeerMac = address;
+                String requestedName = device == null ? null : sanitizeName(device.deviceName);
+                requestedPeerName = requestedName == null ? "" : requestedName;
 
-                @Override
-                public void onConnectionRequested(int requestType, WifiP2pConfig config, WifiP2pDevice device) {
-                    String address = device != null && device.deviceAddress != null
-                            ? device.deviceAddress
-                            : (config != null ? config.deviceAddress : null);
-                    if (address == null) {
-                        return;
-                    }
-                    // Prefer client (Windows as GO). Phh/MTK often wins GO with
-                    // AUTO intent; Fold stays client. AOSP WifiDisplay uses MIN.
-                    if (config != null) {
-                        int before = config.groupOwnerIntent;
-                        config.groupOwnerIntent = 0;
-                        Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
-                                + (device != null ? " \"" + device.deviceName + "\"" : "")
-                                + " pairingState=" + pairingState
-                                + " goIntent " + before + "→0");
-                    } else {
-                        Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
-                                + (device != null ? " \"" + device.deviceName + "\"" : "")
-                                + " pairingState=" + pairingState);
-                    }
-
-                    if (!wanted) {
-                        setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_REJECT);
-                        return;
-                    }
-                    requestedPeerMac = address;
-                    String requestedName = device == null ? null : sanitizeName(device.deviceName);
-                    requestedPeerName = requestedName == null ? "" : requestedName;
-
-                    // For first-time pairing (UNPAIRED state), accept connection AND start WPS PBC
-                    if (pairingState == PairingState.UNPAIRED) {
-                        Log.i(TAG, "First-time connection: accepting + starting WPS PBC for " + address);
-                        setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
-                        startWpsPbc(address);
-                    } else {
-                        // Already paired or reinvoking: accept directly
-                        Log.i(TAG, "Reinvoking or paired connection: accepting directly");
-                        setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
-                    }
+                // For first-time pairing (UNPAIRED state), accept connection AND start WPS PBC
+                if (pairingState == PairingState.UNPAIRED) {
+                    Log.i(TAG, "First-time connection: accepting + starting WPS PBC for " + address);
+                    setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
+                    startWpsPbc(address);
+                } else {
+                    // Already paired or reinvoking: accept directly
+                    Log.i(TAG, "Reinvoking or paired connection: accepting directly");
+                    setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
                 }
+            }
 
-                @Override
-                public void onPinGenerated(MacAddress deviceAddress, String pin) {
-                    Log.i(TAG, "WPS PIN generated for " + deviceAddress);
-                }
-            };
+            @Override
+            public void onPinGenerated(MacAddress deviceAddress, String pin) {
+                Log.i(TAG, "WPS PIN generated for " + deviceAddress);
+            }
+        };
+    }
 
     private void setConnectionResult(String address, int result) {
         setConnectionResult(address, null, result);

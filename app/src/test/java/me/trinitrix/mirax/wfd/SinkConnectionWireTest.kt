@@ -32,7 +32,7 @@ class SinkConnectionWireTest {
         )
         require(group is P2pGroupState.Up)
 
-        val action = beginConnectionRunAction(group)
+        val action = requireNotNull(beginConnectionRunAction(group, expectedGeneration = 1, currentGeneration = 1))
         assertThat(action.remoteHost).isEqualTo("192.168.137.1")
         session.handle(action)
 
@@ -43,8 +43,23 @@ class SinkConnectionWireTest {
 
         val legacyGroup = P2pGroupState.parse("UP 192.168.137.2")
         require(legacyGroup is P2pGroupState.Up)
-        session.handle(beginConnectionRunAction(legacyGroup))
+        session.handle(
+            requireNotNull(beginConnectionRunAction(legacyGroup, expectedGeneration = 2, currentGeneration = 2)),
+        )
         assertThat(session.snapshot().sourceDeviceName).isNull()
+    }
+
+    @Test
+    fun groupState_staleQueuedSourceCannotReplaceCurrentSessionName() {
+        val session = MiraxSession(connectionHistory = TestConnectionHistory())
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "Current source"))
+        val oldGroup = P2pGroupState.Up("192.0.2.1", sourceDeviceName = "Previous source")
+
+        val action = beginConnectionRunAction(oldGroup, expectedGeneration = 1, currentGeneration = 2)
+        action?.let(session::handle)
+
+        assertThat(action).isNull()
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Current source")
     }
 
     @Test
