@@ -18,7 +18,16 @@ import java.io.IOException
 object PrivilegeProbe {
     private const val TAG = "MiraxPrivilege"
     private const val REQUEST_CODE = 0x4D58
-    private const val UI_PROBE_TIMEOUT_MS = 250
+    internal const val UI_PROBE_TIMEOUT_MS = 250
+
+    /**
+     * Test-only exchange seam for the helper socket; production delegates to [HelperClient].
+     *
+     * @param command command without the trailing newline
+     * @param timeoutMs maximum wait for the entire exchange
+     */
+    internal var exchangeCommand: (command: String, timeoutMs: Int) -> String =
+        { command, timeoutMs -> HelperClient.exchange(command, timeoutMs = timeoutMs) }
 
     /**
      * Observe current privilege paths.
@@ -58,8 +67,12 @@ object PrivilegeProbe {
         )
     }
 
-    /** Whether the privileged helper responds to commands. */
-    fun isHelperRunning(): Boolean = probeHelper()
+    /**
+     * Check whether the privileged helper responds to commands.
+     *
+     * @return true when the helper socket reports a valid UID
+     */
+    fun isHelperRunning(): Boolean = helperUid() != null
 
     /**
      * UID reported by the process currently bound to the helper socket.
@@ -69,7 +82,7 @@ object PrivilegeProbe {
      */
     fun helperUid(timeoutMs: Int = Helper.COMMAND_TIMEOUT_MS): Int? {
         return try {
-            val response = HelperClient.exchange("UID", timeoutMs = timeoutMs)
+            val response = exchangeCommand("UID", timeoutMs)
             response.toIntOrNull() ?: run {
                 Log.w(TAG, "Helper returned invalid UID: $response")
                 null
@@ -107,7 +120,9 @@ object PrivilegeProbe {
     /** Stop the currently listening helper process. */
     fun requestStopHelper() {
         try {
-            if (HelperClient.exchange("STOP") != "OK") Log.w(TAG, "Helper stop was rejected")
+            if (exchangeCommand("STOP", Helper.COMMAND_TIMEOUT_MS) != "OK") {
+                Log.w(TAG, "Helper stop was rejected")
+            }
         } catch (err: IOException) {
             Log.w(TAG, "Helper stop failed (helper may already be gone)", err)
         }
@@ -134,6 +149,4 @@ object PrivilegeProbe {
             ShizukuProbe(serviceRunning = false, authorized = false)
         }
     }
-
-    private fun probeHelper(): Boolean = helperUid() != null
 }

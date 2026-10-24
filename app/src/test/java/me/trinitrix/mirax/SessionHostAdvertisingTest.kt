@@ -11,8 +11,11 @@ import me.trinitrix.mirax.session.SessionSettings
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.TestConnectionHistory
 import me.trinitrix.mirax.session.TileState
+import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.session.WidgetStatus
+import me.trinitrix.mirax.session.WmSizeReading
+import org.junit.After
 import org.junit.Test
 
 /** Tests the real session through the host's advertising commit boundary. */
@@ -131,5 +134,125 @@ class SessionHostAdvertisingTest {
         assertThat(published.last()).isEqualTo(listening)
         assertThat(sinkCommands).containsExactly(true, true).inOrder()
         assertThat(effects).isEmpty()
+    }
+
+    @After
+    fun tearDown() {
+        SessionHost.resetForTests()
+    }
+
+    @Test
+    fun provisioningWmSize_readsOffMainAndHoldsAdvertiseUntilCalibrated() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        var plainReadCount = 0
+        SessionHost.ioRunner = { task -> ioTasks.addLast(task) }
+        SessionHost.mainPoster = { task -> mainTasks.addLast(task) }
+        SessionHost.plainWmSizeReader = {
+            plainReadCount++
+            WmSizeReading(physicalWidth = 1812, physicalHeight = 2176, overrideWidth = null, overrideHeight = null)
+        }
+
+        val session = MiraxSession(
+            SessionSettings(advertisingEnabled = true, provisioningConsumed = false),
+            TestConnectionHistory(),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+
+        val handedOffCommands = mutableListOf<WfdAdvertiseCommand?>()
+        val sinkCommands = mutableListOf<WfdAdvertiseCommand?>()
+        val published = mutableListOf<SessionSnapshot>()
+
+        fun runCommit(allowProvisioningRead: Boolean): SessionSnapshot {
+            if (allowProvisioningRead) {
+                SessionHost.maybeScheduleProvisioningWmSize(
+                    session = session,
+                    rotationDegrees = { 90 },
+                    onCalibratedOnMain = { runCommit(allowProvisioningRead = false) },
+                )
+            }
+            return SessionHost.commitAdvertising(
+                session = session,
+                syncAdvertise = { command ->
+                    handedOffCommands += command
+                    true
+                },
+                applyEffects = { snapshot ->
+                    session.handle(SessionAction.AcknowledgeEffects)
+                },
+                publish = { published += it },
+                syncSink = { sinkCommands += it },
+            )
+        }
+
+        val initial = runCommit(allowProvisioningRead = true)
+        // Must not block main thread on wm size or advertise uncalibrated modes first.
+        assertThat(plainReadCount).isEqualTo(0)
+        assertThat(handedOffCommands).isEmpty()
+        assertThat(sinkCommands).isEmpty()
+        assertThat(initial.phase).isEqualTo(ScreenPhase.ARMING)
+
+        while (ioTasks.isNotEmpty()) ioTasks.removeFirst().run()
+        assertThat(plainReadCount).isEqualTo(1)
+        assertThat(handedOffCommands).isEmpty()
+
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(handedOffCommands).hasSize(1)
+        assertThat(handedOffCommands.single()?.modes).contains(VideoMode(2176, 1812, 60))
+        assertThat(sinkCommands.single()?.modes).contains(VideoMode(2176, 1812, 60))
+        assertThat(published.last().preferredModeText).isEqualTo("2176×1812@60")
+    }
+
+    @Test
+    fun useThisScreen_readsOffMainAndCommitsCalibratedResolutionOnMain() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        var displayReadCount = 0
+        SessionHost.ioRunner = { task -> ioTasks.addLast(task) }
+        SessionHost.mainPoster = { task -> mainTasks.addLast(task) }
+        SessionHost.displayWmSizeReader = { displayId ->
+            assertThat(displayId).isEqualTo(2)
+            displayReadCount++
+            WmSizeReading(physicalWidth = 1080, physicalHeight = 2400, overrideWidth = null, overrideHeight = null)
+        }
+
+        val session = MiraxSession(
+            SessionSettings(advertisingEnabled = true, provisioningConsumed = true),
+            TestConnectionHistory(),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        val handedOffCommands = mutableListOf<WfdAdvertiseCommand?>()
+        var refreshed = false
+
+        SessionHost.scheduleUseThisScreen(
+            session = session,
+            displayId = 2,
+            rotationDegrees = { 90 },
+            onCalibratedOnMain = {
+                SessionHost.commitAdvertising(
+                    session = session,
+                    syncAdvertise = { cmd ->
+                        handedOffCommands += cmd
+                        true
+                    },
+                    applyEffects = { session.handle(SessionAction.AcknowledgeEffects) },
+                    publish = {},
+                    syncSink = {},
+                )
+                refreshed = true
+            },
+        )
+
+        assertThat(displayReadCount).isEqualTo(0)
+        assertThat(handedOffCommands).isEmpty()
+        assertThat(refreshed).isFalse()
+
+        while (ioTasks.isNotEmpty()) ioTasks.removeFirst().run()
+        assertThat(displayReadCount).isEqualTo(1)
+        assertThat(refreshed).isFalse()
+
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(refreshed).isTrue()
+        assertThat(handedOffCommands.single()?.modes).contains(VideoMode(2400, 1080, 60))
     }
 }

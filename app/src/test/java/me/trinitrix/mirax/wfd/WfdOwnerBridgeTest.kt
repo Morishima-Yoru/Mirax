@@ -1,6 +1,9 @@
 package me.trinitrix.mirax.wfd
 
+import android.content.ContextWrapper
 import com.google.common.truth.Truth.assertThat
+import me.trinitrix.mirax.helper.Helper
+import me.trinitrix.mirax.host.PrivilegeProbe
 import me.trinitrix.mirax.session.DeviceNameReport
 import me.trinitrix.mirax.session.MiraxSession
 import me.trinitrix.mirax.session.PrivilegeReport
@@ -9,6 +12,7 @@ import me.trinitrix.mirax.session.TestConnectionHistory
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.session.WfdOwner
+import org.junit.After
 import org.junit.Test
 
 /**
@@ -58,6 +62,210 @@ class WfdOwnerBridgeTest {
         val b = a.copy(broadcastName = "New")
         assertThat(a).isNotEqualTo(b)
         assertThat(b.broadcastName).isEqualTo("New")
+    }
+
+    @After
+    fun tearDown() {
+        WfdOwnerBridge.resetForTests()
+    }
+
+    @Test
+    fun helperSync_isOffMainAndConflated_andGuardsStaleFailureAfterOff() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val exchanged = mutableListOf<String>()
+        val armResults = mutableListOf<Boolean>()
+        var onAdvertiseExchange: (() -> String?)? = null
+
+        WfdOwnerBridge.ioRunner = { task -> ioTasks.addLast(task) }
+        WfdOwnerBridge.mainPoster = { task -> mainTasks.addLast(task) }
+        WfdOwnerBridge.delayedMainPoster = { _, _ -> }
+        WfdOwnerBridge.armResultConsumer = { listening -> armResults += listening }
+        WfdOwnerBridge.helperExchange = { command, _ ->
+            exchanged += command
+            if (command.startsWith("ADVERTISE")) {
+                onAdvertiseExchange?.invoke() ?: "OK"
+            } else {
+                "OK"
+            }
+        }
+
+        val cmd1 = WfdAdvertiseCommand(
+            owner = WfdOwner.HELPER,
+            broadcastName = "First",
+            modes = setOf(VideoMode(1920, 1080, 60)),
+        )
+        val cmd2 = cmd1.copy(broadcastName = "Second")
+
+        // Hand-off returns true immediately without running helper socket I/O on caller thread.
+        assertThat(WfdOwnerBridge.sync(context, cmd1)).isTrue()
+        assertThat(exchanged).isEmpty()
+
+        // Rapid update conflates pending helper commands to the latest state.
+        assertThat(WfdOwnerBridge.sync(context, cmd2)).isTrue()
+        while (ioTasks.isNotEmpty()) {
+            ioTasks.removeFirst().run()
+        }
+        assertThat(exchanged).containsExactly("ADVERTISE	Second	1920x1080@60")
+
+        // If user turns broadcast off while a slow ADVERTISE is in flight, stale failure must not
+        // emit BeaconFailed and STOP_ADVERTISE must still run.
+        exchanged.clear()
+        val cmd3 = cmd1.copy(broadcastName = "Third")
+        onAdvertiseExchange = {
+            assertThat(WfdOwnerBridge.sync(context, null)).isTrue()
+            "ERR failed"
+        }
+        assertThat(WfdOwnerBridge.sync(context, cmd3)).isTrue()
+        while (ioTasks.isNotEmpty()) {
+            ioTasks.removeFirst().run()
+        }
+        while (mainTasks.isNotEmpty()) {
+            mainTasks.removeFirst().run()
+        }
+        assertThat(exchanged).containsExactly(
+            "ADVERTISE	Third	1920x1080@60",
+            "STOP_ADVERTISE",
+        ).inOrder()
+        assertThat(armResults).isEmpty()
+    }
+
+    @Test
+    fun helperAdvertiseFailure_postsBeaconFailedOnMainOnce_andAllowsRetry() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val armResults = mutableListOf<Boolean>()
+        var advertiseResponse = "ERR boom"
+
+        WfdOwnerBridge.ioRunner = { task -> ioTasks.addLast(task) }
+        WfdOwnerBridge.mainPoster = { task -> mainTasks.addLast(task) }
+        WfdOwnerBridge.delayedMainPoster = { _, _ -> }
+        WfdOwnerBridge.armResultConsumer = { listening -> armResults += listening }
+        WfdOwnerBridge.helperExchange = { command, _ ->
+            if (command.startsWith("ADVERTISE")) advertiseResponse else "OK"
+        }
+
+        val cmd = WfdAdvertiseCommand(
+            owner = WfdOwner.HELPER,
+            broadcastName = "Desk",
+            modes = setOf(VideoMode(1280, 720, 60)),
+        )
+        assertThat(WfdOwnerBridge.sync(context, cmd)).isTrue()
+        while (ioTasks.isNotEmpty()) ioTasks.removeFirst().run()
+        assertThat(armResults).isEmpty()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(armResults).containsExactly(false)
+
+        // The session turns advertising off after failure, then can retry the identical command.
+        WfdOwnerBridge.sync(context, null)
+        advertiseResponse = "OK"
+        assertThat(WfdOwnerBridge.sync(context, cmd)).isTrue()
+        assertThat(ioTasks).isNotEmpty()
+    }
+
+    @Test
+    fun pollArm_helperListeningRunsOffMain_andVerifiesWatchGenerationOnMain() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val delayedTasks = ArrayDeque<Runnable>()
+        val exchanged = mutableListOf<String>()
+        val armResults = mutableListOf<Boolean>()
+
+        WfdOwnerBridge.ioRunner = { task -> ioTasks.addLast(task) }
+        WfdOwnerBridge.mainPoster = { task -> mainTasks.addLast(task) }
+        WfdOwnerBridge.delayedMainPoster = { task, _ -> delayedTasks.addLast(task) }
+        WfdOwnerBridge.armResultConsumer = { listening -> armResults += listening }
+        WfdOwnerBridge.helperExchange = { command, _ ->
+            exchanged += command
+            if (command == "LISTENING") "YES" else "OK"
+        }
+
+        val cmd = WfdAdvertiseCommand(
+            owner = WfdOwner.HELPER,
+            broadcastName = "Desk",
+            modes = setOf(VideoMode(1280, 720, 60)),
+        )
+        WfdOwnerBridge.sync(context, cmd)
+        while (ioTasks.isNotEmpty()) ioTasks.removeFirst().run()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        exchanged.clear()
+
+        // Running the scheduled poll on main must not block on LISTENING directly; it schedules IO.
+        assertThat(delayedTasks).isNotEmpty()
+        delayedTasks.removeFirst().run()
+        assertThat(exchanged).doesNotContain("LISTENING")
+        assertThat(ioTasks).isNotEmpty()
+
+        // Run LISTENING on IO, then cancel before main processes the callback -> stale result ignored.
+        ioTasks.removeFirst().run()
+        assertThat(exchanged).containsExactly("LISTENING")
+        WfdOwnerBridge.sync(context, null)
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(armResults).isEmpty()
+    }
+
+    @Test
+    fun privilegeProbe_isHelperRunningInlinesHelperUid_andKeeps250msUiTimeout() {
+        val recordedTimeouts = mutableListOf<Int>()
+        val prev = PrivilegeProbe.exchangeCommand
+        try {
+            PrivilegeProbe.exchangeCommand = { command, timeoutMs ->
+                assertThat(command).isEqualTo("UID")
+                recordedTimeouts += timeoutMs
+                "0"
+            }
+            assertThat(PrivilegeProbe.isHelperRunning()).isTrue()
+            assertThat(PrivilegeProbe.UI_PROBE_TIMEOUT_MS).isEqualTo(250)
+            assertThat(PrivilegeProbe.helperUid(PrivilegeProbe.UI_PROBE_TIMEOUT_MS)).isEqualTo(0)
+            assertThat(recordedTimeouts).containsExactly(Helper.COMMAND_TIMEOUT_MS, 250).inOrder()
+        } finally {
+            PrivilegeProbe.exchangeCommand = prev
+        }
+    }
+
+    @Test
+    fun queuedFailure_cannot_close_a_newer_advertise_generation() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val results = mutableListOf<Boolean>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.mainPoster = { mainTasks.addLast(it) }
+        WfdOwnerBridge.delayedMainPoster = { _, _ -> }
+        WfdOwnerBridge.armResultConsumer = { results += it }
+        WfdOwnerBridge.helperExchange = { _, _ -> "ERR rejected" }
+        val command = WfdAdvertiseCommand(WfdOwner.HELPER, "Old", setOf(VideoMode(1280, 720, 60)))
+
+        WfdOwnerBridge.sync(context, command)
+        ioTasks.removeFirst().run()
+        mainTasks.removeFirst().run()
+        assertThat(results).isEmpty()
+        WfdOwnerBridge.sync(context, command.copy(broadcastName = "New"))
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+
+        assertThat(results).isEmpty()
+    }
+
+    @Test
+    fun helperListeningWatch_starts_after_advertise_acknowledgment() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val mainTasks = ArrayDeque<Runnable>()
+        val delayedTasks = ArrayDeque<Runnable>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.mainPoster = { mainTasks.addLast(it) }
+        WfdOwnerBridge.delayedMainPoster = { task, _ -> delayedTasks.addLast(task) }
+        WfdOwnerBridge.helperExchange = { _, _ -> "OK" }
+        val command = WfdAdvertiseCommand(WfdOwner.HELPER, "Desk", setOf(VideoMode(1280, 720, 60)))
+
+        WfdOwnerBridge.sync(context, command)
+        assertThat(delayedTasks).isEmpty()
+        ioTasks.removeFirst().run()
+        while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
+        assertThat(delayedTasks).hasSize(1)
     }
 
     /**

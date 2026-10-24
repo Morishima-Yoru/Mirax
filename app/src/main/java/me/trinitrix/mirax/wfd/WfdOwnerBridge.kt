@@ -18,8 +18,13 @@ import me.trinitrix.mirax.shell.IMiraxShellService
 import me.trinitrix.mirax.shell.MiraxShellUserService
 import rikka.shizuku.Shizuku
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Host adapter between the app process and the privileged WFD owner.
@@ -38,14 +43,55 @@ object WfdOwnerBridge {
     private const val ARM_POLL_MS = 250L
     private const val ARM_TIMEOUT_MS = 4_000L
 
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lastCommand = AtomicReference<WfdAdvertiseCommand?>(null)
     private val shellService = AtomicReference<IMiraxShellService?>(null)
     private val activeOwner = AtomicReference(WfdOwner.NONE)
     private val armWatchGeneration = AtomicInteger(0)
+    private val armReported = AtomicBoolean(false)
+    private val helperSyncGeneration = AtomicInteger(0)
+    private val pendingHelperTarget = AtomicReference<HelperTarget?>(null)
+    private val helperDrainScheduled = AtomicBoolean(false)
     private var boundArgs: Shizuku.UserServiceArgs? = null
     private var pendingShizukuCommand: WfdAdvertiseCommand? = null
     private var appContext: Context? = null
+
+    private data class HelperTarget(
+        val generation: Int,
+        val command: WfdAdvertiseCommand?,
+    )
+
+    internal var helperExchange: (command: String, readAll: Boolean) -> String? = ::defaultExchangeHelper
+    internal var ioRunner: (Runnable) -> Unit = { task -> ioScope.launch { task.run() } }
+    internal var mainPoster: (Runnable) -> Unit = { task -> mainHandler.post(task) }
+    internal var delayedMainPoster: (Runnable, Long) -> Unit =
+        { task, delayMs -> mainHandler.postDelayed(task, delayMs) }
+    internal var clockMs: () -> Long = { System.nanoTime() / 1_000_000L }
+    internal var armResultConsumer: (Boolean) -> Unit = ::defaultDispatchArmResult
+
+    /**
+     * Reset bridge state and restore production seams for unit tests.
+     */
+    internal fun resetForTests() {
+        armWatchGeneration.incrementAndGet()
+        armReported.set(true)
+        helperSyncGeneration.incrementAndGet()
+        pendingHelperTarget.set(null)
+        helperDrainScheduled.set(false)
+        lastCommand.set(null)
+        shellService.set(null)
+        activeOwner.set(WfdOwner.NONE)
+        boundArgs = null
+        pendingShizukuCommand = null
+        appContext = null
+        helperExchange = ::defaultExchangeHelper
+        ioRunner = { task -> ioScope.launch { task.run() } }
+        mainPoster = { task -> mainHandler.post(task) }
+        delayedMainPoster = { task, delayMs -> mainHandler.postDelayed(task, delayMs) }
+        clockMs = { System.nanoTime() / 1_000_000L }
+        armResultConsumer = ::defaultDispatchArmResult
+    }
 
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -85,15 +131,18 @@ object WfdOwnerBridge {
     /**
      * Keep the Shizuku user-service bound exactly while Shizuku owns WFD.
      *
-     * Args:
-     *     context: Any context; the application context is kept.
-     *     owner: Current WFD owner from the session.
+     * @param context Any context; the application context is kept.
+     * @param owner Current WFD owner from the session.
      */
     fun syncOwner(context: Context, owner: WfdOwner) {
-        appContext = context.applicationContext
+        val appCtx = context.applicationContext ?: context
+        appContext = appCtx
         val previous = activeOwner.getAndSet(owner)
+        if (previous == WfdOwner.HELPER && owner != WfdOwner.HELPER) {
+            helperSyncGeneration.incrementAndGet()
+        }
         if (owner == WfdOwner.SHIZUKU) {
-            ensureShizukuBound(context.applicationContext)
+            ensureShizukuBound(appCtx)
         } else if (previous == WfdOwner.SHIZUKU || boundArgs != null) {
             unbindShizukuQuietly()
         }
@@ -102,44 +151,50 @@ object WfdOwnerBridge {
     /**
      * Sync the session's desired advertise state to the current owner.
      *
-     * Args:
-     *     context: Application context (package name for the user-service).
-     *     command: Desired advertise command, or null to stop.
-     *
-     * Returns:
-     *     false when an advertise request could not be handed to an owner.
-     *     Stop requests and no-ops return true.
+     * @param context Application context (package name for the user-service).
+     * @param command Desired advertise command, or null to stop.
+     * @return false when an advertise request could not be handed to an owner;
+     *     stop requests, no-ops, and queued helper hand-offs return true.
      */
     fun sync(context: Context, command: WfdAdvertiseCommand?): Boolean {
-        appContext = context.applicationContext
+        val appCtx = context.applicationContext ?: context
+        appContext = appCtx
         if (lastCommand.get() == command) {
             return true
         }
         if (command == null) {
             cancelArmWatch()
-            stopAdvertising()
             lastCommand.set(null)
+            stopAdvertising()
             return true
         }
-        val applied = when (command.owner) {
-            WfdOwner.HELPER -> sendHelperAdvertise(command)
+        activeOwner.set(command.owner)
+        when (command.owner) {
+            WfdOwner.HELPER -> {
+                pendingShizukuCommand = null
+                cancelArmWatch()
+                armReported.set(false)
+                lastCommand.set(command)
+                enqueueHelperCommand(command)
+                return true
+            }
             WfdOwner.SHIZUKU -> {
-                sendHelperQuietly("STOP_ADVERTISE")
-                advertiseViaShizuku(context.applicationContext, command)
+                enqueueHelperCommand(null)
+                if (!advertiseViaShizuku(appCtx, command)) {
+                    cancelArmWatch()
+                    return false
+                }
+                lastCommand.set(command)
+                watchArm(command.owner)
+                return true
             }
             WfdOwner.NONE -> {
                 cancelArmWatch()
+                lastCommand.set(null)
                 stopAdvertising()
-                true
+                return true
             }
         }
-        if (!applied) {
-            cancelArmWatch()
-            return false
-        }
-        lastCommand.set(command)
-        watchArm(command.owner)
-        return true
     }
 
     /**
@@ -232,7 +287,7 @@ object WfdOwnerBridge {
 
     private fun stopAdvertising() {
         pendingShizukuCommand = null
-        sendHelperQuietly("STOP_ADVERTISE")
+        enqueueHelperCommand(null)
         try {
             shellService.get()?.stopAdvertise()
         } catch (err: Exception) {
@@ -240,30 +295,164 @@ object WfdOwnerBridge {
         }
     }
 
-    private fun watchArm(owner: WfdOwner) {
-        val generation = armWatchGeneration.incrementAndGet()
-        pollArm(generation, owner, System.currentTimeMillis() + ARM_TIMEOUT_MS)
+    /**
+     * Enqueue a helper advertise or stop request on the conflated helper queue.
+     *
+     * @param command desired helper advertise command, or null to stop advertising
+     */
+    private fun enqueueHelperCommand(command: WfdAdvertiseCommand?) {
+        val generation = helperSyncGeneration.incrementAndGet()
+        pendingHelperTarget.set(HelperTarget(generation, command))
+        scheduleHelperDrain()
     }
 
+    /**
+     * Schedule one helper drain task when none is running.
+     */
+    private fun scheduleHelperDrain() {
+        if (!helperDrainScheduled.compareAndSet(false, true)) {
+            return
+        }
+        ioRunner(Runnable { drainHelperCommands() })
+    }
+
+    /**
+     * Drain conflated helper targets off the caller thread with generation guards.
+     */
+    private fun drainHelperCommands() {
+        try {
+            while (true) {
+                val target = pendingHelperTarget.getAndSet(null) ?: break
+                val command = target.command
+                if (command == null) {
+                    sendHelperQuietly("STOP_ADVERTISE")
+                    continue
+                }
+                if (!isCurrentHelperTarget(target)) {
+                    continue
+                }
+                val accepted = sendHelperAdvertise(command)
+                if (!isCurrentHelperTarget(target)) {
+                    if (pendingHelperTarget.get() == null &&
+                        (activeOwner.get() != WfdOwner.HELPER || lastCommand.get()?.owner != WfdOwner.HELPER)
+                    ) {
+                        sendHelperQuietly("STOP_ADVERTISE")
+                    }
+                    continue
+                }
+                mainPoster(Runnable {
+                    if (isCurrentHelperTarget(target)) {
+                        if (accepted) {
+                            watchArm(WfdOwner.HELPER)
+                        } else {
+                            reportArmResult(listening = false)
+                        }
+                    }
+                })
+            }
+        } finally {
+            helperDrainScheduled.set(false)
+            if (pendingHelperTarget.get() != null) {
+                scheduleHelperDrain()
+            }
+        }
+    }
+
+    /**
+     * Check whether a drained helper target is still current.
+     *
+     * @param target queued helper target to validate
+     * @return true when no stop, owner change, or newer command superseded it
+     */
+    private fun isCurrentHelperTarget(target: HelperTarget): Boolean {
+        return helperSyncGeneration.get() == target.generation &&
+            activeOwner.get() == WfdOwner.HELPER &&
+            lastCommand.get() == target.command
+    }
+
+    /**
+     * Start watching the owner until it reports listening or times out.
+     *
+     * @param owner owner expected to arm the listen beacon
+     */
+    private fun watchArm(owner: WfdOwner) {
+        armReported.set(false)
+        val generation = armWatchGeneration.incrementAndGet()
+        pollArm(generation, owner, clockMs() + ARM_TIMEOUT_MS)
+    }
+
+    /**
+     * Schedule one arm poll; helper listening checks run off the main thread.
+     *
+     * @param generation watch generation guarding stale polls
+     * @param owner owner expected to arm the listen beacon
+     * @param deadlineMs monotonic deadline for the watch
+     */
     private fun pollArm(generation: Int, owner: WfdOwner, deadlineMs: Long) {
-        mainHandler.postDelayed(
-            {
+        delayedMainPoster(
+            Runnable {
                 if (armWatchGeneration.get() != generation) {
-                    return@postDelayed
+                    return@Runnable
                 }
-                if (ownerListening(owner)) {
-                    reportArmResult(listening = true)
-                    return@postDelayed
+                if (owner == WfdOwner.HELPER) {
+                    pollHelperArmOffMain(generation, deadlineMs)
+                    return@Runnable
                 }
-                if (System.currentTimeMillis() >= deadlineMs) {
-                    Log.e(TAG, "arm timed out for $owner")
-                    reportArmResult(listening = false)
-                    return@postDelayed
-                }
-                pollArm(generation, owner, deadlineMs)
+                handleArmPollResult(generation, owner, deadlineMs, ownerListening(owner))
             },
             ARM_POLL_MS,
         )
+    }
+
+    /**
+     * Query helper listening state off the main thread and resume on the main thread.
+     *
+     * @param generation watch generation guarding stale callbacks
+     * @param deadlineMs monotonic deadline for the watch
+     */
+    private fun pollHelperArmOffMain(generation: Int, deadlineMs: Long) {
+        ioRunner(
+            Runnable {
+                if (armWatchGeneration.get() != generation || activeOwner.get() != WfdOwner.HELPER) {
+                    return@Runnable
+                }
+                val listening = ownerListening(WfdOwner.HELPER)
+                mainPoster(
+                    Runnable {
+                        handleArmPollResult(generation, WfdOwner.HELPER, deadlineMs, listening)
+                    },
+                )
+            },
+        )
+    }
+
+    /**
+     * Handle one arm poll result on the main thread with generation guards.
+     *
+     * @param generation watch generation guarding stale results
+     * @param owner owner expected to arm the listen beacon
+     * @param deadlineMs monotonic deadline for the watch
+     * @param listening true when the owner reports listening
+     */
+    private fun handleArmPollResult(
+        generation: Int,
+        owner: WfdOwner,
+        deadlineMs: Long,
+        listening: Boolean,
+    ) {
+        if (armWatchGeneration.get() != generation || activeOwner.get() != owner) {
+            return
+        }
+        if (listening) {
+            reportArmResult(listening = true)
+            return
+        }
+        if (clockMs() >= deadlineMs) {
+            Log.e(TAG, "arm timed out for $owner")
+            reportArmResult(listening = false)
+            return
+        }
+        pollArm(generation, owner, deadlineMs)
     }
 
     private fun ownerListening(owner: WfdOwner): Boolean {
@@ -279,12 +468,40 @@ object WfdOwnerBridge {
         }
     }
 
+    /**
+     * Cancel the current arm watch and suppress further arm results.
+     */
     private fun cancelArmWatch() {
+        armReported.set(true)
         armWatchGeneration.incrementAndGet()
     }
 
+    /**
+     * Report one arm result for the current watch generation.
+     *
+     * @param listening true when the owner reports listening
+     */
     private fun reportArmResult(listening: Boolean) {
-        cancelArmWatch()
+        if (!armReported.compareAndSet(false, true)) {
+            return
+        }
+        val generation = armWatchGeneration.incrementAndGet()
+        val owner = activeOwner.get()
+        mainPoster(
+            Runnable {
+                if (armWatchGeneration.get() == generation && activeOwner.get() == owner) {
+                    armResultConsumer(listening)
+                }
+            },
+        )
+    }
+
+    /**
+     * Dispatch an arm result into the session on the main thread.
+     *
+     * @param listening true for [SessionAction.BeaconListening], false for [SessionAction.BeaconFailed]
+     */
+    private fun defaultDispatchArmResult(listening: Boolean) {
         val ctx = appContext ?: return
         val action =
             if (listening) {
@@ -292,9 +509,7 @@ object WfdOwnerBridge {
             } else {
                 SessionAction.BeaconFailed
             }
-        mainHandler.post {
-            SessionHost.dispatchConnectionEvent(ctx, action)
-        }
+        SessionHost.dispatchConnectionEvent(ctx, action)
     }
 
     /**
@@ -353,6 +568,17 @@ object WfdOwnerBridge {
     }
 
     private fun exchangeHelper(command: String, readAll: Boolean = false): String? {
+        return helperExchange(command, readAll)
+    }
+
+    /**
+     * Exchange one helper command on the calling worker thread.
+     *
+     * @param command command without the trailing newline
+     * @param readAll whether the response may contain multiple lines
+     * @return helper response, or null when the exchange fails
+     */
+    private fun defaultExchangeHelper(command: String, readAll: Boolean = false): String? {
         return try {
             HelperClient.exchange(command, readAll).also { response ->
                 if (response.startsWith("ERR")) Log.w(TAG, "helper rejected $command: $response")
