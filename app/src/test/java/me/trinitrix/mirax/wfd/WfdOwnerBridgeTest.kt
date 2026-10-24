@@ -158,8 +158,7 @@ class WfdOwnerBridgeTest {
         while (mainTasks.isNotEmpty()) mainTasks.removeFirst().run()
         assertThat(armResults).containsExactly(false)
 
-        // The session turns advertising off after failure, then can retry the identical command.
-        WfdOwnerBridge.sync(context, null)
+        // A completed failed hand-off must not suppress an identical retry as an accepted no-op.
         advertiseResponse = "OK"
         assertThat(WfdOwnerBridge.sync(context, cmd)).isTrue()
         assertThat(ioTasks).isNotEmpty()

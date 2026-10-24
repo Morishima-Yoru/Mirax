@@ -9,13 +9,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 
 /** Checks real DataStore files across closed and recreated history/storage scopes. */
 class ConnectionHistoryFileTest {
@@ -32,13 +33,19 @@ class ConnectionHistoryFileTest {
             val scope = CoroutineScope(job + Dispatchers.IO)
             try {
                 val store = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
+                // Windows can reject a reader while DataStore atomically replaces the same file.
+                val snapshots = store.data.retryWhen { error, _ ->
+                    if (error !is IOException) return@retryWhen false
+                    delay(10)
+                    true
+                }
                 val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
                 when (generation) {
                     0 -> {
                         history.start("persisted-source", emptyList())
                         history.finish(true, emptyList())
                         withTimeout(20_000) {
-                            store.data.first { it[key]?.contains("persisted-source") == true }
+                            snapshots.first { it[key]?.contains("persisted-source") == true }
                         }
                     }
                     1 -> {
@@ -48,16 +55,15 @@ class ConnectionHistoryFileTest {
                         assertThat(history.runs().map { it.remoteHost }).containsExactly("persisted-source")
                         history.clear()
                         withTimeout(20_000) {
-                            store.data.onEach { println("clear persisted JSON: ${it[key]}") }
-                                .first { it[key] == "[]" }
+                            snapshots.first { it[key] == "[]" }
                         }
                     }
                     else -> {
-                        assertThat(withTimeout(20_000) { store.data.first()[key] }).isEqualTo("[]")
+                        assertThat(withTimeout(20_000) { snapshots.first()[key] }).isEqualTo("[]")
                         history.start("after-clear", emptyList())
                         history.finish(true, emptyList())
                         withTimeout(20_000) {
-                            store.data.first { it[key]?.contains("after-clear") == true }
+                            snapshots.first { it[key]?.contains("after-clear") == true }
                         }
                         assertThat(history.runs().map { it.remoteHost }).containsExactly("after-clear")
                     }

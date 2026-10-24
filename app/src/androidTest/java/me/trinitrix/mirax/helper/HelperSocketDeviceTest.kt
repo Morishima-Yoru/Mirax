@@ -10,6 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import me.trinitrix.mirax.host.HelperClient
+import me.trinitrix.mirax.host.HelperUnavailableException
 import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -21,6 +22,15 @@ import java.util.concurrent.TimeUnit
 /** Exercises Android LocalSocket only when the orchestrator selects an isolated or live helper. */
 @RunWith(AndroidJUnit4::class)
 class HelperSocketDeviceTest {
+    /** Requires no helper: the real JNI connect error must not block a Shizuku-only hand-off. */
+    @Test(timeout = 5_000)
+    fun absentListener_is_classified_at_connect_before_any_command() {
+        assumeTrue(testMode() == "isolated")
+        assertThrows(HelperUnavailableException::class.java) {
+            HelperClient.exchange("UID", timeoutMs = 1_000)
+        }
+    }
+
     /** Requires no privileged helper: a stalled reply must expire and the next exchange succeed. */
     @Test(timeout = 10_000)
     fun stalledReply_expires_and_next_exchange_succeeds() {

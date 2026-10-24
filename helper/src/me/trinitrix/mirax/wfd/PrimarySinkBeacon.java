@@ -70,6 +70,7 @@ public final class PrimarySinkBeacon {
     private WifiP2pManager.Channel channel;
     private volatile boolean wanted;
     private volatile boolean advertising;
+    private long advertisingGeneration;
     private volatile String groupState = GROUP_DOWN;
     private volatile String lastName = "";
     private boolean groupFormed;
@@ -164,6 +165,7 @@ public final class PrimarySinkBeacon {
      */
     public void startAdvertising(final String broadcastName) {
         handler.post(() -> {
+            advertisingGeneration++;
             String nextName = broadcastName == null ? "" : broadcastName;
             boolean rename = wanted && !nextName.equals(lastName);
             lastName = nextName;
@@ -208,6 +210,7 @@ public final class PrimarySinkBeacon {
     public void stopAdvertising(Runnable onStopped) {
         handler.post(() -> {
             try {
+                advertisingGeneration++;
                 wanted = false;
                 advertising = false;
                 groupFormed = false;
@@ -370,8 +373,9 @@ public final class PrimarySinkBeacon {
         }
     }
 
+    /** Issue WFD information for the current owner-looper advertisement lifecycle. */
     private void armSink() {
-        if (manager == null || channel == null) {
+        if (!wanted || manager == null || channel == null) {
             return;
         }
         lastArmedAt = SystemClock.elapsedRealtime();
@@ -392,25 +396,7 @@ public final class PrimarySinkBeacon {
             Log.i(TAG, "WFD info " + wfd + " name=\"" + lastName + "\" pairing=" + pairingState);
         }
         try {
-            manager.setWfdInfo(channel, wfd, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    if (announce) {
-                        Log.i(TAG, "setWfdInfo success");
-                    }
-                    // Driver hint: sink mode (2) shortens scan dwell so STA+P2P
-                    // concurrency hurts Miracast less. Hidden WifiManager API.
-                    setMiracastModeSink();
-                    admitThenListen(announce);
-                }
-
-                @Override
-                public void onFailure(int reason) {
-                    advertising = false;
-                    Log.e(TAG, "setWfdInfo FAILED reason=" + reason);
-                    notifyArmFailed("setWfdInfo failed reason=" + reason);
-                }
-            });
+            manager.setWfdInfo(channel, wfd, wfdInfoListener(announce, advertisingGeneration));
         } catch (SecurityException err) {
             // Some GSIs keep CONFIGURE_WIFI_DISPLAY as signature-only and
             // never grant it to shell UID 2000 (unlike OEM builds Mirax targets).
@@ -418,6 +404,43 @@ public final class PrimarySinkBeacon {
             Log.e(TAG, "setWfdInfo denied for this UID; Miracast sink cannot advertise", err);
             notifyArmFailed("setWfdInfo denied");
         }
+    }
+
+    /**
+     * Build the listener used by the actual WFD information request.
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this callback
+     * @return framework callback for this request
+     */
+    WifiP2pManager.ActionListener wfdInfoListener(boolean announce, long generation) {
+        return new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                if (!isCurrentAdvertisement(generation)) return;
+                if (announce) {
+                    Log.i(TAG, "setWfdInfo success");
+                }
+                // Driver hint: sink mode (2) shortens scan dwell so STA+P2P concurrency hurts less.
+                setMiracastModeSink();
+                admitThenListen(announce, generation);
+            }
+
+            @Override
+            public void onFailure(int reason) {
+                if (!isCurrentAdvertisement(generation)) return;
+                advertising = false;
+                Log.e(TAG, "setWfdInfo FAILED reason=" + reason);
+                notifyArmFailed("setWfdInfo failed reason=" + reason);
+            }
+        };
+    }
+
+    /**
+     * @param generation captured lifecycle
+     * @return whether this callback still owns advertising
+     */
+    private boolean isCurrentAdvertisement(long generation) {
+        return wanted && generation == advertisingGeneration;
     }
 
     /**
@@ -537,10 +560,12 @@ public final class PrimarySinkBeacon {
      * Arm the broadcast ExternalApprover (GO intent 0 + WPS on first pair), then
      * listen. Persistent-group reinvoke still keeps prior GO role until the user
      * forgets pairings — intent only applies on fresh negotiation.
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this request
      */
-    private void admitThenListen(boolean announce) {
+    private void admitThenListen(boolean announce, long generation) {
         armBroadcastApprover();
-        Runnable listen = () -> startListening(announce);
+        Runnable listen = () -> startListening(announce, generation);
         // Only delete persistent groups if explicitly requested (forgetAllPairings)
         if (forgetSavedGroups) {
             forgetSavedGroups = false;
@@ -552,13 +577,29 @@ public final class PrimarySinkBeacon {
         }
     }
 
-    private void startListening(boolean announce) {
-        if (!wanted || manager == null || channel == null) {
+    /**
+     * Start listening only for the lifecycle that requested the asynchronous WFD operation.
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this request
+     */
+    private void startListening(boolean announce, long generation) {
+        if (!isCurrentAdvertisement(generation) || manager == null || channel == null) {
             return;
         }
-        manager.startListening(channel, new WifiP2pManager.ActionListener() {
+        manager.startListening(channel, listeningListener(announce, generation));
+    }
+
+    /**
+     * Build the listener used by the actual listening request.
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this callback
+     * @return framework callback for this request
+     */
+    WifiP2pManager.ActionListener listeningListener(boolean announce, long generation) {
+        return new WifiP2pManager.ActionListener() {
             @Override
             public void onSuccess() {
+                if (!isCurrentAdvertisement(generation)) return;
                 if (!advertising) {
                     Log.i(TAG, "startListening success; Primary Sink on port "
                             + RTSP_CONTROL_PORT);
@@ -569,13 +610,14 @@ public final class PrimarySinkBeacon {
 
             @Override
             public void onFailure(int reason) {
+                if (!isCurrentAdvertisement(generation)) return;
                 if (announce) {
                     advertising = false;
                     Log.e(TAG, "startListening failed reason=" + reason);
                     notifyArmFailed("startListening failed reason=" + reason);
                 }
             }
-        });
+        };
     }
 
     private void notifyArmListening() {

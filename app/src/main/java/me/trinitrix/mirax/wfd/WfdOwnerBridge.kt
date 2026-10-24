@@ -7,11 +7,10 @@ import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.system.ErrnoException
-import android.system.OsConstants
 import android.util.Log
 import me.trinitrix.mirax.SessionHost
 import me.trinitrix.mirax.host.HelperClient
+import me.trinitrix.mirax.host.HelperUnavailableException
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
@@ -118,7 +117,6 @@ object WfdOwnerBridge {
                     lastCommand.set(pending)
                     watchArm(pending.owner)
                 } else {
-                    lastCommand.compareAndSet(pending, null)
                     reportArmResult(listening = false)
                 }
             }
@@ -520,10 +518,16 @@ object WfdOwnerBridge {
         }
         val generation = armWatchGeneration.incrementAndGet()
         val owner = activeOwner.get()
+        val command = lastCommand.get()
         mainPoster(
             Runnable {
                 if (armWatchGeneration.get() == generation && activeOwner.get() == owner) {
-                    armResultConsumer(listening)
+                    try {
+                        armResultConsumer(listening)
+                    } finally {
+                        // Let the session stop the failed owner before making an identical retry eligible.
+                        if (!listening) lastCommand.compareAndSet(command, null)
+                    }
                 }
             },
         )
@@ -616,15 +620,14 @@ object WfdOwnerBridge {
             HelperClient.exchange(command, readAll).also { response ->
                 if (response.startsWith("ERR")) Log.w(TAG, "helper rejected $command: $response")
             }
-        } catch (err: IOException) {
-            val errno = generateSequence<Throwable>(err) { it.cause }
-                .filterIsInstance<ErrnoException>().firstOrNull()?.errno
-            if (command == "STOP_ADVERTISE" &&
-                (errno == OsConstants.ENOENT || errno == OsConstants.ECONNREFUSED)
-            ) {
+        } catch (err: HelperUnavailableException) {
+            if (command == "STOP_ADVERTISE") {
                 Log.d(TAG, "Helper absent; already stopped", err)
                 return "OK"
             }
+            Log.d(TAG, "Helper absent: $command", err)
+            null
+        } catch (err: IOException) {
             Log.w(TAG, "helper exchange failed: $command", err)
             null
         }
