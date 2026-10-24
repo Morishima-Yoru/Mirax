@@ -79,16 +79,25 @@ class ConnectionHistoryImpl(
     init {
         loadRuns()
         coroutineScope.launch(Dispatchers.IO) {
-            for (snapshot in pendingWrites) {
-                try {
-                    val json = gson.toJson(snapshot)
-                    dataStore.edit { prefs ->
-                        prefs[stringPreferencesKey(RUNS_KEY)] = json
+            for (queued in pendingWrites) {
+                var snapshot = queued
+                while (true) {
+                    try {
+                        val json = gson.toJson(snapshot)
+                        dataStore.edit { prefs ->
+                            prefs[stringPreferencesKey(RUNS_KEY)] = json
+                        }
+                        break
+                    } catch (err: CancellationException) {
+                        throw err
+                    } catch (err: IOException) {
+                        Log.w(TAG, "Retrying connection history write", err)
+                        delay(250)
+                        snapshot = pendingWrites.tryReceive().getOrNull() ?: snapshot
+                    } catch (err: Exception) {
+                        Log.w(TAG, "Failed to persist connection history", err)
+                        break
                     }
-                } catch (err: CancellationException) {
-                    throw err
-                } catch (err: Exception) {
-                    Log.w(TAG, "Failed to persist connection history", err)
                 }
             }
         }

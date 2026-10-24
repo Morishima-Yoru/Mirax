@@ -94,6 +94,27 @@ class ConnectionHistoryImplTest {
     }
 
     @Test
+    fun transient_write_failure_does_not_drop_a_clear(): Unit = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val store = GatedStore(mutablePreferencesOf(key to Gson().toJson(listOf(oldRun))))
+            store.allowRead.complete(Unit)
+            val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            await { history.runs().size == 1 }
+            store.failNextWrite = true
+            history.clear()
+
+            await { store.completedWrites.get() > 0 && store.savedHosts().isEmpty() }
+            val restarted: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            restarted.start("after-clear", emptyList())
+            restarted.finish(true, emptyList())
+            await { store.savedHosts() == listOf("after-clear") }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun clear_before_load_stays_empty_after_restart() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
@@ -172,6 +193,7 @@ class ConnectionHistoryImplTest {
         val completedWrites = AtomicInteger()
         val readAttempts = AtomicInteger()
         @Volatile var failNextRead = false
+        @Volatile var failNextWrite = false
         @Volatile var pauseNextWrite = false
         private val stored = MutableStateFlow(initial)
         private val mutex = Mutex()
@@ -187,6 +209,10 @@ class ConnectionHistoryImplTest {
 
         override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
             mutex.withLock {
+                if (failNextWrite) {
+                    failNextWrite = false
+                    throw IOException("transient write failure")
+                }
                 if (pauseNextWrite) {
                     pauseNextWrite = false
                     writeStarted.complete(Unit)
