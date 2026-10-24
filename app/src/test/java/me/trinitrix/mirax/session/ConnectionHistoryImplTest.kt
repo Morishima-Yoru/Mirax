@@ -72,13 +72,14 @@ class ConnectionHistoryImplTest {
     fun clear_while_previous_write_is_pending_stays_empty_after_restart() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val store = GatedStore(mutablePreferencesOf())
+            val store = GatedStore(mutablePreferencesOf(key to Gson().toJson(listOf(oldRun))))
             store.allowRead.complete(Unit)
             val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            await { history.runs().map { it.remoteHost } == listOf("old") }
             store.pauseNextWrite = true
             history.start("new", emptyList())
             history.finish(true, emptyList())
-            store.writeStarted.await()
+            withTimeout(20_000) { store.writeStarted.await() }
             history.clear()
             assertThat(history.runs()).isEmpty()
             store.allowWrite.complete(Unit)
@@ -130,7 +131,7 @@ class ConnectionHistoryImplTest {
         private val stored = MutableStateFlow(initial)
         private val mutex = Mutex()
         override val data: Flow<Preferences> = flow {
-            allowRead.await()
+            withTimeout(20_000) { allowRead.await() }
             emitAll(stored)
         }
 
@@ -139,7 +140,7 @@ class ConnectionHistoryImplTest {
                 if (pauseNextWrite) {
                     pauseNextWrite = false
                     writeStarted.complete(Unit)
-                    allowWrite.await()
+                    withTimeout(20_000) { allowWrite.await() }
                 }
                 transform(stored.value).also {
                     stored.value = it
