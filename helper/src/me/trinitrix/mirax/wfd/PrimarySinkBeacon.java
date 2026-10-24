@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wfd;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.net.MacAddress;
 import android.net.wifi.WifiManager;
@@ -37,6 +38,10 @@ import java.util.Set;
  * reinvocation works without re-pairing. Must run as shell (UID 2000) or root
  * — never from the Mirax app process. Does not touch Samsung SmartMirroring
  * or SecondScreenPlayer.
+ *
+ * Method-level permission suppressions cover shared code scanned against the
+ * app manifest: these calls run in the privileged helper, not the app process.
+ * Runtime failures are still handled because OEM shell grants can differ.
  */
 public final class PrimarySinkBeacon {
     private static final String TAG = "MiraxWfdBeacon";
@@ -349,6 +354,7 @@ public final class PrimarySinkBeacon {
         return null;
     }
 
+    @SuppressLint("MissingPermission")
     private void pollOnce() {
         if (manager == null || channel == null) {
             return;
@@ -515,8 +521,7 @@ public final class PrimarySinkBeacon {
                 + " name=" + (name == null ? "(none)" : "\"" + name + "\""));
     }
 
-    // This signature-only Wi-Fi Display operation runs in the shell/root owner process.
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private void armSink() {
         if (manager == null || channel == null) {
             return;
@@ -585,8 +590,7 @@ public final class PrimarySinkBeacon {
         }
     }
 
-    // This signature-only Wi-Fi Display operation runs in the shell/root owner process.
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private void clearWfdInfo() {
         try {
             final WifiP2pWfdInfo wfd = new WifiP2pWfdInfo();
@@ -701,6 +705,11 @@ public final class PrimarySinkBeacon {
         }
     }
 
+    /**
+     * Starts listening or reports permission denial without terminating the helper looper.
+     *
+     * @param announce whether the initial asynchronous failure should be reported
+     */
     private void startListening(boolean announce) {
         if (!wanted || manager == null || channel == null) {
             return;
@@ -762,8 +771,7 @@ public final class PrimarySinkBeacon {
         armBroadcastApprover();
     }
 
-    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private void armBroadcastApprover() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || manager == null || channel == null || !wanted) {
@@ -960,8 +968,7 @@ public final class PrimarySinkBeacon {
         return null;
     }
 
-    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private void watchPeer(WifiP2pDevice device) {
         if (device == null || device.deviceAddress == null) {
             return;
@@ -993,6 +1000,7 @@ public final class PrimarySinkBeacon {
      * Drive GO negotiation ourselves with {@code groupOwnerIntent=0} so Windows
      * can become GO. Only Miracast sources (Win+K) are chased.
      */
+    @SuppressLint("MissingPermission")
     private void maybeConnectAsClient(WifiP2pDevice device) {
         if (!wanted || groupFormed || manager == null || channel == null) {
             return;
@@ -1051,8 +1059,7 @@ public final class PrimarySinkBeacon {
     /** Peers we already issued {@link #maybeConnectAsClient} for (API &lt; 33). */
     private final Set<String> clientConnectAttempted = new HashSet<>();
 
-    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private void removeApprovers() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return;
@@ -1162,8 +1169,7 @@ public final class PrimarySinkBeacon {
      * Accept/reject a peer request. Prefer the overload that keeps our mutated
      * {@link WifiP2pConfig} (groupOwnerIntent=0) so Phh does not always become GO.
      */
-    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private void setConnectionResult(String address, WifiP2pConfig config, int result) {
         try {
             MacAddress peer = MacAddress.fromString(address);

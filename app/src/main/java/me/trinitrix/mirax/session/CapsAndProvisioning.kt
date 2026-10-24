@@ -51,7 +51,7 @@ internal class CapsAndProvisioning(
     }
 
     fun setStandardModeChecked(mode: VideoMode, checked: Boolean) {
-        val catalog = StandardVideoModes.catalog(maxVideoBitrateBps)
+        val catalog = selectableModes()
         if (mode !in catalog) return
         checkedStandardModes = if (checked) {
             checkedStandardModes + mode
@@ -61,7 +61,7 @@ internal class CapsAndProvisioning(
     }
 
     fun setStandardModesChecked(modes: Collection<VideoMode>, checked: Boolean) {
-        val catalog = StandardVideoModes.catalog(maxVideoBitrateBps)
+        val catalog = selectableModes()
         val known = modes.filter { it in catalog }.toSet()
         if (known.isEmpty()) return
         checkedStandardModes = if (checked) {
@@ -107,13 +107,22 @@ internal class CapsAndProvisioning(
         PreferredModeCorrection.correct(width, height, refresh)?.let { preferredMode = it }
     }
 
+    /**
+     * Applies one-time screen provisioning without opting into an unselected Microsoft mode.
+     *
+     * @param reading screen dimensions reported by the privileged host
+     * @param pictureRotationDegrees rotation used to resolve visible picture axes
+     * @return whether this call consumed the pending provisioning read
+     */
     fun applyProvisioningWmSize(reading: WmSizeReading, pictureRotationDegrees: Int): Boolean {
         if (provisioningConsumed || preferredMode != null) {
             consumeProvisioning()
             return false
         }
         val (width, height) = visiblePictureAxes(reading.chosenWidth, reading.chosenHeight, pictureRotationDegrees)
-        PreferredModeCorrection.correct(width, height, 60)?.let { preferredMode = it }
+        PreferredModeCorrection.correct(width, height, 60)
+            ?.takeIf { !MicrosoftVideoModes.contains(it) || it in resolveNextAdvertisementModes() }
+            ?.let { preferredMode = it }
         consumeProvisioning()
         return true
     }
@@ -125,10 +134,16 @@ internal class CapsAndProvisioning(
 
     fun resolveNextAdvertisementModes(): Set<VideoMode> {
         val checked = checkedStandardModes.intersect(
-            StandardVideoModes.catalog(maxVideoBitrateBps).toSet(),
+            selectableModes().toSet(),
         )
-        return checked + customModes.toSet() + listOfNotNull(preferredMode).toSet()
+        return (checked + customModes.toSet() + listOfNotNull(preferredMode).toSet())
+            .filter { !MicrosoftVideoModes.contains(it) || it in MicrosoftVideoModes.catalog() }
+            .toSet()
     }
+
+    /** @return fixed standard and Microsoft modes available for selection */
+    private fun selectableModes(): List<VideoMode> =
+        StandardVideoModes.catalog(maxVideoBitrateBps) + MicrosoftVideoModes.catalog()
 
     companion object {
         fun visiblePictureAxes(baseWidth: Int, baseHeight: Int, rotationDegrees: Int): Pair<Int, Int> {

@@ -100,7 +100,7 @@ internal class ActiveConnectionState {
     }
 
     fun onSourceSelectedMode(mode: VideoMode, fallbackModes: Set<VideoMode>) {
-        connectionAdvertisedModesInternal = fallbackModes
+        freezeConnectionAdvertisedModes(fallbackModes)
         _selectedMode = mode
         val allowed = connectionAdvertisedModesInternal
         if (allowed != null && mode !in allowed) {

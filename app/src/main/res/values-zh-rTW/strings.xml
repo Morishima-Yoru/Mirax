@@ -35,6 +35,7 @@
     <string name="use_this_screen">使用此螢幕</string>
     <string name="standard_modes_label">標準模式</string>
     <string name="modes_all_refresh_rates">全部更新率</string>
+    <string name="microsoft_modes_hint">微軟 3:2 相容備援模式；自訂模式仍優先。變更於下次連線生效。</string>
     <string name="settings_language_title">語言</string>
     <string name="language_follow_system">跟隨系統</string>
     <string name="language_traditional_chinese">繁體中文</string>

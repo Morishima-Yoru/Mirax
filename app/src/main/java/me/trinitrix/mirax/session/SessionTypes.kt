@@ -305,6 +305,7 @@ data class SessionSettings(
     val languagePreference: LanguagePreference = LanguagePreference.FOLLOW_SYSTEM,
     val displayNameOverride: String? = null,
     val preferredMode: VideoMode? = null,
+    /** Checked fixed modes, including Microsoft extensions; retains the existing preference key. */
     val checkedStandardModes: Set<VideoMode> = StandardVideoModes.DEFAULT_CHECKED,
     val maxVideoBitrateBps: Long = StandardVideoModes.BITRATE_CAP_BPS,
     val provisioningConsumed: Boolean = false,
@@ -505,6 +506,8 @@ data class SessionSnapshot(
     val connectionOfferModes: Set<VideoMode>? = null,
     /** Preferred mode for this connection's M3, or null before the offer is frozen. */
     val connectionPreferredMode: VideoMode? = null,
+    /** Opt-in Microsoft 3:2 rows, separate from the CEA/VESA/HH catalog. */
+    val microsoftModes: List<StandardModeRow> = emptyList(),
 )
 
 /**
