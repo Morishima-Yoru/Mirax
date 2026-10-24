@@ -52,6 +52,9 @@ object UibcTouchChannel {
      */
     internal var writeRunner: (Runnable) -> Unit = { runnable -> writer.execute(runnable) }
 
+    /** Android route selection, replaced by host tests while retaining real TCP sockets. */
+    internal var bindSocket: (android.content.Context?, Socket) -> Boolean = P2pNetworkBinder::bind
+
     var context: android.content.Context? = null
 
     /** Optional English status line, for the connection log. */
@@ -67,7 +70,7 @@ object UibcTouchChannel {
             val socket = Socket()
             try {
                 socket.bind(null)
-                P2pNetworkBinder.bind(context, socket)
+                bindSocket(context, socket)
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(host, port), 3_000)
                 synchronized(next) {

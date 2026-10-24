@@ -1,6 +1,7 @@
 package me.trinitrix.mirax
 
 import android.content.Context
+import me.trinitrix.mirax.session.ControlPanelEntry
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionSettings
@@ -31,6 +32,7 @@ object SessionPreferences {
     private const val KEY_CAMERA_CUTOUT_AFFECTS_LAYOUT = "camera_cutout_affects_layout"
     private const val KEY_BROADCAST_AUTO_STOP_MINUTES = "broadcast_auto_stop_minutes"
     private const val KEY_CONTROL_PANEL_ENABLED = "control_panel_enabled"
+    private const val KEY_CONTROL_PANEL_ENTRY = "control_panel_entry"
     private const val KEY_ORIENTATION_LOCK_ENABLED = "orientation_lock_enabled"
 
     fun load(context: Context): SessionSettings {
@@ -85,6 +87,10 @@ object SessionPreferences {
             cameraCutoutAffectsLayout = prefs.getBoolean(KEY_CAMERA_CUTOUT_AFFECTS_LAYOUT, false),
             broadcastAutoStopMinutes = prefs.getInt(KEY_BROADCAST_AUTO_STOP_MINUTES, 1),
             controlPanelEnabled = prefs.getBoolean(KEY_CONTROL_PANEL_ENABLED, true),
+            controlPanelEntry = when (prefs.getString(KEY_CONTROL_PANEL_ENTRY, null)) {
+                ControlPanelEntry.VOLUME_KEYS.name -> ControlPanelEntry.VOLUME_KEYS
+                else -> ControlPanelEntry.FLOATING_BUTTON
+            },
             orientationLockEnabled = prefs.getBoolean(KEY_ORIENTATION_LOCK_ENABLED, false),
         )
     }
@@ -120,7 +126,7 @@ object SessionPreferences {
 
     /**
      * Persist preferred mode, checklist, bitrate cap, provisioning flag,
-     * bottom-handle, floating-ball, and picture-scale settings.
+     * floating-ball, picture-scale, and control-panel entry settings.
      */
     fun saveResolutionSettings(context: Context, settings: SessionSettings) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -150,6 +156,7 @@ object SessionPreferences {
                 putBoolean(KEY_CAMERA_CUTOUT_AFFECTS_LAYOUT, settings.cameraCutoutAffectsLayout)
                 putInt(KEY_BROADCAST_AUTO_STOP_MINUTES, settings.broadcastAutoStopMinutes)
                 putBoolean(KEY_CONTROL_PANEL_ENABLED, settings.controlPanelEnabled)
+                putString(KEY_CONTROL_PANEL_ENTRY, settings.controlPanelEntry.name)
                 putBoolean(KEY_ORIENTATION_LOCK_ENABLED, settings.orientationLockEnabled)
             }
             .apply()
@@ -176,6 +183,14 @@ object SessionPreferences {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_CONTROL_PANEL_ENABLED, enabled)
+            .apply()
+    }
+
+    /** Persist how the projection control panel opens. */
+    fun saveControlPanelEntry(context: Context, entry: ControlPanelEntry) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_CONTROL_PANEL_ENTRY, entry.name)
             .apply()
     }
 

@@ -368,6 +368,8 @@ public final class PrimarySinkBeacon {
                     watchPeer(device);
                 }
             });
+        } catch (SecurityException err) {
+            Log.w(TAG, "poll permission denied", err);
         } catch (Throwable err) {
             Log.w(TAG, "poll failed", err);
         }
@@ -465,6 +467,9 @@ public final class PrimarySinkBeacon {
                     publishUp(source, owner, null);
                 }
             }, NAME_REQUEST_TIMEOUT_MS);
+        } catch (SecurityException err) {
+            Log.w(TAG, "requestGroupInfo permission denied; publishing nameless", err);
+            publishUp(source, owner, null);
         } catch (Throwable err) {
             Log.w(TAG, "requestGroupInfo failed; publishing nameless", err);
             publishUp(source, owner, null);
@@ -510,6 +515,8 @@ public final class PrimarySinkBeacon {
                 + " name=" + (name == null ? "(none)" : "\"" + name + "\""));
     }
 
+    // This signature-only Wi-Fi Display operation runs in the shell/root owner process.
+    @android.annotation.SuppressLint("MissingPermission")
     private void armSink() {
         if (manager == null || channel == null) {
             return;
@@ -578,6 +585,8 @@ public final class PrimarySinkBeacon {
         }
     }
 
+    // This signature-only Wi-Fi Display operation runs in the shell/root owner process.
+    @android.annotation.SuppressLint("MissingPermission")
     private void clearWfdInfo() {
         try {
             final WifiP2pWfdInfo wfd = new WifiP2pWfdInfo();
@@ -696,26 +705,34 @@ public final class PrimarySinkBeacon {
         if (!wanted || manager == null || channel == null) {
             return;
         }
-        manager.startListening(channel, new WifiP2pManager.ActionListener() {
-            @Override
-            public void onSuccess() {
-                if (!advertising) {
-                    Log.i(TAG, "startListening success; Primary Sink on port "
-                            + RTSP_CONTROL_PORT);
+        try {
+            manager.startListening(channel, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    if (!advertising) {
+                        Log.i(TAG, "startListening success; Primary Sink on port "
+                                + RTSP_CONTROL_PORT);
+                    }
+                    advertising = true;
+                    notifyArmListening();
                 }
-                advertising = true;
-                notifyArmListening();
-            }
 
-            @Override
-            public void onFailure(int reason) {
-                if (announce) {
-                    advertising = false;
-                    Log.e(TAG, "startListening failed reason=" + reason);
-                    notifyArmFailed("startListening failed reason=" + reason);
+                @Override
+                public void onFailure(int reason) {
+                    if (announce) {
+                        advertising = false;
+                        Log.e(TAG, "startListening failed reason=" + reason);
+                        notifyArmFailed("startListening failed reason=" + reason);
+                    }
                 }
+            });
+        } catch (SecurityException err) {
+            advertising = false;
+            Log.e(TAG, "startListening permission denied", err);
+            if (announce) {
+                notifyArmFailed("startListening denied");
             }
-        });
+        }
     }
 
     private void notifyArmListening() {
@@ -745,6 +762,8 @@ public final class PrimarySinkBeacon {
         armBroadcastApprover();
     }
 
+    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
+    @android.annotation.SuppressLint("MissingPermission")
     private void armBroadcastApprover() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || manager == null || channel == null || !wanted) {
@@ -822,6 +841,13 @@ public final class PrimarySinkBeacon {
 
             startWps.invoke(manager, channel, wpsConfig, wpsListener);
             Log.i(TAG, "WPS PBC initiated for " + deviceAddress);
+        } catch (SecurityException err) {
+            Log.w(TAG, "startWps permission denied", err);
+            if (wpsTimeoutRunnable != null) {
+                handler.removeCallbacks(wpsTimeoutRunnable);
+            }
+            pairingState = PairingState.UNPAIRED;
+            pendingPairingMac = null;
         } catch (Throwable err) {
             Log.w(TAG, "startWps failed", err);
             if (wpsTimeoutRunnable != null) {
@@ -934,6 +960,8 @@ public final class PrimarySinkBeacon {
         return null;
     }
 
+    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
+    @android.annotation.SuppressLint("MissingPermission")
     private void watchPeer(WifiP2pDevice device) {
         if (device == null || device.deviceAddress == null) {
             return;
@@ -1002,6 +1030,9 @@ public final class PrimarySinkBeacon {
                             + " peer=" + device.deviceAddress);
                 }
             });
+        } catch (SecurityException err) {
+            clientConnectAttempted.remove(device.deviceAddress);
+            Log.w(TAG, "connect as client permission denied", err);
         } catch (Throwable err) {
             clientConnectAttempted.remove(device.deviceAddress);
             Log.w(TAG, "connect as client failed", err);
@@ -1020,6 +1051,8 @@ public final class PrimarySinkBeacon {
     /** Peers we already issued {@link #maybeConnectAsClient} for (API &lt; 33). */
     private final Set<String> clientConnectAttempted = new HashSet<>();
 
+    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
+    @android.annotation.SuppressLint("MissingPermission")
     private void removeApprovers() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return;
@@ -1129,6 +1162,8 @@ public final class PrimarySinkBeacon {
      * Accept/reject a peer request. Prefer the overload that keeps our mutated
      * {@link WifiP2pConfig} (groupOwnerIntent=0) so Phh does not always become GO.
      */
+    // This signature-only Wi-Fi selection operation runs in the shell/root owner process.
+    @android.annotation.SuppressLint("MissingPermission")
     private void setConnectionResult(String address, WifiP2pConfig config, int result) {
         try {
             MacAddress peer = MacAddress.fromString(address);

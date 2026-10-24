@@ -98,6 +98,12 @@ enum class PictureScale {
     ACTUAL,
 }
 
+/** How the projection control panel is opened. Independent of the home-screen floating ball. */
+enum class ControlPanelEntry {
+    FLOATING_BUTTON,
+    VOLUME_KEYS,
+}
+
 /**
  * User language choice persisted across stays.
  */
@@ -284,6 +290,7 @@ data class OverlayPermissionReport(
  *         advertised as `microsoft_max_bitrate` on the next RTSP connection.
  *     provisioningConsumed: Whether the one-time preferred-mode provisioning chance is gone.
  *     floatingBallEnabled: Whether the floating ball may appear when leaving to home.
+ *     controlPanelEntry: How the projection control panel opens, separately from the home ball.
  *     pictureScale: How the picture sits on the panel (等比 / 鋪滿 / 拉伸 / 原寸).
  *     customModes: Ordered custom resolutions. First is preferred when auto wm size is off.
  *     autoAddWmSizeOnConnect: When true, the connection offer prefers the current wm size.
@@ -314,6 +321,8 @@ data class SessionSettings(
     val showDebugOverlay: Boolean = false,
     /** Enable/disable the control panel. Default true. */
     val controlPanelEnabled: Boolean = true,
+    /** Choose how the projection control panel opens. */
+    val controlPanelEntry: ControlPanelEntry = ControlPanelEntry.FLOATING_BUTTON,
     /** Enable/disable orientation lock (ADR 0005). Default false. */
     val orientationLockEnabled: Boolean = false,
 )
@@ -341,16 +350,9 @@ sealed interface SessionEffect {
     data object ReadPlainWmSizeForProvisioning : SessionEffect
 
     /**
-     * Ask the host to confirm ending this connection (picture panel or second Back).
+     * Ask the host to confirm an explicit request to end this connection.
      */
     data object ConfirmEndConnection : SessionEffect
-
-    /**
-     * Toast after the first system Back while connected: one more Back ends the connection.
-     * Unused when the picture status panel is enabled; kept for tests that assert legacy
-     * handle-off sequencing without a panel.
-     */
-    data object ShowPressBackAgainToEndToast : SessionEffect
 
     /**
      * Drop the active Miracast session without turning advertising off.
@@ -482,6 +484,8 @@ data class SessionSnapshot(
     val cameraCutoutAffectsLayout: Boolean = false,
     /** Whether the control panel is currently expanded. */
     val controlPanelExpanded: Boolean = false,
+    /** How the projection control panel opens. */
+    val controlPanelEntry: ControlPanelEntry = ControlPanelEntry.FLOATING_BUTTON,
     /** Whether orientation lock is enabled (ADR 0005). */
     val orientationLockEnabled: Boolean = false,
     /** Source device name for display, if set. */
@@ -662,10 +666,7 @@ sealed interface SessionAction {
     data class ApplyProvisioningWmSize(val reading: WmSizeReading) : SessionAction
 
     /**
-     * System Back on the picture. With the status panel on, the first press opens it;
-     * the second asks to confirm ending this connection. With the panel off, the first
-     * press arms the second; the second asks to confirm. Broadcast stays on unless
-     * the user confirms end.
+     * System Back on the picture closes an expanded control panel only.
      */
     data object SystemBack : SessionAction
 
@@ -779,6 +780,9 @@ sealed interface SessionAction {
 
     /** Enable/disable the control panel. Persisted. */
     data class SetControlPanelEnabled(val enabled: Boolean) : SessionAction
+
+    /** Choose how the projection control panel opens. */
+    data class SetControlPanelEntry(val entry: ControlPanelEntry) : SessionAction
 
     /** Set orientation lock enabled state (ADR 0005). */
     data class SetOrientationLock(val enabled: Boolean) : SessionAction

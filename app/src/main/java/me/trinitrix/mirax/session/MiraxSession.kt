@@ -35,6 +35,7 @@ class MiraxSession(
         initialBroadcastAutoStopMinutes = initialSettings.broadcastAutoStopMinutes,
         initialShowDebugOverlay = initialSettings.showDebugOverlay,
         initialControlPanelEnabled = initialSettings.controlPanelEnabled,
+        initialControlPanelEntry = initialSettings.controlPanelEntry,
         initialOrientationLockEnabled = initialSettings.orientationLockEnabled,
     )
     private var activeConnection = ActiveConnectionState()
@@ -209,7 +210,7 @@ class MiraxSession(
                 applyProvisioningWmSize(action.reading)
             }
             SessionAction.SystemBack -> {
-                onSystemBack()
+                activeConnection.onSystemBack()
             }
             SessionAction.RequestEndConnection -> {
                 requestEndConnectionFromUser()
@@ -224,6 +225,9 @@ class MiraxSession(
             }
             is SessionAction.SetControlPanelEnabled -> {
                 display.setControlPanelEnabled(action.enabled)
+            }
+            is SessionAction.SetControlPanelEntry -> {
+                display.setControlPanelEntry(action.entry)
             }
             is SessionAction.SetFloatingBallEnabled -> {
                 display.setFloatingBallEnabled(action.enabled)
@@ -357,6 +361,7 @@ fun snapshot(): SessionSnapshot {
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
             controlPanelExpanded = activeConnection.controlPanelExpandedState,
+            controlPanelEntry = display.controlPanelEntry,
             orientationLockEnabled = display.orientationLockEnabled,
             sourceDeviceName = sourceDeviceName,
             handshakeLog = if (phase == ScreenPhase.CONNECTING && display.showDebugMessages) {
@@ -388,6 +393,7 @@ fun snapshot(): SessionSnapshot {
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
             controlPanelEnabled = display.controlPanelEnabled,
+            controlPanelEntry = display.controlPanelEntry,
             orientationLockEnabled = display.orientationLockEnabled,
         )
     }
@@ -427,7 +433,6 @@ fun snapshot(): SessionSnapshot {
     private fun onFloatingBallTapped() {
         if (!activeConnection.isConnected || !activeConnection.awayOnHomeScreenState) return
         activeConnection.setAwayOnHomeScreen(false)
-        activeConnection.setBackEndsConnectionPending(false)
         pendingEffects = pendingEffects.filterNot { it is SessionEffect.ConfirmEndConnection }
         enqueueEffect(SessionEffect.BringProjectionToFront)
     }
@@ -477,17 +482,6 @@ fun snapshot(): SessionSnapshot {
         if (advertisingState.onBeaconFailed()) {
             endConnectionState(emitDrop = true)
             enqueueEffect(SessionEffect.ShowAdvertiseFailedToast)
-        }
-    }
-
-    private fun onSystemBack() {
-        if (!activeConnection.isConnected) return
-        when (activeConnection.onSystemBack()) {
-            ActiveConnectionState.BackResult.ExpandControlPanel -> Unit
-            ActiveConnectionState.BackResult.ArmedSecondBack -> {
-                enqueueEffect(SessionEffect.ShowPressBackAgainToEndToast)
-            }
-            ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()
         }
     }
 
