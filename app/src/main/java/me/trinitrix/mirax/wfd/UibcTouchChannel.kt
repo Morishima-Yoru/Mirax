@@ -53,6 +53,7 @@ object UibcTouchChannel {
      */
     internal var writeRunner: (Runnable) -> Unit = { runnable -> writer.execute(runnable) }
 
+    /** Bind the real socket before dialing; localhost wire tests supply an explicit route. */
     internal var bindToP2p: (android.content.Context?, Socket) -> Boolean = P2pNetworkBinder::bind
 
     var context: android.content.Context? = null
