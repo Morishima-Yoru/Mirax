@@ -11,8 +11,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
+import java.io.IOException
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * ConnectionHistory interface defining the contract for connection run storage.
@@ -54,7 +59,7 @@ class ConnectionHistoryImpl(
 
     private val gson = Gson()
 
-    private val stateLock = Any()
+    private val stateLock = ReentrantLock()
     private var openRun: OpenConnectionRun? = null
     private val runs: MutableList<ConnectionRun> = mutableListOf()
     private var loaded = false
@@ -89,13 +94,19 @@ class ConnectionHistoryImpl(
         }
     }
 
+    /** Merge saved runs once readable, retaining clears and completed runs made during loading. */
     private fun loadRuns() {
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val json = dataStore.data.first()[stringPreferencesKey(RUNS_KEY)] ?: ""
+                val json = dataStore.data.retryWhen { err, _ ->
+                    if (err !is IOException) return@retryWhen false
+                    Log.w(TAG, "Retrying connection history read", err)
+                    delay(250)
+                    true
+                }.first()[stringPreferencesKey(RUNS_KEY)] ?: ""
                 val saved = if (json.isBlank()) emptyList() else
                     gson.fromJson<List<ConnectionRun>>(json, getRunsType()) ?: emptyList()
-                synchronized(stateLock) {
+                stateLock.withLock {
                     if (!clearedBeforeLoad) {
                         runs.addAll(saved)
                         trimToLimit()
@@ -112,6 +123,7 @@ class ConnectionHistoryImpl(
         }
     }
 
+    /** Queue an immutable snapshot under the state lock, after saved history has been merged. */
     private fun persistRuns() {
         if (!loaded) {
             changedBeforeLoad = true
@@ -127,7 +139,7 @@ class ConnectionHistoryImpl(
         val lines: MutableList<String> = mutableListOf(),
     )
 
-    override fun start(host: String, configuration: List<ConnectionRunFact>) = synchronized(stateLock) {
+    override fun start(host: String, configuration: List<ConnectionRunFact>) = stateLock.withLock {
         if (openRun != null) {
             finish(succeeded = false, metadata = listOf(ConnectionRunFact("outcome", "closed by a newer attempt")))
         }
@@ -138,18 +150,18 @@ class ConnectionHistoryImpl(
         )
     }
 
-    override fun log(line: String) = synchronized(stateLock) {
-        val run = openRun ?: return@synchronized
+    override fun log(line: String) = stateLock.withLock {
+        val run = openRun ?: return@withLock
         val text = line.trim()
-        if (text.isEmpty()) return@synchronized
+        if (text.isEmpty()) return@withLock
         if (run.lines.size >= MAX_LOG_LINES) {
             run.lines.removeAt(0)
         }
         run.lines.add(text)
     }
 
-    override fun finish(succeeded: Boolean, metadata: List<ConnectionRunFact>) = synchronized(stateLock) {
-        val run = openRun ?: return@synchronized
+    override fun finish(succeeded: Boolean, metadata: List<ConnectionRunFact>) = stateLock.withLock {
+        val run = openRun ?: return@withLock
         openRun = null
         val finishedRun = ConnectionRun(
             succeeded = succeeded,
@@ -165,15 +177,16 @@ class ConnectionHistoryImpl(
         persistRuns()
     }
 
+    /** Keep the newest completed runs within the existing storage limit under the state lock. */
     private fun trimToLimit() {
         while (runs.size > MAX_RUNS) {
             runs.removeAt(runs.lastIndex)
         }
     }
 
-    override fun runs(): List<ConnectionRun> = synchronized(stateLock) { runs.toList() }
+    override fun runs(): List<ConnectionRun> = stateLock.withLock { runs.toList() }
 
-    override fun activeRun(): ConnectionRun? = synchronized(stateLock) {
+    override fun activeRun(): ConnectionRun? = stateLock.withLock {
         openRun?.let {
             ConnectionRun(
                 succeeded = false,
@@ -187,12 +200,12 @@ class ConnectionHistoryImpl(
         }
     }
 
-    override fun currentHandshakeLog(): String = synchronized(stateLock) {
+    override fun currentHandshakeLog(): String = stateLock.withLock {
         openRun?.lines?.joinToString("\n") ?: ""
     }
 
     /** Clear finished runs now and schedule their DataStore update. */
-    override fun clear() = synchronized(stateLock) {
+    override fun clear() = stateLock.withLock {
         runs.clear()
         if (!loaded) clearedBeforeLoad = true
         persistRuns()

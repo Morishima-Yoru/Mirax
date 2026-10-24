@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Checks connection history through its public interface with controlled DataStore timing. */
@@ -45,6 +46,48 @@ class ConnectionHistoryImplTest {
             val restarted: ConnectionHistory = ConnectionHistoryImpl(store, scope)
             await { restarted.runs().size == 2 }
             assertThat(restarted.runs().map { it.remoteHost }).containsExactly("new", "old").inOrder()
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun transient_read_failure_recovers_and_preserves_old_and_new_runs(): Unit = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val store = GatedStore(mutablePreferencesOf(key to Gson().toJson(listOf(oldRun))))
+            store.failNextRead = true
+            val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            history.start("new", emptyList())
+            history.finish(true, emptyList())
+            store.allowRead.complete(Unit)
+
+            await { store.savedHosts() == listOf("new", "old") }
+            assertThat(store.readAttempts.get()).isAtLeast(2)
+            val restarted: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            await { restarted.runs().size == 2 }
+            assertThat(restarted.runs().map { it.remoteHost }).containsExactly("new", "old").inOrder()
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun transient_read_failure_does_not_resurrect_cleared_runs(): Unit = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val store = GatedStore(mutablePreferencesOf(key to Gson().toJson(listOf(oldRun))))
+            store.failNextRead = true
+            val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            history.clear()
+            store.allowRead.complete(Unit)
+
+            await { store.completedWrites.get() > 0 && store.savedHosts().isEmpty() }
+            val restarted: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            restarted.start("after-clear", emptyList())
+            restarted.finish(true, emptyList())
+            await { store.savedHosts() == listOf("after-clear") }
+            assertThat(restarted.runs().map { it.remoteHost }).containsExactly("after-clear")
         } finally {
             scope.cancel()
         }
@@ -127,11 +170,18 @@ class ConnectionHistoryImplTest {
         val writeStarted = CompletableDeferred<Unit>()
         val allowWrite = CompletableDeferred<Unit>()
         val completedWrites = AtomicInteger()
+        val readAttempts = AtomicInteger()
+        @Volatile var failNextRead = false
         @Volatile var pauseNextWrite = false
         private val stored = MutableStateFlow(initial)
         private val mutex = Mutex()
         override val data: Flow<Preferences> = flow {
             withTimeout(20_000) { allowRead.await() }
+            readAttempts.incrementAndGet()
+            if (failNextRead) {
+                failNextRead = false
+                throw IOException("transient read failure")
+            }
             emitAll(stored)
         }
 
