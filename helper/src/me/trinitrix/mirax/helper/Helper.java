@@ -5,18 +5,20 @@ import android.net.LocalSocket;
 import android.os.Looper;
 import android.util.Log;
 import me.trinitrix.mirax.wfd.PrimarySinkBeacon;
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Privileged helper process. Listens on the abstract {@code mirax-helper} socket
@@ -37,6 +39,28 @@ public final class Helper {
                 return thread;
             });
 
+    /** Maximum concurrent clients; the fifth connection is rejected instead of queued. */
+    static final int MAX_CLIENTS = 4;
+    /** Cap for wm-size output; keeps a rogue child from growing the helper heap. */
+    static final int WM_OUTPUT_LIMIT_BYTES = 8 * 1024;
+    /** Bounded wait for one wm-size query before the child is killed. */
+    static final int WM_TIMEOUT_MS = 3000;
+    /** Poll step while waiting for staged pipe bytes or child exit. */
+    static final int WM_POLL_MS = 20;
+    /** Client worker threads; SynchronousQueue gives zero queueing and fast reject. */
+    private static final AtomicInteger CLIENT_SEQUENCE = new AtomicInteger(0);
+    private static final ThreadPoolExecutor CLIENTS = new ThreadPoolExecutor(
+            MAX_CLIENTS,
+            MAX_CLIENTS,
+            60L,
+            TimeUnit.SECONDS,
+            new SynchronousQueue<>(),
+            task -> {
+                Thread thread = new Thread(task,
+                        "mirax-helper-client-" + CLIENT_SEQUENCE.incrementAndGet());
+                thread.setDaemon(true);
+                return thread;
+            });
     private static final AtomicBoolean RUNNING = new AtomicBoolean(true);
     private static PrimarySinkBeacon beacon;
 
@@ -79,6 +103,18 @@ public final class Helper {
         Looper.loop();
     }
 
+    /**
+     * Accepts client connections and hands each one to a bounded worker pool.
+     *
+     * <p>The accept thread never runs commands itself, so one slow or partial
+     * client cannot starve later clients (for example the UID probe). At most
+     * {@link #MAX_CLIENTS} clients run concurrently; extra connections are
+     * closed immediately. Beacon calls stay on worker threads and remain safe
+     * because {@link PrimarySinkBeacon} posts every mutation to its looper and
+     * only shares volatile reads.
+     *
+     * @param server bound helper socket
+     */
     private static void serve(LocalServerSocket server) {
         try (server) {
             while (RUNNING.get()) {
@@ -89,27 +125,75 @@ public final class Helper {
                     if (RUNNING.get()) Log.w(TAG, "accept failed", err);
                     continue;
                 }
-                try (LocalSocket client = accepted) {
-                    client.setSoTimeout(COMMAND_TIMEOUT_MS);
-                    ScheduledFuture<?> deadline = TIMEOUTS.schedule(() -> {
-                        try {
-                            client.close();
-                        } catch (IOException err) {
-                            Log.w(TAG, "closing timed-out client failed", err);
-                        }
-                    }, COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                if (!offerClient(() -> handleAccepted(accepted))) {
                     try {
-                        handleClient(client);
-                    } finally {
-                        deadline.cancel(false);
+                        accepted.close();
+                    } catch (IOException closeErr) {
+                        Log.w(TAG, "closing rejected client failed", closeErr);
                     }
-                } catch (Exception err) {
-                    Log.w(TAG, "client exchange failed", err);
                 }
             }
         } catch (Exception err) {
             Log.e(TAG, "server failed", err);
+        } finally {
+            shutdownExecutors();
         }
+    }
+
+    /**
+     * Offers a task to the bounded client pool without queueing.
+     *
+     * @param task client work to run
+     * @return true when the pool accepted the task, false when all workers are busy
+     */
+    static boolean offerClient(Runnable task) {
+        try {
+            CLIENTS.execute(task);
+            return true;
+        } catch (RejectedExecutionException err) {
+            Log.w(TAG, "client rejected: pool full", err);
+            return false;
+        }
+    }
+
+    /**
+     * Handles one accepted client under its own socket timeout and deadline.
+     *
+     * <p>The per-client watchdog closes a stuck connection after
+     * {@link #COMMAND_TIMEOUT_MS}; workers are daemon threads owned by this process.
+     *
+     * @param client accepted client socket, always closed here
+     */
+    static void handleAccepted(LocalSocket client) {
+        try (LocalSocket owned = client) {
+            owned.setSoTimeout(COMMAND_TIMEOUT_MS);
+            ScheduledFuture<?> deadline = TIMEOUTS.schedule(() -> {
+                try {
+                    owned.close();
+                } catch (IOException err) {
+                    Log.w(TAG, "closing timed-out client failed", err);
+                }
+            }, COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            try {
+                handleClient(owned);
+            } finally {
+                deadline.cancel(false);
+            }
+        } catch (Exception err) {
+            Log.w(TAG, "client exchange failed", err);
+        }
+    }
+
+    /**
+     * Shuts down helper executors after the accept loop ends.
+     *
+     * <p>Runs at most once per process: the accept loop only ends on socket
+     * close or process stop, and all workers are daemon threads, so shutdown
+     * never blocks device operation.
+     */
+    static void shutdownExecutors() {
+        CLIENTS.shutdown();
+        TIMEOUTS.shutdown();
     }
 
     /**
@@ -225,33 +309,84 @@ public final class Helper {
     }
 
     /**
-     * Reads the output of a wm-size child process after a bounded wait.
+     * Reads the output of a wm-size child process with a bounded poll loop.
+     *
+     * <p>Never calls a blocking read: each iteration only consumes bytes
+     * already reported by {@code available()}, capped at
+     * {@link #WM_OUTPUT_LIMIT_BYTES}. The loop ends when the child exits with
+     * no bytes left, when output hits the cap, or when the deadline expires.
+     * A live child on timeout is killed and yields an empty string, while an
+     * exited child with a descendant-held pipe still returns staged bytes.
+     * Interruption kills the child and propagates.
      *
      * @param process started wm-size process
-     * @return command output, or an empty string if the process does not finish
+     * @return decoded command output, or an empty string if the process does not finish
      * @throws IOException when output cannot be read
      * @throws InterruptedException when the current thread is interrupted
      */
     static String readWmSize(Process process) throws IOException, InterruptedException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+        final long deadlineNanos = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(WM_TIMEOUT_MS);
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        byte[] chunk = new byte[1024];
+        boolean timedOut = false;
+        try (InputStream stdout = process.getInputStream()) {
             try {
-                // shortcut: wm size emits short output with no surviving writers; use a timed drain if that changes.
-                if (!process.waitFor(3, TimeUnit.SECONDS)) {
-                    Log.w(TAG, "wm size timed out");
-                    return "";
+                while (true) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException("wm size read interrupted");
+                    }
+                    if (System.nanoTime() >= deadlineNanos) {
+                        timedOut = true;
+                        Log.w(TAG, "wm size timed out");
+                        break;
+                    }
+                    int ready;
+                    try {
+                        ready = stdout.available();
+                    } catch (IOException err) {
+                        Log.w(TAG, "wm size stream closed", err);
+                        break;
+                    }
+                    if (ready > 0) {
+                        int room = WM_OUTPUT_LIMIT_BYTES - captured.size();
+                        if (room <= 0) {
+                            break;
+                        }
+                        int want = Math.min(Math.min(ready, chunk.length), room);
+                        int got = stdout.read(chunk, 0, want);
+                        if (got < 0) {
+                            break;
+                        }
+                        captured.write(chunk, 0, got);
+                        if (captured.size() >= WM_OUTPUT_LIMIT_BYTES) {
+                            break;
+                        }
+                        continue;
+                    }
+                    if (!process.isAlive()) {
+                        // The child is gone and no bytes are staged; a descendant
+                        // may still hold the pipe, so return staged bytes instead
+                        // of blocking for EOF.
+                        break;
+                    }
+                    Thread.sleep(WM_POLL_MS);
                 }
-                StringBuilder text = new StringBuilder();
-                String row;
-                while ((row = reader.readLine()) != null) {
-                    if (text.length() > 0) text.append('\n');
-                    text.append(row);
-                }
-                return text.toString();
             } finally {
-                if (process.isAlive()) process.destroyForcibly();
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                }
             }
         }
+        if (timedOut) {
+            return "";
+        }
+        String text = captured.toString(StandardCharsets.UTF_8);
+        int tail = text.length();
+        while (tail > 0 && (text.charAt(tail - 1) == '\n' || text.charAt(tail - 1) == '\r')) {
+            tail--;
+        }
+        return text.substring(0, tail);
     }
 
     private static void stopProcess() {
