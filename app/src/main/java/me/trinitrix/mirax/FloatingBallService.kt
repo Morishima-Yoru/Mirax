@@ -18,6 +18,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.appcompat.widget.AppCompatImageView
 import me.trinitrix.mirax.host.OverlayPermission
 import me.trinitrix.mirax.session.SessionSnapshot
 import kotlin.math.abs
@@ -111,7 +112,7 @@ class FloatingBallService : Service() {
         )
         wm.addView(trashRoot, trashParams)
 
-        val ball = object : ImageView(this) {
+        val ball = object : AppCompatImageView(this) {
             override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
                 super.onLayout(changed, left, top, right, bottom)
                 // View coordinates. The system opts this area out of the back gesture.
