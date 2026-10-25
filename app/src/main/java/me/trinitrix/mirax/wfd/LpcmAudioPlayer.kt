@@ -3,7 +3,7 @@ package me.trinitrix.mirax.wfd
 import android.os.Process
 import android.util.Log
 import java.util.ArrayDeque
-import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -444,8 +444,8 @@ internal class LpcmAudioPlayer(
         const val DISCONTINUITY = -1
         const val UNITY_GAIN = 32_768
 
-        /** @return an owned executor whose priority never affects shared IO workers. */
-        fun createAudioDispatcher(): ExecutorCoroutineDispatcher = Executors.newSingleThreadExecutor { task ->
+        /** @return an owned worker that also schedules deadlines without a shared timer thread. */
+        fun createAudioDispatcher(): ExecutorCoroutineDispatcher = ScheduledThreadPoolExecutor(1) { task ->
             Thread({
                 try {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
