@@ -16,6 +16,8 @@ internal class AudioTestScheduler : CoroutineDispatcher(), Delay {
     private var nextOrder = 0L
     var nowMillis = 0L
         private set
+    var executedTasks = 0
+        private set
 
     /** @param block continuation to run at the current virtual instant. */
     override fun dispatch(context: CoroutineContext, block: Runnable) {
@@ -44,7 +46,10 @@ internal class AudioTestScheduler : CoroutineDispatcher(), Delay {
         while (pending.peek()?.timeMillis?.let { it <= nowMillis } == true) {
             check(++steps <= 10_000) { "Audio worker did not suspend" }
             val task = pending.remove()
-            if (!task.cancelled) task.block.run()
+            if (!task.cancelled) {
+                executedTasks++
+                task.block.run()
+            }
         }
     }
 

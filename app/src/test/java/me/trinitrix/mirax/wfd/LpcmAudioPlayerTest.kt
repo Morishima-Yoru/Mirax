@@ -55,6 +55,42 @@ class LpcmAudioPlayerTest {
     }
 
     @Test
+    fun insufficientPrefillDoesNotWakeTheAudioWorkerForEveryInputBlock() {
+        player.start()
+        scheduler.runCurrent()
+        val before = scheduler.executedTasks
+        repeat(14) {
+            player.submit(pcm(480))
+            scheduler.runCurrent()
+        }
+
+        assertThat(output.startCount).isEqualTo(0)
+        assertThat(scheduler.executedTasks).isEqualTo(before)
+        player.submit(pcm(480))
+        scheduler.runCurrent()
+        assertThat(output.startCount).isEqualTo(1)
+    }
+
+    @Test
+    fun recoveryPrefillCoalescesInputUntilEnoughAudioCanActuallyResume() {
+        output.consumeImmediately = true
+        player.start()
+        player.submit(pcm(7_200))
+        scheduler.runCurrent()
+        val before = scheduler.executedTasks
+        repeat(14) {
+            player.submit(pcm(480))
+            scheduler.runCurrent()
+        }
+
+        assertThat(output.startCount).isEqualTo(1)
+        assertThat(scheduler.executedTasks).isEqualTo(before)
+        player.submit(pcm(480))
+        scheduler.runCurrent()
+        assertThat(output.startCount).isEqualTo(2)
+    }
+
+    @Test
     fun sparseAudioStartsAtTheOriginalConnectionDeadline() {
         player.start()
         scheduler.runCurrent()

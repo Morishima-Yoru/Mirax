@@ -136,7 +136,10 @@ internal class LpcmAudioPlayer(
                 val pendingFrames = playback.sizeFrames()
                 val remaining = deadline - nowMillis()
                 if (pendingFrames < PRELOAD_FRAMES && (pendingFrames == 0 || remaining > 0)) {
-                    playback.awaitSignal(remaining.takeIf { it > 0 })
+                    playback.awaitSignal(
+                        remaining.takeIf { it > 0 },
+                        minimumFrames = if (remaining > 0) PRELOAD_FRAMES else 1,
+                    )
                     continue
                 }
                 if (!output.start()) {
@@ -207,6 +210,7 @@ internal class LpcmAudioPlayer(
     private class Playback(val preloadDeadline: Long) {
         private val queued = ArrayDeque<Chunk>()
         private val changed = Channel<Unit>(Channel.CONFLATED)
+        private var wakeAtFrames = Int.MAX_VALUE
         private var queuedFrames = 0
         private var tailFrames = 0
         private var discontinuous = false
@@ -248,8 +252,11 @@ internal class LpcmAudioPlayer(
                         Log.w(TAG, "Audio queue overflow; retaining recent PCM with a softened splice")
                     }
                 }
+                if (queuedFrames >= wakeAtFrames) {
+                    wakeAtFrames = Int.MAX_VALUE
+                    changed.trySend(Unit)
+                }
             }
-            changed.trySend(Unit)
         }
 
         /** @return pending frames including the protected tail, excluding the in-flight write. */
@@ -313,10 +320,20 @@ internal class LpcmAudioPlayer(
          * Suspends for supply or a single monotonic deadline; no input means no polling.
          *
          * @param timeoutMillis time to a meaningful deadline, or null for input only.
+         * @param minimumFrames fresh queued frames that can change the next playback decision.
          */
-        suspend fun awaitSignal(timeoutMillis: Long?) {
-            if (timeoutMillis == null) changed.receive()
-            else withTimeoutOrNull(timeoutMillis) { changed.receive() }
+        suspend fun awaitSignal(timeoutMillis: Long?, minimumFrames: Int = 1) {
+            synchronized(queued) {
+                changed.tryReceive()
+                if (queuedFrames >= minimumFrames) return
+                wakeAtFrames = minimumFrames
+            }
+            try {
+                if (timeoutMillis == null) changed.receive()
+                else withTimeoutOrNull(timeoutMillis) { changed.receive() }
+            } finally {
+                synchronized(queued) { wakeAtFrames = Int.MAX_VALUE }
+            }
         }
 
         /** Rejects new input and wakes any suspended playback operation. */
