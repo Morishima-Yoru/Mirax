@@ -411,7 +411,11 @@ internal class LpcmAudioPlayer(
          */
         fun apply(pcm: ByteArray, frames: Int, fadeOut: Boolean = false) {
             if (!fadeOut && startupFrame == FADE_IN_FRAMES && spliceFrame == SPLICE_FRAMES) return
-            for (frame in 0 until frames) {
+            val fadingFrames = if (fadeOut) frames else minOf(
+                frames,
+                maxOf(FADE_IN_FRAMES - startupFrame, SPLICE_FRAMES - spliceFrame),
+            )
+            for (frame in 0 until fadingFrames) {
                 val startupGain = minOf(UNITY_GAIN, startupFrame * UNITY_GAIN / (FADE_IN_FRAMES - 1))
                 val spliceGain = minOf(UNITY_GAIN, spliceFrame * UNITY_GAIN / (SPLICE_FRAMES - 1))
                 val tailGain = if (!fadeOut) UNITY_GAIN else if (frames == 1) 0 else

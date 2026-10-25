@@ -152,6 +152,58 @@ class LpcmAudioPlayerTest {
         assertThat(output.writeSizes.all { it % 4 == 0 && it <= 1_920 }).isTrue()
     }
 
+    /** Verifies exact startup gains across uneven input and single-frame short writes. */
+    @Test
+    fun variableInputAndOneFrameWritesPreserveTheExactStartupWaveform() {
+        val original = pcm(7_200, left = -32_768, right = 32_767)
+        output.maxWriteBytes = 4
+        player.start()
+        var offsetFrames = 0
+        for (frames in listOf(1, 63, 64, 65, 2_399, 2_400, 2_208)) {
+            player.submit(original.copyOfRange(offsetFrames * 4, (offsetFrames + frames) * 4))
+            offsetFrames += frames
+        }
+        scheduler.runCurrent()
+
+        val actual = output.bytes()
+        assertThat(actual.size).isEqualTo((7_200 - 64) * 4)
+        val expected = ByteBuffer.wrap(original.copyOf(actual.size)).order(ByteOrder.LITTLE_ENDIAN)
+        repeat(2_400) { frame ->
+            val gain = frame * 32_768 / 2_399
+            expected.putShort(frame * 4, (-32_768 * gain / 32_768).toShort())
+            expected.putShort(frame * 4 + 2, (32_767 * gain / 32_768).toShort())
+        }
+        assertThat(actual).isEqualTo(expected.array())
+    }
+
+    /** Preserves stereo endpoints when a retained splice overlaps the startup fade. */
+    @Test
+    fun startupAndSpliceOverlapPreservesEveryOutputByteAcrossShortWrites() {
+        output.maxWriteBytes = 4
+        output.afterWrite = {
+            output.afterWrite = null
+            player.submit(pcm(48_000, left = -32_768, right = 32_767))
+        }
+        player.start()
+        player.submit(pcm(7_200, left = 32_767, right = -32_768))
+        scheduler.runCurrent()
+
+        val actual = output.bytes()
+        assertThat(actual.size / 4).isGreaterThan(2_400)
+        val expected = ByteBuffer.allocate(actual.size).order(ByteOrder.LITTLE_ENDIAN)
+        repeat(actual.size / 4) { frame ->
+            val startupGain = minOf(32_768, frame * 32_768 / 2_399)
+            val tailGain = if (frame in 416..479) (479 - frame) * 32_768 / 63 else 32_768
+            val spliceGain = if (frame in 480..543) (frame - 480) * 32_768 / 63 else 32_768
+            val gain = minOf(startupGain, tailGain, spliceGain)
+            val left = if (frame < 480) 32_767 else -32_768
+            val right = if (frame < 480) -32_768 else 32_767
+            expected.putShort((left * gain / 32_768).toShort())
+            expected.putShort((right * gain / 32_768).toShort())
+        }
+        assertThat(actual).isEqualTo(expected.array())
+    }
+
     @Test
     fun emptyOrMisalignedInputDoesNotSatisfyPrefill() {
         player.start()
