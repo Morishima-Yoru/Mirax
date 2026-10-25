@@ -15,6 +15,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+import me.trinitrix.mirax.shell.ShellContext;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.lang.reflect.Field;
@@ -132,15 +133,13 @@ public final class PrimarySinkBeacon {
     /**
      * Initialise Wi-Fi P2P.
      *
-     * @param appContext when non-null, use this application context. When null,
+     * @param suppliedContext when non-null, retain this context and its attribution. When null,
      *     build a shell attribution context for adb/Shizuku.
      * @return true when the P2P channel is ready
      */
-    public boolean initialize(Context appContext) {
+    public boolean initialize(Context suppliedContext) {
         try {
-            context = appContext != null
-                    ? appContext.getApplicationContext()
-                    : systemContext();
+            context = suppliedContext != null ? suppliedContext : ShellContext.create();
             manager = (WifiP2pManager) context.getSystemService(Context.WIFI_P2P_SERVICE);
             if (manager == null) {
                 Log.e(TAG, "WifiP2pManager is null");
@@ -1085,43 +1084,6 @@ public final class PrimarySinkBeacon {
             Log.w(TAG, "ip neigh failed", err);
             return null;
         }
-    }
-
-    private static Context systemContext() throws Exception {
-        Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-        Object activityThread = activityThreadClass.getMethod("systemMain").invoke(null);
-        Context ctx = (Context) activityThreadClass.getMethod("getSystemContext").invoke(activityThread);
-        // AttributionSource arrived in API 31; on Android 11 only the package
-        // name fields exist and must be enough for shell-UID WifiP2pManager.
-        if (Build.VERSION.SDK_INT >= 31) {
-            Class<?> builderClass = Class.forName("android.content.AttributionSource$Builder");
-            Object builder = builderClass.getConstructor(int.class).newInstance(2000);
-            builderClass.getMethod("setPackageName", String.class)
-                    .invoke(builder, "com.android.shell");
-            Object shellSource = builderClass.getMethod("build").invoke(builder);
-            setField(ctx, "mAttributionSource", shellSource);
-        }
-        setField(ctx, "mOpPackageName", "com.android.shell");
-        setField(ctx, "mBasePackageName", "com.android.shell");
-        return ctx;
-    }
-
-    private static void setField(Object target, String name, Object value) throws Exception {
-        Field field = findField(target.getClass(), name);
-        field.setAccessible(true);
-        field.set(target, value);
-    }
-
-    private static Field findField(Class<?> type, String name) throws NoSuchFieldException {
-        Class<?> current = type;
-        while (current != null) {
-            try {
-                return current.getDeclaredField(name);
-            } catch (NoSuchFieldException ignored) {
-                current = current.getSuperclass();
-            }
-        }
-        throw new NoSuchFieldException(name);
     }
 
     private static WifiP2pManager.ActionListener logged(final String label) {

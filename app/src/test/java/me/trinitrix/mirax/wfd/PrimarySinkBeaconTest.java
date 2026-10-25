@@ -4,6 +4,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.net.wifi.p2p.WifiP2pManager;
 import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -11,6 +13,35 @@ import org.junit.Test;
 
 /** Checks the actual framework callback bodies without claiming Wi-Fi hardware coverage. */
 public class PrimarySinkBeaconTest {
+    /** A shell-attributed Context must not be replaced by a different Application Context. */
+    @Test
+    public void initialize_preservesSuppliedContextAttribution() {
+        AtomicInteger suppliedLookups = new AtomicInteger();
+        AtomicInteger applicationLookups = new AtomicInteger();
+        Context application = new ContextWrapper(null) {
+            @Override
+            public Object getSystemService(String name) {
+                applicationLookups.incrementAndGet();
+                return null;
+            }
+        };
+        Context supplied = new ContextWrapper(null) {
+            @Override
+            public Context getApplicationContext() {
+                return application;
+            }
+
+            @Override
+            public Object getSystemService(String name) {
+                suppliedLookups.incrementAndGet();
+                return null;
+            }
+        };
+        assertFalse(new PrimarySinkBeacon(null).initialize(supplied));
+        assertEquals(1, suppliedLookups.get());
+        assertEquals(0, applicationLookups.get());
+    }
+
     /** A delayed success cannot make a stopped helper report that it is listening. */
     @Test
     public void delayedListeningSuccess_afterStop_isIgnored() {

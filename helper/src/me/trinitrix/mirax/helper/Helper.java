@@ -1,9 +1,14 @@
 package me.trinitrix.mirax.helper;
 
+import android.content.Context;
+import android.content.pm.LauncherApps;
+import android.content.pm.PackageManager;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.os.Looper;
+import android.os.UserHandle;
 import android.util.Log;
+import me.trinitrix.mirax.shell.ShellContext;
 import me.trinitrix.mirax.wfd.PrimarySinkBeacon;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -20,6 +25,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntUnaryOperator;
 
 /**
  * Privileged helper process. Listens on the abstract {@code mirax-helper} socket
@@ -34,7 +40,6 @@ public final class Helper {
     public static final int COMMAND_TIMEOUT_MS = 5000;
     private static final String TAG = "MiraxHelper";
     private static final String MIRAX_PACKAGE = "me.trinitrix.mirax";
-    private static final int PER_USER_UID_RANGE = 100000;
     private static final ScheduledExecutorService TIMEOUTS = Executors.newSingleThreadScheduledExecutor(
             task -> {
                 Thread thread = new Thread(task, "mirax-helper-timeouts");
@@ -75,7 +80,15 @@ public final class Helper {
             Looper.prepareMainLooper();
         } catch (Exception ignored) {
         }
-        // Bind first — RootHelper probes UID while beacon init is still running.
+        final Context context;
+        try {
+            context = ShellContext.create();
+        } catch (Throwable err) {
+            Log.e(TAG, "shell context init failed", err);
+            return;
+        }
+        beacon = new PrimarySinkBeacon(Looper.getMainLooper());
+        // Context is ready before authorization; UID probes still precede WFD initialization.
         final LocalServerSocket server;
         try {
             server = new LocalServerSocket(SOCKET_NAME);
@@ -83,13 +96,12 @@ public final class Helper {
             Log.e(TAG, "bind " + SOCKET_NAME + " failed", err);
             return;
         }
-        Thread accept = new Thread(() -> serve(server), "mirax-helper-socket");
+        Thread accept = new Thread(() -> serve(server, context), "mirax-helper-socket");
         accept.setDaemon(true);
         accept.start();
         Log.i(TAG, "listening on " + SOCKET_NAME);
 
-        beacon = new PrimarySinkBeacon(Looper.getMainLooper());
-        if (!beacon.initialize()) {
+        if (!beacon.initialize(context)) {
             Log.e(TAG, "WFD beacon init failed");
             RUNNING.set(false);
             try {
@@ -117,8 +129,9 @@ public final class Helper {
      * only shares volatile reads.
      *
      * @param server bound helper socket
+     * @param context initialized shell-attributed Context for package identity lookup
      */
-    private static void serve(LocalServerSocket server) {
+    private static void serve(LocalServerSocket server, Context context) {
         try (server) {
             while (RUNNING.get()) {
                 LocalSocket accepted;
@@ -128,7 +141,7 @@ public final class Helper {
                     if (RUNNING.get()) Log.w(TAG, "accept failed", err);
                     continue;
                 }
-                if (!offerClient(() -> handleAccepted(accepted))) {
+                if (!offerClient(() -> handleAccepted(accepted, context))) {
                     try {
                         accepted.close();
                     } catch (IOException closeErr) {
@@ -166,8 +179,9 @@ public final class Helper {
      * {@link #COMMAND_TIMEOUT_MS}; workers are daemon threads owned by this process.
      *
      * @param client accepted client socket, always closed here
+     * @param context initialized shell-attributed Context for public package lookup
      */
-    static void handleAccepted(LocalSocket client) {
+    static void handleAccepted(LocalSocket client, Context context) {
         try (LocalSocket owned = client) {
             owned.setSoTimeout(COMMAND_TIMEOUT_MS);
             ScheduledFuture<?> deadline = TIMEOUTS.schedule(() -> {
@@ -179,9 +193,8 @@ public final class Helper {
             }, COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             try {
                 int peerUid = owned.getPeerCredentials().getUid();
-                int miraxUid = peerUid >= android.os.Process.FIRST_APPLICATION_UID
-                        ? installedMiraxUid(peerUid) : -1;
-                if (!isAuthorizedPeer(peerUid, miraxUid)) {
+                if (!isAuthorizedPeer(peerUid,
+                        uid -> installedMiraxUid(context, uid))) {
                     Log.w(TAG, "rejecting unauthorized peer uid=" + peerUid);
                     return;
                 }
@@ -207,30 +220,40 @@ public final class Helper {
     }
 
     /**
-     * Check the kernel peer UID against privileged clients and the installed Mirax UID.
+     * Check privileged clients or the Mirax UID installed for the kernel peer's Android user.
      * @param peerUid kernel-reported caller UID
-     * @param miraxUid package-manager UID for Mirax, or -1 if lookup failed
+     * @param miraxUidLookup public package lookup, invoked for each application connection
      * @return whether the peer may issue a helper command
      */
-    static boolean isAuthorizedPeer(int peerUid, int miraxUid) {
-        return peerUid == 0 || peerUid == 2000 ||
-                (miraxUid >= android.os.Process.FIRST_APPLICATION_UID && peerUid == miraxUid);
+    static boolean isAuthorizedPeer(int peerUid, IntUnaryOperator miraxUidLookup) {
+        if (peerUid == 0 || peerUid == 2000) return true;
+        if (peerUid < android.os.Process.FIRST_APPLICATION_UID) return false;
+        try {
+            return peerUid == miraxUidLookup.applyAsInt(peerUid);
+        } catch (RuntimeException err) {
+            Log.w(TAG, "cannot resolve authorized peer uid=" + peerUid, err);
+            return false;
+        }
     }
 
     /**
-     * Resolve Mirax for the peer's Android user on every connection, avoiding stale UID reuse.
-     * @param peerUid kernel-reported caller UID
-     * @return installed Mirax UID, or -1 if package lookup is unavailable
+     * Resolve the current Mirax installation for the peer's Android user through public SDK APIs.
+     * @param context initialized shell-attributed Context
+     * @param peerUid full kernel-reported caller UID
+     * @return installed Mirax UID, or -1 if the package or query service is unavailable
      */
-    private static int installedMiraxUid(int peerUid) {
+    private static int installedMiraxUid(Context context, int peerUid) {
+        LauncherApps launcher = context.getSystemService(LauncherApps.class);
+        if (launcher == null) {
+            Log.w(TAG, "launcher query service unavailable");
+            return -1;
+        }
         try {
-            Class<?> globals = Class.forName("android.app.AppGlobals");
-            Object packageManager = globals.getMethod("getPackageManager").invoke(null);
-            Class<?> api = Class.forName("android.content.pm.IPackageManager");
-            return (Integer) api.getMethod("getPackageUid", String.class, long.class, int.class)
-                    .invoke(packageManager, MIRAX_PACKAGE, 0L, peerUid / PER_USER_UID_RANGE);
-        } catch (Exception err) {
-            Log.w(TAG, "cannot resolve authorized Mirax peer", err);
+            // Android 14 getPackagesForUid can retain a missing-package result across install-existing.
+            return launcher.getApplicationInfo(MIRAX_PACKAGE, 0,
+                    UserHandle.getUserHandleForUid(peerUid)).uid;
+        } catch (PackageManager.NameNotFoundException err) {
+            Log.w(TAG, "Mirax package unavailable for peer uid=" + peerUid, err);
             return -1;
         }
     }

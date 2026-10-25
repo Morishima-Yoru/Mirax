@@ -10,24 +10,87 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntUnaryOperator;
 import org.junit.Test;
 
 /** Validates helper command framing before privileged execution. */
 public class HelperCommandTest {
-    /** Existing root, shell, and installed Mirax clients remain authorized. */
+    /** Root and shell do not depend on a working package lookup. */
     @Test
-    public void authorizedPeers_includeRootShellAndExactMiraxUid() {
-        assertTrue(Helper.isAuthorizedPeer(0, 10289));
-        assertTrue(Helper.isAuthorizedPeer(2000, 10289));
-        assertTrue(Helper.isAuthorizedPeer(10289, 10289));
+    public void privilegedPeers_skipPackageLookup() {
+        IntUnaryOperator unavailable = uid -> {
+            throw new AssertionError("Privileged peer must not query packages");
+        };
+        assertTrue(Helper.isAuthorizedPeer(0, unavailable));
+        assertTrue(Helper.isAuthorizedPeer(2000, unavailable));
     }
 
-    /** An unrelated UID cannot inherit access, even if package lookup failed. */
+    /** The exact installed Mirax UID preserves the platform's existing shared-UID trust model. */
     @Test
-    public void unrelatedPeers_areDeniedBeforeReadingCommands() {
-        assertFalse(Helper.isAuthorizedPeer(10291, 10289));
-        assertFalse(Helper.isAuthorizedPeer(10289, -1));
-        assertFalse(Helper.isAuthorizedPeer(1000, 1000));
+    public void exactMiraxUid_isAuthorized() {
+        assertTrue(Helper.isAuthorizedPeer(10289, uid -> 10289));
+    }
+
+    /** An unrelated UID or missing installation cannot authorize a caller. */
+    @Test
+    public void unrelatedOrMissingMiraxUid_isDenied() {
+        assertFalse(Helper.isAuthorizedPeer(10291, uid -> 10289));
+        assertFalse(Helper.isAuthorizedPeer(10289, uid -> -1));
+        assertFalse(Helper.isAuthorizedPeer(1000, uid -> {
+            throw new AssertionError("Non-application system UID must not query packages");
+        }));
+    }
+
+    /** A secondary user's full kernel UID, not only its appId, selects the package lookup. */
+    @Test
+    public void secondaryUser_passesFullPeerUidToLookup() {
+        AtomicInteger queriedUid = new AtomicInteger(-1);
+        assertTrue(Helper.isAuthorizedPeer(1_010_289, uid -> {
+            queriedUid.set(uid);
+            return 1_010_289;
+        }));
+        assertEquals(1_010_289, queriedUid.get());
+        assertFalse(Helper.isAuthorizedPeer(1_010_289, uid -> 10289));
+        assertFalse(Helper.isAuthorizedPeer(10289, uid -> 1_010_289));
+    }
+
+    /** A public package-manager failure cannot open the privileged command dispatcher. */
+    @Test
+    public void packageLookupFailure_isDenied() {
+        assertFalse(Helper.isAuthorizedPeer(10289, uid -> {
+            throw new IllegalStateException("package manager unavailable");
+        }));
+    }
+
+    /** A recycled or temporarily uninstalled identity must be checked again on the next connection. */
+    @Test
+    public void changedPackageOwnership_doesNotReuseAuthorization() {
+        AtomicInteger installedUid = new AtomicInteger(10289);
+        AtomicInteger lookups = new AtomicInteger();
+        IntUnaryOperator lookup = uid -> {
+            lookups.incrementAndGet();
+            return installedUid.get();
+        };
+        assertTrue(Helper.isAuthorizedPeer(10289, lookup));
+        installedUid.set(10315);
+        assertFalse(Helper.isAuthorizedPeer(10289, lookup));
+        installedUid.set(-1);
+        assertFalse(Helper.isAuthorizedPeer(10289, lookup));
+        installedUid.set(10289);
+        assertTrue(Helper.isAuthorizedPeer(10289, lookup));
+        assertEquals(4, lookups.get());
+    }
+
+    /** A legitimate new Mirax UID is accepted without retaining the previous numeric UID. */
+    @Test
+    public void reinstalledMirax_usesCurrentUid() {
+        AtomicInteger installedUid = new AtomicInteger(10289);
+        IntUnaryOperator lookup = uid -> installedUid.get();
+        assertTrue(Helper.isAuthorizedPeer(10289, lookup));
+        installedUid.set(10315);
+        assertFalse(Helper.isAuthorizedPeer(10289, lookup));
+        assertTrue(Helper.isAuthorizedPeer(10315, lookup));
     }
 
     /** Accepts a complete command frame. */
