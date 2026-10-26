@@ -108,8 +108,8 @@
     .x-plane { opacity: .95; }
     .scene .d-motion-layer { display: none; }
     .v-D[data-d-motion="signal"] .d-signal-layer, .v-D[data-d-motion="scan"] .d-scan-layer { display: inline; }
-    .v-D[data-d-motion="quiet"] .d-quiet-layer { display: block; }
-    .d-quiet-layer { position: absolute; inset: 0; pointer-events: none; }
+    .v-D[data-d-motion="quiet"] .d-quiet-layer { display: inline; }
+    .scene > svg.d-motion-overlay { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
     .motion-stopped .ambient { animation-play-state: paused !important; }
     .page-hidden .custom-media { display: none; }
     .prototype-note { position: fixed; z-index: 25; left: 20px; top: 17px; color: #efefea; font-size: 10px; line-height: 1.7; letter-spacing: .04em; padding: 7px 11px; background: #101210ee; border-left: 2px solid #c9ccc3; }
@@ -396,25 +396,10 @@
       </div>
       <div id="hardline-scene" class="scene">
         <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-          <defs>
-            <clipPath id="d-scan-window" clipPathUnits="userSpaceOnUse">
-              <rect id="d-scan-aperture" x="-1.1" y="-7" width="2.2" height="14" transform="translate(25 36) rotate(-28)"/>
-            </clipPath>
-          </defs>
           <rect width="1600" height="1000" fill="#090909"/>
           <g class="ambient x-plane">
             <use class="x-core" href="#mirax-mark" x="510" y="-335" width="1370" height="1370" fill="none" stroke="#d8d8d0" stroke-width=".16"/>
             <use class="x-core-line" href="#mirax-mark" x="526" y="-323" width="1370" height="1370" fill="none" stroke="#ffffff3d" stroke-width=".08"/>
-            <!-- Local overlays touch short edges only; both base outlines stay unchanged. -->
-            <!-- A moving notch stays legible on bright edges without adding a luminous wash. -->
-            <g class="d-motion-layer d-signal-layer" transform="translate(510 -335) scale(12.685185)" fill="none" stroke="#dcdcd4" stroke-width=".10" opacity=".9">
-              <path id="d-signal-gap" d="M26.1 32.8L43.9 50.8 51.8 42.9" pathLength="100" stroke="#090909" stroke-width=".44" stroke-dasharray="12 200" stroke-dashoffset="10"/>
-              <path id="d-signal-path" d="M26.1 32.8L43.9 50.8 51.8 42.9" pathLength="100" stroke-dasharray="8 200" stroke-dashoffset="8"/>
-            </g>
-            <g class="d-motion-layer d-scan-layer" transform="translate(510 -335) scale(12.685185)" opacity="0">
-              <use href="#mirax-mark" width="108" height="108" fill="none" stroke="#090909" stroke-width=".44" clip-path="url(#d-scan-window)"/>
-              <use href="#mirax-mark" width="108" height="108" fill="none" stroke="#dcdcd4" stroke-width=".10" clip-path="url(#d-scan-window)"/>
-            </g>
           </g>
           <path d="M0 810 430 380M0 849 468 381" stroke="#777771" stroke-width="1"/>
           <path d="M58 0V1000M1542 0V1000" stroke="#ffffff21"/>
@@ -422,10 +407,28 @@
           <path d="M1390 0H1444V65H1390Z" fill="none" stroke="#eeeee6" stroke-width="1"/>
           <path d="M340 720 372 752 340 784 308 752Z" fill="none" stroke="#e8e8e0" stroke-width="1"/>
         </svg>
-        <svg class="d-motion-layer d-quiet-layer" viewBox="0 0 100 100" preserveAspectRatio="none" fill="none" stroke="#bdbdb5" stroke-width=".8">
-          <path class="d-quiet-segment" d="M96 32v3" vector-effect="non-scaling-stroke" opacity="0"/>
-          <path class="d-quiet-segment" d="M4 64v3" vector-effect="non-scaling-stroke" opacity="0"/>
-          <path class="d-quiet-segment" d="M94 86h3" vector-effect="non-scaling-stroke" opacity="0"/>
+        <!-- Screen-space strokes stay legible after slice cropping; neither base outline is restyled. -->
+        <svg id="d-motion-overlay" class="d-motion-overlay" preserveAspectRatio="none" fill="none" aria-hidden="true">
+          <defs>
+            <clipPath id="d-scan-window" clipPathUnits="userSpaceOnUse">
+              <rect id="d-scan-aperture" x="-44" y="-34" width="88" height="68"/>
+            </clipPath>
+          </defs>
+          <g id="d-contour-motion">
+            <g class="d-motion-layer d-signal-layer" stroke="#bdbdb5" stroke-width="2.4" stroke-linecap="round">
+              <path id="d-signal-path"/>
+            </g>
+            <g class="d-motion-layer d-scan-layer">
+              <g id="d-scan-sweep" clip-path="url(#d-scan-window)">
+                <path d="M-54 0H54" stroke="#dfdfd7" stroke-width="2" opacity=".75"/>
+                <path d="M-18 -28 18 28" stroke="#bdbdb5" stroke-width="2.4"/>
+              </g>
+            </g>
+          </g>
+          <g class="d-motion-layer d-quiet-layer" stroke="#b8b8ae" stroke-width="1.8">
+            <path class="d-quiet-segment" d="M0 16V0H94"/>
+            <path class="d-quiet-segment" d="M-94 0H0V-16"/>
+          </g>
         </svg>
         <div class="hardline-caption">BIG<br>STANDBY<span aria-hidden="true">.</span><small>X / MIRAX ORIGINAL GEOMETRY</small></div>
       </div>
@@ -673,7 +676,7 @@
       $('theme-index').textContent = concept.index;
       $('theme-title').textContent = concept.title;
       $('variant-label').textContent = concept.label;
-      $('d-motion-picker').hidden = state.variant !== 'D';
+      $('d-motion-picker').hidden = state.variant !== 'D' || state.home !== 'big' || state.phase === 'projecting' || state.media.status === 'ready';
       $('d-motion').value = state.motion.dMode;
       $('variant-counter').textContent = `${variants.indexOf(state.variant) + 1} / 4`;
       $('variant-dots').innerHTML = variants.map((variant) => `<i${variant === state.variant ? ' class="current"' : ''}></i>`).join('');
@@ -893,10 +896,12 @@
     const mistLayer = document.querySelector('.mist');
     const lightPlane = document.querySelector('.light-plane');
     const xPlane = document.querySelector('.x-plane');
+    const dMotionOverlay = $('d-motion-overlay');
+    const contourMotion = $('d-contour-motion');
+    const signalLayer = document.querySelector('.d-signal-layer');
     const signalPath = $('d-signal-path');
-    const signalGap = $('d-signal-gap');
     const scanLayer = document.querySelector('.d-scan-layer');
-    const scanAperture = $('d-scan-aperture');
+    const scanSweep = $('d-scan-sweep');
     const quietSegments = document.querySelectorAll('.d-quiet-segment');
     const hardlineCaption = document.querySelector('.hardline-caption');
     const fieldCaption = document.querySelector('.field-caption');
@@ -905,10 +910,95 @@
     let animationFrame = null;
     let particleTime = 0;
     let dMotionStartedAt = 0;
+    let dLayoutDirty = true;
+    let dLayoutKey = '';
+    let dVisibleEdge = null;
+    let dProjection = null;
+    let dCachedShift = { x: 0, y: 0 };
     let previousFrameTime = null;
     let seed = 74321;
     function random() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
     const particles = Array.from({ length: 1000 }, () => ({ angle: random() * Math.PI * 2, tube: random() * Math.PI * 2, radius: .21 + random() * .17, size: .45 + random() * 1.0, alpha: .25 + random() * .65 }));
+    function cacheDVisibleEdge(shiftX, shiftY) {
+      const matrix = xPlane.getScreenCTM();
+      if (!matrix) return;
+      const mark = xPlane.querySelector('.x-core');
+      const scale = mark.width.baseVal.value / 108;
+      const project = ([x, y]) => new DOMPoint(mark.x.baseVal.value + x * scale, mark.y.baseVal.value + y * scale).matrixTransform(matrix);
+      const blocked = [...document.querySelectorAll('#standby-view .center, .brand, .theme-caption, .device, .connection-hint, .hardline-caption, .prototype-note, .variant-switcher, #d-motion-picker, #controls, .reveal-hint, .inspector')]
+        .map((node) => node.getBoundingClientRect()).filter((rect) => rect.width && rect.height);
+      const clear = (point) => point.x > 18 && point.x < canvasWidth - 18 && point.y > 18 && point.y < canvasHeight - 18
+        && blocked.every((rect) => point.x < rect.left - 12 || point.x > rect.right + 12 || point.y < rect.top - 12 || point.y > rect.bottom + 12);
+      // Only the eight long arm edges participate, never the detached center diamond.
+      const edges = [
+        [[31.9, 23], [51.8, 42.9]], [[43.9, 50.8], [26.1, 32.8]],
+        [[81.9, 32.8], [64.2, 50.5]], [[56.3, 43], [76, 23.1]],
+        [[26.1, 73.6], [44, 55.7]], [[51.7, 63.5], [32, 83.3]],
+        [[64, 55.7], [82, 73.6]], [[76.1, 83.4], [56.2, 63.4]]
+      ];
+      let best = null;
+      edges.forEach(([from, to]) => {
+        const a = project(from);
+        const b = project(to);
+        const length = Math.hypot(b.x - a.x, b.y - a.y);
+        const steps = Math.ceil(length / 6);
+        const pointAt = (step) => ({ x: a.x + (b.x - a.x) * step / steps, y: a.y + (b.y - a.y) * step / steps });
+        let start = -1;
+        for (let step = 0; step <= steps + 1; step += 1) {
+          if (step <= steps && clear(pointAt(step))) {
+            if (start < 0) start = step;
+          } else if (start >= 0) {
+            const runLength = (step - 1 - start) * length / steps;
+            if (!best || runLength > best.length) best = { start: pointAt(start), length: runLength, tx: (b.x - a.x) / length, ty: (b.y - a.y) / length };
+            start = -1;
+          }
+        }
+      });
+      dVisibleEdge = best;
+      dProjection = matrix;
+      dCachedShift = { x: shiftX, y: shiftY };
+      dMotionOverlay.setAttribute('viewBox', `0 0 ${canvasWidth} ${canvasHeight}`);
+      contourMotion.style.visibility = best && best.length > 0 ? '' : 'hidden';
+      dLayoutDirty = false;
+    }
+    function drawDMotion(dTime, shiftX, shiftY) {
+      const layoutKey = `${state.variant}/${state.home}/${state.phase}/${state.media.status}/${state.controlsOpen}/${state.inspectorOpen}`;
+      if (layoutKey !== dLayoutKey) { dLayoutKey = layoutKey; dLayoutDirty = true; }
+      if (state.variant !== 'D' || stage.dataset.variant !== 'D' || state.home !== 'big' ||
+        state.phase === 'projecting' || state.media.status === 'ready') return;
+      if (dLayoutDirty) cacheDVisibleEdge(shiftX, shiftY);
+      const edge = dVisibleEdge;
+      let progress = 0;
+      if (edge && dProjection) {
+        const dx = shiftX - dCachedShift.x;
+        const dy = shiftY - dCachedShift.y;
+        contourMotion.setAttribute('transform', `translate(${dProjection.a * dx + dProjection.c * dy} ${dProjection.b * dx + dProjection.d * dy})`);
+        if (state.motion.dMode === 'signal') {
+          progress = (dTime % 7) / 7;
+          const length = Math.min(110, edge.length * .72);
+          const travel = (edge.length - length) * (.5 - Math.cos(progress * Math.PI * 2) * .5);
+          const x = edge.start.x + edge.tx * travel - edge.ty * 6;
+          const y = edge.start.y + edge.ty * travel + edge.tx * 6;
+          signalPath.setAttribute('d', `M${x} ${y}l${edge.tx * length} ${edge.ty * length}`);
+          signalLayer.style.opacity = (.78 + .1 * Math.sin(progress * Math.PI * 2)).toFixed(3);
+        } else if (state.motion.dMode === 'scan') {
+          progress = (dTime % 9) / 9;
+          const margin = Math.min(44, edge.length / 2);
+          const travel = margin + (edge.length - margin * 2) * (.5 - Math.cos(progress * Math.PI * 2) * .5);
+          scanSweep.setAttribute('transform', `translate(${edge.start.x + edge.tx * travel} ${edge.start.y + edge.ty * travel}) rotate(${Math.atan2(edge.ty, edge.tx) * 180 / Math.PI})`);
+          scanLayer.style.opacity = (.76 + .12 * Math.sin(progress * Math.PI * 2)).toFixed(3);
+        }
+      }
+      if (state.motion.dMode === 'quiet') {
+        progress = (dTime % 8) / 8;
+        const travel = Math.sin(progress * Math.PI * 2) * 22;
+        quietSegments[0].setAttribute('transform', `translate(${52 + travel} 10)`);
+        quietSegments[1].setAttribute('transform', `translate(${canvasWidth - 52 - travel} ${canvasHeight - 10})`);
+        quietSegments.forEach((segment, index) => { segment.style.opacity = (.64 + .16 * Math.sin(progress * Math.PI * 2 + index * Math.PI)).toFixed(3); });
+      }
+      stage.dataset.dMotionTime = dTime.toFixed(3);
+      stage.dataset.dMotionProgress = progress.toFixed(4);
+    }
     function applyAmbientTransforms() {
       const t = particleTime * .001;
       // Text and main X body use barely perceptible OLED pixel-shift (~2.5-3.5px over a ~50s cycle).
@@ -923,30 +1013,11 @@
       scenePans.forEach((node) => { node.setAttribute('transform', `translate(${px.toFixed(1)} ${py.toFixed(1)}) scale(1.06)`); });
       if (mistLayer) mistLayer.setAttribute('transform', `translate(${(Math.sin(t * .55) * 120).toFixed(1)} ${(Math.cos(t * .34) * 12).toFixed(1)})`);
       if (lightPlane) lightPlane.setAttribute('transform', `translate(${(Math.sin(t * .65) * 44).toFixed(1)} ${(Math.cos(t * .41) * 14).toFixed(1)})`);
-      if (xPlane) xPlane.setAttribute('transform', `translate(${(burnX * 1.4).toFixed(2)} ${(burnY * 1.4).toFixed(2)})`);
+      const xShift = Number((burnX * 1.4).toFixed(2));
+      const yShift = Number((burnY * 1.4).toFixed(2));
+      if (xPlane) xPlane.setAttribute('transform', `translate(${xShift} ${yShift})`);
       // Start each comparison promptly without resetting the shared OLED movement clock.
-      const dTime = Math.max(0, t - dMotionStartedAt);
-      let progress = 0;
-      if (state.variant === 'D' && state.motion.dMode === 'signal') {
-        progress = (dTime % 12) / 12;
-        const offset = 8 - progress * 116;
-        signalPath.setAttribute('stroke-dashoffset', offset.toFixed(3));
-        signalGap.setAttribute('stroke-dashoffset', (offset + 2).toFixed(3));
-      } else if (state.variant === 'D' && state.motion.dMode === 'scan') {
-        progress = (dTime % 18) / 18;
-        const pass = (dTime % 18) / 4.5;
-        scanAperture.setAttribute('transform', `translate(${(25 + Math.min(pass, 1) * 24).toFixed(3)} 36) rotate(-28)`);
-        scanLayer.style.opacity = (pass < 1 ? Math.sin(pass * Math.PI) * .6 : 0).toFixed(3);
-      } else if (state.variant === 'D' && state.motion.dMode === 'quiet') {
-        progress = (dTime % 24) / 24;
-        const slot = Math.floor(dTime / 8) % quietSegments.length;
-        const pass = (dTime % 8) / 1.8;
-        quietSegments.forEach((segment, index) => {
-          segment.style.opacity = (index === slot && pass < 1 ? Math.sin(pass * Math.PI) * .45 : 0).toFixed(3);
-        });
-      }
-      stage.dataset.dMotionTime = dTime.toFixed(3);
-      stage.dataset.dMotionProgress = progress.toFixed(4);
+      drawDMotion(Math.max(0, t - dMotionStartedAt), xShift, yShift);
     }
     function drawParticles() {
       if (!context) return;
@@ -981,6 +1052,7 @@
       animationFrame = requestAnimationFrame(animateStandby);
     }
     function resizeCanvas() {
+      dLayoutDirty = true;
       canvasWidth = stage.clientWidth;
       canvasHeight = stage.clientHeight;
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
