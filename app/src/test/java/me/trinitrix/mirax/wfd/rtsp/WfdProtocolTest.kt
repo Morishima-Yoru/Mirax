@@ -337,8 +337,10 @@ class WfdProtocolTest {
             "OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n",
         )
         assertThat(m1).hasSize(2)
+        assertThat(m1[0]).contains("RTSP/1.0 200 OK")
         assertThat(m1[0]).contains("Public: org.wfa.wfd1.0")
         assertThat(m1[1]).startsWith("OPTIONS * RTSP/1.0\r\n")
+        assertThat(session.state).isEqualTo("WAIT_M2")
 
         session.handle(
             "RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0, SETUP, TEARDOWN, PLAY, PAUSE, GET_PARAMETER, SET_PARAMETER\r\n\r\n",

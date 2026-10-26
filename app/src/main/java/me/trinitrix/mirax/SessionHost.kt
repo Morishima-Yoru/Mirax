@@ -3,23 +3,34 @@ package me.trinitrix.mirax
 import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.view.Display
 import android.view.Surface
 import android.widget.Toast
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import me.trinitrix.mirax.broadcast.BroadcastAutoStop
 import me.trinitrix.mirax.broadcast.EndConnectionConfirm
 import me.trinitrix.mirax.host.OverlayPermission
 import me.trinitrix.mirax.host.PrivilegeProbe
 import me.trinitrix.mirax.host.RootHelper
 import me.trinitrix.mirax.session.ControlPanelEntry
+import me.trinitrix.mirax.session.MiraxSession
 import me.trinitrix.mirax.session.PictureRotationReport
-import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionEffect
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.TileState
+import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.session.WfdOwner
+import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.tile.BroadcastTileService
 import me.trinitrix.mirax.wfd.SinkConnectionController
 import me.trinitrix.mirax.wfd.WfdOwnerBridge
@@ -42,6 +53,29 @@ import me.trinitrix.mirax.wm.WmSize
  * the session decides visible-picture axes.
  */
 object SessionHost {
+    private val calibrationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val calibrationInFlightCount = AtomicInteger(0)
+    private val provisioningReadInFlight = AtomicBoolean(false)
+    private val useThisScreenGeneration = AtomicInteger(0)
+
+    internal var ioRunner: (Runnable) -> Unit = { task -> calibrationScope.launch { task.run() } }
+    internal var mainPoster: (Runnable) -> Unit = { task -> mainHandler.post(task) }
+    internal var plainWmSizeReader: () -> WmSizeReading? = { WmSize.readPlain() }
+    internal var displayWmSizeReader: (Int) -> WmSizeReading? = { displayId -> WmSize.readForDisplay(displayId) }
+
+    /**
+     * Reset asynchronous calibration state and restore production seams for unit tests.
+     */
+    internal fun resetForTests() {
+        calibrationInFlightCount.set(0)
+        provisioningReadInFlight.set(false)
+        useThisScreenGeneration.incrementAndGet()
+        ioRunner = { task -> calibrationScope.launch { task.run() } }
+        mainPoster = { task -> mainHandler.post(task) }
+        plainWmSizeReader = { WmSize.readPlain() }
+        displayWmSizeReader = { displayId -> WmSize.readForDisplay(displayId) }
+    }
     /**
      * Dashboard or other UI toggled the shared advertising switch.
      */
@@ -79,49 +113,121 @@ object SessionHost {
     }
 
     /**
-     * "Use this screen" after confirming the session allows a wm size read.
+     * "Use this screen" after confirming the session allows a `wm size` read.
+     *
+     * @param context Activity or application context.
+     * @param displayId Display hosting the Mirax window.
+     * @return Immediate session snapshot while the display `wm size` read runs off the main thread.
      */
     fun useThisScreen(context: Context, displayId: Int): SessionSnapshot {
+        val appContext = context.applicationContext ?: context
         val session = MiraxApp.instance.session
-        session.report(me.trinitrix.mirax.session.MiraxDisplayReport(displayId))
-        val snapshot = session.snapshot()
-        if (!snapshot.canUseThisScreen) {
-            return snapshot
-        }
-        val reading = WmSize.readForDisplay(displayId) ?: return snapshot
-        session.report(PictureRotationReport(degrees = pictureRotationDegrees(context, displayId)))
-        session.handle(SessionAction.UseThisScreen(reading))
-        return commit(context)
+        return scheduleUseThisScreen(
+            session = session,
+            displayId = displayId,
+            rotationDegrees = { pictureRotationDegrees(appContext, displayId) },
+            onCalibratedOnMain = {
+                if (MiraxApp.instance.session === session) {
+                    commitInternal(appContext, allowProvisioningRead = false)
+                    MainActivity.refreshIfShowing()
+                    PictureActivity.refreshIfShowing()
+                }
+            },
+        )
     }
 
     /**
      * Persist settings, sync keep-alive / status surfaces, apply effects.
+     *
+     * @param context Activity or application context.
+     * @return Reconciled session snapshot.
      */
     fun commit(context: Context): SessionSnapshot {
-        val appContext = context.applicationContext
+        return commitInternal(context.applicationContext ?: context, allowProvisioningRead = true)
+    }
+
+    /**
+     * Reconcile session state and surfaces with optional provisioning calibration.
+     *
+     * @param appContext application context for owner and surface sync
+     * @param allowProvisioningRead whether a missing calibration may start an off-main read
+     * @return reconciled session snapshot
+     */
+    private fun commitInternal(appContext: Context, allowProvisioningRead: Boolean): SessionSnapshot {
         val session = MiraxApp.instance.session
         WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
-        maybeApplyProvisioningWmSize(appContext, session)
-        val snapshot = session.snapshot()
-        SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
-        SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
-        WifiRadio.sync(appContext, snapshot.advertisingEnabled)
-        BroadcastAutoStop.sync(snapshot)
-        AdvertisingKeepAliveService.sync(appContext, snapshot)
-        BroadcastStatusWidget.updateAll(appContext, snapshot)
-        BroadcastTileService.requestListening(appContext)
-        FloatingBallService.sync(appContext, snapshot)
-        applyEffects(appContext, snapshot)
-        // Apply one-shot effects before the owner receives the advertise command.
-        val afterEffects = MiraxApp.instance.session.snapshot()
-        WfdOwnerBridge.syncOwner(appContext, afterEffects.wfdOwner)
-        val advertiseOk = WfdOwnerBridge.sync(appContext, afterEffects.wfdAdvertise)
-        if (afterEffects.wfdAdvertise != null && !advertiseOk) {
-            session.handle(SessionAction.BeaconFailed)
-            applyEffects(appContext, session.snapshot())
+        if (allowProvisioningRead) {
+            maybeScheduleProvisioningWmSize(
+                session = session,
+                rotationDegrees = { pictureRotationDegrees(appContext, displayId = null) },
+                onCalibratedOnMain = {
+                    if (MiraxApp.instance.session === session) {
+                        commitInternal(appContext, allowProvisioningRead = false)
+                        MainActivity.refreshIfShowing()
+                        PictureActivity.refreshIfShowing()
+                    }
+                },
+            )
         }
-        SinkConnectionController.sync(appContext, afterEffects.wfdAdvertise)
-        return MiraxApp.instance.session.snapshot()
+        return commitAdvertising(
+            session = session,
+            syncAdvertise = { command ->
+                WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
+                WfdOwnerBridge.sync(appContext, command)
+            },
+            applyEffects = { snapshot -> applyEffects(appContext, snapshot) },
+            publish = { snapshot ->
+                SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
+                SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
+                WifiRadio.sync(appContext, snapshot.advertisingEnabled)
+                BroadcastAutoStop.sync(snapshot)
+                AdvertisingKeepAliveService.sync(appContext, snapshot)
+                BroadcastStatusWidget.updateAll(appContext, snapshot)
+                BroadcastTileService.requestListening(appContext)
+                FloatingBallService.sync(appContext, snapshot)
+            },
+            syncSink = { command -> SinkConnectionController.sync(appContext, command) },
+            holdAdvertiseHandoff = calibrationInFlightCount.get() > 0,
+        )
+    }
+
+    /**
+     * Reconcile owner acceptance before publishing a single final state to status surfaces.
+     * One-shot effects are consumed before handing the command to the owner.
+     *
+     * @param session session owning the advertising state
+     * @param syncAdvertise owner command boundary
+     * @param applyEffects one-shot effect boundary
+     * @param publish settings and status surfaces boundary
+     * @param syncSink receiver boundary
+     * @param holdAdvertiseHandoff whether an off-main `wm size` calibration is in flight and
+     *     non-null advertise hand-off must wait until calibration finishes
+     * @return the final state shown to the caller and external surfaces
+     */
+    internal fun commitAdvertising(
+        session: MiraxSession,
+        syncAdvertise: (WfdAdvertiseCommand?) -> Boolean,
+        applyEffects: (SessionSnapshot) -> Unit,
+        publish: (SessionSnapshot) -> Unit,
+        syncSink: (WfdAdvertiseCommand?) -> Unit,
+        holdAdvertiseHandoff: Boolean = calibrationInFlightCount.get() > 0,
+    ): SessionSnapshot {
+        applyEffects(session.snapshot())
+        val command = session.snapshot().wfdAdvertise
+        if (command != null && holdAdvertiseHandoff) {
+            val pendingSnapshot = session.snapshot()
+            publish(pendingSnapshot)
+            return pendingSnapshot
+        }
+        if (!syncAdvertise(command) && command != null) {
+            session.handle(SessionAction.BeaconFailed)
+            applyEffects(session.snapshot())
+            syncAdvertise(session.snapshot().wfdAdvertise)
+        }
+        val finalSnapshot = session.snapshot()
+        publish(finalSnapshot)
+        syncSink(finalSnapshot.wfdAdvertise)
+        return finalSnapshot
     }
 
     /**
@@ -312,22 +418,111 @@ object SessionHost {
         return commit(appContext)
     }
 
-    private fun maybeApplyProvisioningWmSize(
-        context: Context,
-        session: me.trinitrix.mirax.session.MiraxSession,
-    ) {
+    /**
+     * Schedule an off-main plain `wm size` read when provisioning requires calibration.
+     *
+     * @param session session owning the provisioning state
+     * @param rotationDegrees supplier for the default display rotation on the main thread
+     * @param onCalibratedOnMain callback invoked on the main thread after the read finishes
+     * @return true when a provisioning read is currently in flight and advertise hand-off should wait
+     */
+    internal fun maybeScheduleProvisioningWmSize(
+        session: MiraxSession,
+        rotationDegrees: () -> Int,
+        onCalibratedOnMain: () -> Unit,
+    ): Boolean {
         val snapshot = session.snapshot()
-        if (SessionEffect.ReadPlainWmSizeForProvisioning !in snapshot.effects) {
-            return
+        if (SessionEffect.ReadPlainWmSizeForProvisioning !in snapshot.effects || !snapshot.canReadWmSize) {
+            return false
         }
-        if (!snapshot.canReadWmSize) {
-            return
+        if (!provisioningReadInFlight.compareAndSet(false, true)) {
+            return true
         }
-        val reading = WmSize.readPlain() ?: return
-        session.report(
-            PictureRotationReport(degrees = pictureRotationDegrees(context, displayId = null)),
+        calibrationInFlightCount.incrementAndGet()
+        ioRunner(
+            Runnable {
+                val reading = try {
+                    plainWmSizeReader()
+                } catch (err: Exception) {
+                    Log.w("SessionHost", "Plain wm size read failed", err)
+                    null
+                }
+                mainPoster(
+                    Runnable {
+                        try {
+                            val current = session.snapshot()
+                            if (reading != null &&
+                                current.canReadWmSize &&
+                                SessionEffect.ReadPlainWmSizeForProvisioning in current.effects
+                            ) {
+                                session.report(PictureRotationReport(degrees = rotationDegrees()))
+                                session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+                            }
+                        } finally {
+                            calibrationInFlightCount.decrementAndGet()
+                            provisioningReadInFlight.set(false)
+                        }
+                        onCalibratedOnMain()
+                    },
+                )
+            },
         )
-        session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+        return true
+    }
+
+    /**
+     * Report the active display and read its `wm size` off the main thread before applying
+     * [SessionAction.UseThisScreen].
+     *
+     * @param session session receiving the display and calibration updates
+     * @param displayId display hosting the Mirax window
+     * @param rotationDegrees supplier for that display's rotation on the main thread
+     * @param onCalibratedOnMain callback invoked on the main thread after calibration settles
+     * @return immediate session snapshot before the asynchronous read completes
+     */
+    internal fun scheduleUseThisScreen(
+        session: MiraxSession,
+        displayId: Int,
+        rotationDegrees: () -> Int,
+        onCalibratedOnMain: () -> Unit,
+    ): SessionSnapshot {
+        session.report(me.trinitrix.mirax.session.MiraxDisplayReport(displayId))
+        val snapshot = session.snapshot()
+        if (!snapshot.canUseThisScreen) {
+            return snapshot
+        }
+        val generation = useThisScreenGeneration.incrementAndGet()
+        val preferredModeGeneration = session.preferredModeGeneration
+        calibrationInFlightCount.incrementAndGet()
+        ioRunner(
+            Runnable {
+                val reading = try {
+                    displayWmSizeReader(displayId)
+                } catch (err: Exception) {
+                    Log.w("SessionHost", "Display wm size read failed for $displayId", err)
+                    null
+                }
+                mainPoster(
+                    Runnable {
+                        try {
+                            val current = session.snapshot()
+                            if (useThisScreenGeneration.get() == generation &&
+                                session.preferredModeGeneration == preferredModeGeneration &&
+                                reading != null &&
+                                current.canUseThisScreen && current.miraxDisplayId == displayId
+                            ) {
+                                session.report(PictureRotationReport(degrees = rotationDegrees()))
+                                session.handle(SessionAction.UseThisScreen(reading))
+                            }
+                        } finally {
+                            calibrationInFlightCount.decrementAndGet()
+                        }
+                        onCalibratedOnMain()
+                    },
+                )
+            },
+        )
+        return snapshot
     }
 
     /**
