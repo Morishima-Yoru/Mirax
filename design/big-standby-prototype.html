@@ -1,0 +1,971 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Mirax · Big Standby｜離線互動原型</title>
+  <style>
+    :root {
+      font: 15px/1.6 "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      color: #f3f2eb;
+      background: #0c1010;
+      --ink: #f3f2eb;
+      --muted: #bebfba;
+      --accent: #e8e8df;
+      --surface: #171a19;
+      --line: #ffffff30;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button, a, input, summary { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid #fff;
+      outline-offset: 5px;
+    }
+    button:disabled { opacity: .38; cursor: not-allowed; }
+    [hidden] { display: none !important; }
+    button { border: 1px solid var(--line); background: #242724; padding: 10px 15px; border-radius: 7px; }
+    button:not(:disabled):hover { border-color: #ffffff95; background: #353934; }
+    .primary { background: #eeeee5; color: #151714; border-color: #eeeee5; }
+    .primary:not(:disabled):hover { background: #fff; color: #111; }
+    .quiet { background: transparent; }
+    .icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.6; flex-shrink: 0; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; clip: rect(0,0,0,0); overflow: hidden; white-space: nowrap; }
+    .stage { width: 100%; height: 100svh; min-height: 520px; position: relative; isolation: isolate; overflow: hidden; background: #101817; }
+    .generated-background, .custom-media, .readability-scrim { position: absolute; inset: 0; pointer-events: none; }
+    .generated-background { z-index: -5; }
+    .scene { width: 100%; height: 100%; display: none; }
+    .v-A #landscape, .v-B #architecture, .v-C #particle-scene, .v-D #hardline-scene { display: block; }
+    .scene > svg, .scene > canvas { width: 100%; height: 100%; display: block; }
+    .custom-media { z-index: -4; }
+    .custom-media > img, .custom-media > video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .has-media .generated-background { visibility: hidden; }
+    /* A scrim protects text hierarchy over both generated art and arbitrary local media. */
+    .readability-scrim { z-index: -3; background: linear-gradient(180deg, #06101055, #06101035 40%, #061010a8); }
+    .has-media .readability-scrim { background: #000a; }
+    .v-B .readability-scrim { background: linear-gradient(90deg, #100c0755, #100c0750 60%, #100c0720); }
+    .v-C .readability-scrim { background: radial-gradient(ellipse at center, #080808 3%, #080808a0 28%, #08080810 70%); }
+    .v-D .readability-scrim { background: #00000018; }
+    .has-media .readability-scrim { background: #000a; }
+    .brand { position: absolute; top: 95px; left: 5.2%; display: flex; align-items: center; gap: 12px; }
+    .brand-mark { width: 39px; height: 39px; fill: currentColor; }
+    .brand-name { font-size: 23px; font-weight: 650; letter-spacing: .19em; line-height: 1; }
+    .brand small { display: block; font-size: 9px; letter-spacing: .25em; margin-top: 8px; font-weight: 400; }
+    .theme-caption { position: absolute; right: 5.2%; top: 101px; color: #e2e2da; font-size: 11px; letter-spacing: .16em; text-align: right; }
+    .theme-caption strong { display: block; font-size: 15px; margin-top: 5px; font-weight: 400; letter-spacing: .15em; }
+    .center { position: absolute; left: 50%; top: 49%; transform: translate(-50%, -50%); width: min(92%, 1050px); text-align: center; }
+    .status-indicator { display: inline-flex; align-items: center; gap: 9px; font-size: 10px; letter-spacing: .22em; color: #e0e4df; margin-bottom: 19px; }
+    .status-dot { width: 6px; height: 6px; border: 1px solid currentColor; border-radius: 50%; }
+    .is-broadcasting .status-dot { background: currentColor; }
+    h1 { font-size: clamp(36px, 5.3vw, 78px); line-height: 1.25; font-weight: 350; letter-spacing: .10em; margin: 0; text-indent: .10em; }
+    .status-detail { font-size: 13px; letter-spacing: .10em; margin: 19px 0 0; color: #e1e3de; }
+    .device { position: absolute; top: calc(49% - 151px); left: 50%; transform: translateX(-50%); text-align: center; }
+    .micro-label { color: #cbd0cb; font-size: 9px; letter-spacing: .22em; display: block; margin-bottom: 8px; }
+    .device-name { font-size: 18px; font-weight: 400; letter-spacing: .15em; white-space: nowrap; }
+    .connection-hint { position: absolute; top: calc(49% + 126px); left: 50%; transform: translateX(-50%); text-align: center; width: min(90%, 580px); color: #e0e4df; font-size: 12px; letter-spacing: .08em; }
+    kbd { font: inherit; font-weight: 600; border-bottom: 1px solid #ffffff70; padding: 0 3px 3px; margin: 0 3px; }
+    /* Slow mist and restrained text drift reduce static composition without competing with status. */
+    .mist { animation: mist-drift 65s ease-in-out infinite alternate; transform-origin: center; }
+    .drift { animation: text-drift 85s linear infinite; }
+    @keyframes mist-drift { from { transform: translateX(-30px); opacity: .65; } to { transform: translateX(30px); opacity: .9; } }
+    @keyframes text-drift { 0%,100% { transform: translate(0,0); } 25% { transform: translate(4px,2px); } 50% { transform: translate(1px,-3px); } 75% { transform: translate(-3px,1px); } }
+    /* B uses perspective and negative space, not a recolored landscape. */
+    .v-B { background: #100e0a; --accent: #ffe1a6; }
+    .v-B .center { top: 48%; }
+    .v-B h1 { color: #ffe8bb; font-size: clamp(37px, 5.7vw, 86px); font-weight: 500; letter-spacing: .03em; }
+    .v-B .status-indicator { color: #f3d5a1; }
+    .v-B .status-detail { color: #ecddc1; }
+    .v-B .device { left: 5.2%; top: auto; bottom: 174px; transform: none; text-align: left; padding-left: 18px; border-left: 2px solid #edbc70; }
+    .v-B .device-name { font-size: 23px; }
+    .v-B .connection-hint { left: auto; right: 5.2%; top: auto; bottom: 176px; transform: none; text-align: right; width: 430px; }
+    .light-plane { animation: light-breathe 35s ease-in-out infinite alternate; }
+    @keyframes light-breathe { from { opacity: .60; } to { opacity: 1; } }
+    /* C's particle annulus leaves a quiet center; it is not a data visualization. */
+    .v-C { background: #080808; }
+    #particle-scene { background: #080808; }
+    .v-C h1 { font-size: clamp(34px, 4.7vw, 68px); letter-spacing: .20em; font-weight: 300; }
+    .v-C .status-indicator { letter-spacing: .34em; }
+    .v-C .device { left: auto; right: 5.2%; top: 179px; transform: none; text-align: right; }
+    .v-C .device-name { font-size: 15px; }
+    .v-C .connection-hint { top: auto; bottom: 172px; font-size: 12px; }
+    .field-caption { position: absolute; left: 5.2%; bottom: 176px; color: #bdbdb8; font-size: 10px; letter-spacing: .3em; line-height: 2.2; }
+    /* D directly reuses the actual Mirax X/diamond path, enlarged into hard-edged identity. */
+    .v-D { background: #090909; color: #f1f1ec; --accent: #fff; }
+    .v-D .brand { top: 99px; padding: 11px 17px 13px 0; border-top: 3px solid #eeeeea; }
+    .v-D .brand-name { font-weight: 800; letter-spacing: .10em; }
+    .v-D .center { width: 100%; top: 48%; padding: 26px 5%; background: #090909; border-top: 1px solid #eeeeea; border-bottom: 1px solid #eeeeea; }
+    .v-D h1 { font-size: clamp(39px, 6.4vw, 96px); font-weight: 850; letter-spacing: .025em; text-indent: 0; line-height: 1.1; }
+    .v-D .status-indicator { margin-bottom: 17px; letter-spacing: .12em; font-weight: 650; }
+    .v-D .status-detail { margin-top: 18px; letter-spacing: .06em; }
+    .v-D .device { top: 188px; right: 5.2%; left: auto; transform: none; text-align: right; background: #090909; padding: 10px 0 10px 18px; border-left: 4px solid #eee; }
+    .v-D .device-name { font-size: 18px; font-weight: 700; letter-spacing: .06em; }
+    .v-D .theme-caption { background: #090909; padding: 6px 10px; }
+    .v-D .connection-hint { top: auto; bottom: 181px; left: auto; right: 5.2%; transform: none; text-align: right; width: 430px; background: #090909; padding: 12px; border-right: 3px solid #eee; }
+    .hardline-caption { position: absolute; bottom: 164px; left: 5.2%; font-size: clamp(28px, 3.8vw, 55px); line-height: .95; font-weight: 850; letter-spacing: -.04em; }
+    .hardline-caption small { font-size: 9px; font-weight: 500; display: block; letter-spacing: .23em; margin-top: 15px; }
+    .x-plane { animation: x-shift 75s ease-in-out infinite alternate; }
+    @keyframes x-shift { from { transform: translate(0,0); } to { transform: translate(-9px,5px); } }
+    .motion-stopped .ambient, .motion-stopped .drift { animation-play-state: paused !important; }
+    .page-hidden .custom-media { display: none; }
+    .prototype-note { position: fixed; z-index: 25; left: 20px; top: 17px; color: #efefea; font-size: 10px; line-height: 1.7; letter-spacing: .04em; padding: 7px 11px; background: #101210ee; border-left: 2px solid #c9ccc3; }
+    .prototype-note strong { font-size: 10px; font-weight: 650; letter-spacing: .14em; }
+    .prototype-note span { color: #c5c8c1; }
+    .controls { position: fixed; z-index: 30; top: 22px; right: 24px; display: flex; gap: 7px; align-items: center; padding: 7px; background: #121512f5; border: 1px solid #ffffff3d; border-radius: 9px; }
+    .controls button { min-height: 40px; padding: 7px 12px; font-size: 12px; display: inline-flex; gap: 8px; align-items: center; }
+    .controls .close-controls { padding: 7px 10px; font-size: 18px; line-height: 1; }
+    .switch-track { display: inline-block; width: 28px; height: 16px; border-radius: 8px; background: #62665f; position: relative; }
+    .switch-track::after { content: ""; width: 10px; height: 10px; position: absolute; top: 3px; left: 3px; background: #f1f1e9; border-radius: 50%; }
+    [aria-checked="true"] .switch-track { background: #d5d8cb; }
+    [aria-checked="true"] .switch-track::after { left: 15px; background: #151914; }
+    .reveal-hint { position: absolute; bottom: 105px; left: 50%; transform: translateX(-50%); width: 90%; text-align: center; font-size: 10px; color: #c8cdc6; letter-spacing: .08em; }
+    /* Floating controls are prototype chrome, visually separate from the receiving display. */
+    .variant-switcher { position: fixed; z-index: 26; bottom: 26px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; background: #151814f5; border: 1px solid #aeb5a74d; border-radius: 10px; padding: 5px; gap: 5px; }
+    .variant-switcher button { width: 42px; height: 43px; padding: 0; border: 0; background: transparent; font-size: 22px; border-radius: 5px; }
+    .variant-label { min-width: 212px; text-align: center; line-height: 1.45; padding: 2px 11px; }
+    .variant-label small { color: #b6bcb0; font-size: 9px; letter-spacing: .19em; display: block; }
+    .variant-label strong { font-size: 12px; letter-spacing: .08em; font-weight: 500; }
+    .variant-dots { display: inline-flex; gap: 5px; margin-left: 7px; vertical-align: 2px; }
+    .variant-dots i { width: 3px; height: 3px; background: #62675c; border-radius: 50%; }
+    .variant-dots i.current { background: #e4e8db; }
+    .inspector { position: fixed; z-index: 35; bottom: 27px; right: 22px; width: 126px; color: #d4d8cf; background: #111510ed; border: 1px solid #ffffff28; border-radius: 7px; font-size: 11px; }
+    .inspector[open] { width: min(390px, calc(100vw - 30px)); }
+    .inspector summary { padding: 9px 12px; cursor: pointer; user-select: none; }
+    .inspector pre { font: 11px/1.55 Consolas, monospace; padding: 0 13px 13px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 41vh; overflow-y: auto; color: #e7e8e0; }
+    .simple-view { position: absolute; inset: 0; background: #141814; display: grid; place-content: center; text-align: center; padding: 90px 20px 140px; }
+    .simple-view .brand-mark { width: 64px; height: 64px; margin: 0 auto 20px; }
+    .simple-view h1 { font-size: clamp(27px, 4vw, 44px); letter-spacing: .06em; margin-bottom: 8px; font-weight: 550; }
+    .simple-view p { font-size: 13px; color: #c8cfc4; margin: 7px 0; }
+    .simple-view .mock-label { font-size: 10px; color: #c7ccbf; letter-spacing: .12em; margin-bottom: 28px; }
+    .simple-view .simple-status { font-size: 18px; color: #efeee6; margin-top: 16px; }
+    .simple-view button { justify-self: center; margin-top: 22px; }
+    .simple-view .simple-device { margin-top: 16px; font-size: 13px; color: #dedfd6; }
+    .projection { position: absolute; inset: 0; z-index: 15; background: #e2e2d9; color: #1b211c; padding: 126px 6% 140px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+    .projection .demo-label { text-transform: uppercase; letter-spacing: .18em; font-size: 12px; font-weight: 650; }
+    .projection h2 { font-size: clamp(38px, 6vw, 86px); line-height: 1.2; margin: 25px 0; letter-spacing: -.025em; position: relative; z-index: 1; }
+    .projection p { font-size: 14px; max-width: 440px; position: relative; z-index: 1; }
+    .projection .demo-outline { position: absolute; width: 54vw; height: 54vw; max-width: 800px; max-height: 800px; border: 1px solid #657160; right: -12vw; top: 50%; transform: translateY(-50%) rotate(45deg); }
+    .projection .demo-outline::before, .projection .demo-outline::after { content: ""; position: absolute; border: 1px solid #657160; inset: 15%; }
+    .projection .demo-outline::after { inset: 32%; background: #c1c9b8; }
+    .projection button { align-self: flex-start; background: #1d241d; color: #fff; margin-top: 24px; border-color: #1d241d; position: relative; z-index: 1; }
+    .projection .return-home-label { position: absolute; bottom: 125px; left: 6%; font-size: 11px; color: #3d493c; }
+    .stage.is-projecting ~ .prototype-note { background: #111811; }
+    .toast { position: fixed; z-index: 45; top: 88px; left: 50%; transform: translateX(-50%); max-width: min(90vw, 600px); background: #1c241a; border: 1px solid #a0ae96; border-radius: 7px; color: #f4f6eb; font-size: 12px; padding: 10px 16px; }
+    dialog { color: #eceee5; background: #171b17; border: 1px solid #a0aa9459; border-radius: 12px; padding: 0; width: min(620px, calc(100vw - 24px)); max-height: min(88svh, 900px); box-shadow: 0 18px 80px #0008; }
+    dialog::backdrop { background: #000b; }
+    .dialog-heading { padding: 22px 25px 17px; display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; border-bottom: 1px solid #ffffff21; }
+    .dialog-heading h2 { margin: 0; font-size: 22px; font-weight: 550; letter-spacing: .04em; }
+    .dialog-heading p { margin: 4px 0 0; font-size: 11px; color: #c3cbb9; }
+    .dialog-heading button { font-size: 12px; padding: 7px 11px; white-space: nowrap; }
+    .dialog-body { padding: 0 25px 25px; }
+    fieldset { border: 0; padding: 20px 0; margin: 0; border-bottom: 1px solid #ffffff21; min-width: 0; }
+    legend { font-size: 13px; font-weight: 600; float: left; width: 100%; padding: 0 0 10px; }
+    .help { color: #c1c8b9; font-size: 11px; line-height: 1.8; margin: 8px 0 0; }
+    .home-options { display: flex; gap: 10px; clear: both; }
+    .radio-option { flex: 1; border: 1px solid #ffffff37; border-radius: 7px; padding: 12px; display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+    .radio-option:has(input:checked) { border-color: #e2e8d8; background: #2b3327; }
+    .radio-option input { margin: 5px 0 0; accent-color: #dbe4ce; }
+    .radio-option b { font-size: 13px; font-weight: 550; display: block; }
+    .radio-option small { display: block; color: #c2cbb9; font-size: 10px; margin-top: 3px; }
+    .field-label { font-size: 12px; display: block; clear: both; margin-bottom: 8px; }
+    input[type="file"] { width: 100%; font-size: 11px; color: #dce2d4; }
+    input[type="file"]::file-selector-button { padding: 9px 12px; border: 1px solid #ffffff55; background: #30382b; color: #f1f4e9; border-radius: 6px; margin-right: 10px; cursor: pointer; }
+    .media-feedback { font-size: 12px; color: #e7e9de; overflow-wrap: anywhere; margin: 10px 0 0; }
+    .media-feedback.error { color: #ffd1bd; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; clear: both; }
+    .button-row button { font-size: 12px; min-height: 39px; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 15px; clear: both; }
+    .setting-row span { font-size: 12px; }
+    .setting-row button { font-size: 12px; white-space: nowrap; }
+    .simulation-heading { display: flex; align-items: baseline; gap: 8px; clear: both; font-size: 12px; }
+    .simulation-heading strong { font-weight: 500; }
+    .simulation-heading small { color: #c1c9b7; font-size: 10px; }
+    .safety-note { font-size: 10px; color: #bec7b3; line-height: 1.9; margin: 16px 0 0; }
+    @media (max-width: 900px) {
+      .controls { top: 80px; right: 18px; }
+      .controls button { padding: 7px 9px; }
+      .brand { top: 155px; }
+      .theme-caption { top: 159px; }
+      .v-D .brand { top: 146px; }
+      .v-C .device, .v-D .device { top: 223px; }
+      .v-B .device { bottom: 205px; }
+      .v-B .connection-hint { bottom: 205px; width: 350px; font-size: 11px; }
+      .v-D .connection-hint { width: 350px; font-size: 11px; }
+      .inspector { bottom: 17px; right: 17px; }
+      .variant-switcher { bottom: 57px; }
+      .reveal-hint { bottom: 133px; }
+      .field-caption { bottom: 195px; }
+    }
+    @media (max-width: 600px) {
+      .stage { min-height: 600px; }
+      .prototype-note { left: 14px; top: 12px; right: 14px; font-size: 9px; width: fit-content; max-width: calc(100% - 28px); }
+      .controls { left: 14px; right: auto; top: 81px; gap: 4px; padding: 5px; max-width: calc(100% - 28px); }
+      .controls button { padding: 7px 8px; font-size: 11px; gap: 6px; }
+      .controls .icon { width: 17px; height: 17px; }
+      .brand { top: 143px; left: 7%; gap: 8px; }
+      .brand-mark { width: 30px; height: 30px; }
+      .brand-name { font-size: 18px; }
+      .brand small { font-size: 7px; margin-top: 7px; }
+      .theme-caption { top: 145px; right: 7%; font-size: 8px; }
+      .theme-caption strong { font-size: 11px; letter-spacing: .07em; }
+      .center { top: 49%; }
+      .device { top: calc(49% - 127px); }
+      .device-name { font-size: 15px; }
+      .micro-label { font-size: 8px; }
+      h1 { font-size: 38px; letter-spacing: .08em; }
+      .status-indicator { font-size: 9px; margin-bottom: 16px; }
+      .status-detail { font-size: 11px; letter-spacing: .04em; max-width: 290px; margin: 16px auto 0; }
+      .connection-hint { top: calc(49% + 106px); font-size: 11px; width: 85%; }
+      .v-B h1 { font-size: 41px; }
+      .v-B .center { top: 46%; }
+      .v-B .device { left: 8%; bottom: 235px; padding-left: 12px; }
+      .v-B .device-name { font-size: 17px; }
+      .v-B .connection-hint { left: 8%; right: auto; bottom: 165px; width: 84%; text-align: left; font-size: 10px; }
+      .v-C h1 { font-size: 33px; letter-spacing: .12em; }
+      .v-C .device { top: 218px; right: 7%; }
+      .v-C .device-name { font-size: 13px; }
+      .v-C .connection-hint { bottom: 172px; }
+      .field-caption { left: 7%; bottom: 224px; font-size: 8px; }
+      .v-D .brand { top: 138px; }
+      .v-D .center { top: 49%; padding: 23px 5%; }
+      .v-D h1 { font-size: 44px; }
+      .v-D .device { top: 218px; right: 7%; padding: 4px 0 4px 12px; }
+      .v-D .device-name { font-size: 14px; }
+      .v-D .connection-hint { right: 7%; bottom: 165px; width: 77%; padding: 7px 12px; font-size: 10px; }
+      .hardline-caption { left: 7%; bottom: 245px; font-size: 32px; }
+      .hardline-caption small { font-size: 7px; margin-top: 9px; }
+      .variant-switcher { bottom: 56px; padding: 4px; gap: 0; }
+      .variant-label { min-width: 198px; padding: 2px 5px; }
+      .variant-label strong { font-size: 11px; }
+      .variant-switcher button { width: 36px; }
+      .reveal-hint { font-size: 9px; bottom: 122px; }
+      .inspector { right: 14px; bottom: 10px; }
+      .inspector[open] { bottom: 112px; }
+      .inspector pre { max-height: 37vh; }
+      .projection { padding: 185px 8% 180px; }
+      .projection p { max-width: 260px; font-size: 12px; }
+      .projection .demo-label { font-size: 10px; }
+      .projection .return-home-label { bottom: 156px; left: 8%; }
+      .projection .demo-outline { width: 100vw; height: 100vw; right: -65vw; }
+      .toast { top: 132px; font-size: 11px; }
+      .dialog-heading { padding: 18px; }
+      .dialog-body { padding: 0 18px 20px; }
+      .home-options { gap: 8px; }
+      .radio-option { padding: 10px; gap: 7px; }
+      .radio-option small { font-size: 9px; }
+    }
+    @media (max-height: 680px) and (min-width: 601px) {
+      .brand, .v-D .brand { top: 94px; }
+      .theme-caption { top: 100px; }
+      .v-C .device, .v-D .device { top: 148px; }
+      .device { top: calc(49% - 124px); }
+      h1 { font-size: 52px; }
+      .v-B h1, .v-D h1 { font-size: 58px; }
+      .v-B .device, .v-B .connection-hint, .v-C .connection-hint, .v-D .connection-hint { bottom: 155px; }
+      .hardline-caption, .field-caption { bottom: 154px; }
+      .controls { top: 18px; }
+    }
+    /* Compact landscape separates header controls, status, cast hint, and prototype navigation. */
+    @media (orientation: landscape) and (max-height: 500px) {
+      .stage { height: 100svh; min-height: 0; }
+      .prototype-note { top: 10px; left: 16px; max-width: 48%; padding: 5px 8px; font-size: 9px; line-height: 1.5; }
+      .prototype-note strong { font-size: 9px; letter-spacing: .06em; }
+      .controls { top: 64px; right: 16px; left: auto; max-width: calc(100% - 170px); padding: 5px; gap: 5px; }
+      .controls button { min-height: 36px; padding: 6px 8px; font-size: 11px; gap: 6px; white-space: nowrap; }
+      .controls .icon { width: 18px; height: 18px; }
+      .stage .brand { top: 70px; left: 22px; padding: 0; border: 0; gap: 8px; }
+      .brand-mark { width: 26px; height: 26px; }
+      .brand-name { font-size: 18px; }
+      .brand small, .theme-caption, .stage .device, .field-caption, .hardline-caption { display: none; }
+      .stage .center { top: 51%; width: 92%; padding: 0; }
+      .stage.v-D .center { width: 100%; padding: 9px 5%; }
+      .center .drift { line-height: 1.4; }
+      .stage h1 { font-size: 32px; line-height: 1.15; }
+      .stage .status-indicator { font-size: 8px; margin-bottom: 6px; letter-spacing: .12em; }
+      .stage .status-detail { font-size: 11px; line-height: 1.5; margin: 6px auto 0; max-width: 90%; }
+      .stage .connection-hint { top: auto; bottom: 66px; left: 50%; right: auto; transform: translateX(-50%); width: min(92%, 600px); padding: 0; margin: 0; border: 0; font-size: 11px; line-height: 1.6; text-align: center; }
+      .stage.v-D .connection-hint { padding: 4px 10px; }
+      .reveal-hint { top: 12px; bottom: auto; left: auto; right: 16px; transform: none; width: 42%; margin: 0; padding: 4px 8px; background: #101310e6; font-size: 9px; text-align: right; }
+      .variant-switcher { bottom: 12px; left: 16px; transform: none; padding: 4px; gap: 0; }
+      .variant-switcher button { width: 36px; height: 36px; }
+      .variant-label { min-width: 190px; padding: 2px 5px; }
+      .variant-label strong { font-size: 11px; }
+      .inspector { bottom: 12px; right: 16px; width: 110px; }
+      .inspector[open] { bottom: 66px; }
+      .inspector pre { max-height: calc(100svh - 230px); }
+      .simple-view { padding: 112px 20px 64px; }
+      .simple-view .brand-mark, .simple-view p:not(.simple-status):not(.simple-device) { display: none; }
+      .simple-view .mock-label { margin-bottom: 2px; }
+      .simple-view h1 { font-size: 22px; margin-bottom: 4px; }
+      .simple-view p { font-size: 11px; margin: 2px 0; }
+      .simple-view .simple-status { font-size: 16px; }
+      .simple-view button { font-size: 11px; padding: 5px 10px; margin-top: 6px; }
+      .projection { padding: 116px 6% 66px; }
+      .projection .demo-label { font-size: 10px; }
+      .projection h2 { font-size: 26px; line-height: 1.15; margin: 8px 0; }
+      .projection p, .projection .return-home-label { display: none; }
+      .projection button { font-size: 11px; padding: 6px 12px; margin-top: 8px; }
+      .toast { top: 116px; }
+    }
+    @media (prefers-reduced-motion: reduce) { .ambient, .drift { animation: none !important; } }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+    <defs>
+      <symbol id="mirax-mark" viewBox="0 0 108 108">
+        <path d="M26.1 23H31.9L51.8 42.9 43.9 50.8 26.1 32.8ZM76 23.1H81.9V32.8L64.2 50.5 56.3 43ZM26.1 73.6 44 55.7 51.7 63.5 32 83.3H26.1ZM64 55.7 82 73.6V83.4H76.1L56.2 63.4ZM54 47.5 60.2 53.4 54 59.4 47.8 53.4Z"/>
+      </symbol>
+      <symbol id="settings-icon" viewBox="0 0 24 24">
+        <path d="M9 3h6l.7 2.4 2 .9 2.3-.5 3 5.2-1.7 1.9v2.2l1.7 1.9-3 5.2-2.3-.5-2 .9L15 25H9l-.7-2.4-2-.9-2.3.5-3-5.2L2.7 15v-2.2L1 10.9l3-5.2 2.3.5 2-.9L9 3Z" transform="translate(1 -1) scale(.9)"/>
+        <circle cx="12" cy="12" r="3"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <main id="stage" class="stage v-A" data-home="big" data-variant="A" data-broadcast="false" data-phase="off" aria-label="Mirax 接收畫面原型">
+    <div class="generated-background" aria-hidden="true">
+      <div id="landscape" class="scene">
+        <!-- Layered contours and drifting mist establish depth without photography or external assets. -->
+        <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id="a-sky" x2="0" y2="1"><stop stop-color="#263b3d"/><stop offset=".58" stop-color="#9ba9a0"/><stop offset="1" stop-color="#334944"/></linearGradient>
+            <linearGradient id="a-near" x2="0" y2="1"><stop stop-color="#233b36"/><stop offset="1" stop-color="#0a1b18"/></linearGradient>
+            <linearGradient id="a-mist" x2="0" y2="1"><stop stop-color="#c1c7ba" stop-opacity="0"/><stop offset=".5" stop-color="#c1c7ba" stop-opacity=".52"/><stop offset="1" stop-color="#c1c7ba" stop-opacity="0"/></linearGradient>
+            <radialGradient id="a-light"><stop stop-color="#d4d8c3" stop-opacity=".4"/><stop offset="1" stop-color="#d4d8c3" stop-opacity="0"/></radialGradient>
+          </defs>
+          <rect width="1600" height="1000" fill="url(#a-sky)"/>
+          <ellipse cx="1110" cy="220" rx="380" ry="290" fill="url(#a-light)"/>
+          <circle cx="1110" cy="204" r="27" fill="#dadfc8" opacity=".68"/>
+          <path d="M0 496 96 464 169 478 276 375 342 420 440 315 525 397 588 363 688 449 783 371 837 399 928 310 1020 355 1082 324 1180 405 1285 340 1379 392 1494 306 1600 367V1000H0Z" fill="#6d827a"/>
+          <path d="M0 574 115 502 180 522 270 475 340 495 446 459 532 492 585 483 685 563 793 518 863 528 973 436 1058 460 1148 389 1196 433 1308 405 1438 483 1545 456 1600 471V1000H0Z" fill="#4e6b60"/>
+          <path d="M1600 599 1472 529 1346 551 1241 499 1115 553 1052 521 962 572 852 545 730 587 603 558 476 606 328 567 166 640 0 597V1000H1600Z" fill="#3c5a50"/>
+          <g class="ambient mist"><path d="M-100 518Q250 473 580 558T1200 526T1700 543V710Q1280 658 1000 699T430 649T-100 691Z" fill="url(#a-mist)"/><ellipse cx="990" cy="650" rx="710" ry="64" fill="url(#a-mist)"/></g>
+          <path d="M0 1000V729L80 702 179 720 250 674 324 685 386 650 450 669 519 626 599 651 685 633 769 695 883 710 978 766 1114 791 1271 855 1446 895 1600 925V1000Z" fill="url(#a-near)"/>
+          <path d="M1600 666 1481 695 1437 740 1361 751 1291 810 1200 831 1129 879 1010 901 947 960 855 1000H1600Z" fill="#0d2520"/>
+          <path d="M0 915 146 882 290 913 368 893 443 935 577 944 706 1000H0Z" fill="#081a16"/>
+        </svg>
+      </div>
+      <div id="architecture" class="scene">
+        <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id="b-wall"><stop stop-color="#13100c"/><stop offset="1" stop-color="#624423"/></linearGradient>
+            <linearGradient id="b-light"><stop stop-color="#e4ac54"/><stop offset=".58" stop-color="#be843a"/><stop offset="1" stop-color="#63411d"/></linearGradient>
+            <linearGradient id="b-floor" x2="0" y2="1"><stop stop-color="#3e2a16"/><stop offset="1" stop-color="#100e0b"/></linearGradient>
+          </defs>
+          <rect width="1600" height="1000" fill="#100e0b"/>
+          <path d="M0 0H1600L1123 245H398Z" fill="#19150e"/>
+          <path d="M1600 0 1110 236V776L1600 1000Z" fill="url(#b-wall)"/>
+          <path d="M1600 0 1454 88V926L1600 1000Z" fill="#694a27"/>
+          <path d="M1391 120 1302 165V855L1391 900Z" fill="#8d622e"/>
+          <path d="M1250 190 1192 220V800L1250 830Z" fill="#aa7838"/>
+          <path d="M1149 242 1118 257V763L1149 779Z" fill="#d0a05b"/>
+          <path d="M1600 1000 1118 766H401L0 1000Z" fill="url(#b-floor)"/>
+          <path d="M0 0 398 245V766L0 1000Z" fill="#1d1910"/>
+          <path d="M0 0 72 44V960L0 1000Z" fill="#272016"/>
+          <path d="M1391 900 1015 784M1454 926 1044 788M1250 830 987 775" stroke="#b7894738"/>
+          <g class="ambient light-plane">
+            <path d="M1009 207H1116V773H1009Z" fill="url(#b-light)"/>
+            <path d="M1017 215H1099V759H1017Z" fill="#16120c"/>
+            <path d="M1009 773 754 1000H1055L1116 773Z" fill="#ca91451c"/>
+            <path d="M1109 215V763" stroke="#ffe3a1" stroke-width="3"/>
+            <path d="M1116 773 1226 1000" stroke="#edb867" stroke-opacity=".18"/>
+          </g>
+          <path d="M0 0H1600M0 1000H1600" stroke="#e7c38a22"/>
+          <path d="M65 240V580" stroke="#c99f5d" stroke-width="1"/>
+        </svg>
+      </div>
+      <div id="particle-scene" class="scene">
+        <canvas id="particle-canvas"></canvas>
+        <div class="field-caption">FORM / 無形<br>MONOCHROME MATTER</div>
+      </div>
+      <div id="hardline-scene" class="scene">
+        <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+          <rect width="1600" height="1000" fill="#090909"/>
+          <g class="ambient x-plane">
+            <use href="#mirax-mark" x="510" y="-335" width="1370" height="1370" fill="#d9d9d2"/>
+            <use href="#mirax-mark" x="515" y="-330" width="1370" height="1370" fill="none" stroke="#090909" stroke-width=".15"/>
+          </g>
+          <path d="M0 810 430 380M0 849 468 381" stroke="#777771" stroke-width="1"/>
+          <path d="M58 0V1000M1542 0V1000" stroke="#ffffff21"/>
+          <path d="M0 68H1600" stroke="#eeeee6" stroke-width="3"/>
+          <path d="M1390 0H1444V65H1390Z" fill="#eee"/>
+          <path d="M340 720 372 752 340 784 308 752Z" fill="none" stroke="#e8e8e0" stroke-width="2"/>
+        </svg>
+        <div class="hardline-caption">BIG<br>STANDBY<span aria-hidden="true">.</span><small>X / MIRAX ORIGINAL GEOMETRY</small></div>
+      </div>
+    </div>
+    <div id="custom-media" class="custom-media" aria-hidden="true"></div>
+    <div class="readability-scrim"></div>
+
+    <section id="standby-view" aria-label="Big Standby 首頁">
+      <header class="brand">
+        <svg class="brand-mark" aria-hidden="true"><use href="#mirax-mark"/></svg>
+        <div class="brand-name">MIRAX<small>BIG STANDBY</small></div>
+      </header>
+      <div class="theme-caption" aria-hidden="true"><span id="theme-index">LANDSCAPE / 01</span><strong id="theme-title">山間，留白。</strong></div>
+      <div class="device"><span class="micro-label">模擬接收裝置 / RECEIVER</span><strong class="device-name">MIRAX · 客廳</strong></div>
+      <div class="center">
+        <div class="drift">
+          <div class="status-indicator"><span class="status-dot"></span><span id="status-eyebrow">BROADCAST OFF</span></div>
+          <h1 id="status-title">接收已關閉</h1>
+          <p id="status-detail" class="status-detail">不會接受新的投放連線。</p>
+        </div>
+      </div>
+      <p id="connection-hint" class="connection-hint">開啟接收後，Windows 按 <kbd>Win</kbd> + <kbd>K</kbd>，選擇「MIRAX · 客廳」</p>
+    </section>
+
+    <section id="simple-view" class="simple-view" aria-label="簡單首頁示意" hidden>
+      <svg class="brand-mark" aria-hidden="true"><use href="#mirax-mark"/></svg>
+      <div class="mock-label">產品預設版型 · 僅為簡單首頁示意</div>
+      <h1>簡單首頁</h1>
+      <p class="simple-device">模擬裝置：MIRAX · 客廳</p>
+      <p id="simple-status" class="simple-status">接收已關閉</p>
+      <p>點背景或按 Enter 開啟接收控制</p>
+      <button id="simple-settings" type="button">一般設定</button>
+    </section>
+
+    <section id="projection" class="projection" aria-label="模擬投放畫面" hidden>
+      <div class="demo-outline" aria-hidden="true"></div>
+      <div class="demo-label">WEB SIMULATION / 並非實際串流</div>
+      <h2>這裡，是你的畫面。<br>目前只是示意。</h2>
+      <p>未連接發送端，未接收任何影音。<br>此畫面只用來驗證投放與返回待機的 UI 狀態。</p>
+      <button id="disconnect-projection" type="button">中斷模擬投放</button>
+      <span id="return-home-label" class="return-home-label">中斷後返回 Big Standby</span>
+    </section>
+    <p id="reveal-hint" class="reveal-hint">點背景 / Enter 顯示接收控制 · 無自動切換首頁</p>
+  </main>
+
+  <aside class="prototype-note" aria-label="原型聲明">
+    <strong>WEB 原型 · 全部連線狀態皆為模擬</strong><br>
+    <span>初始展示 Big Standby；產品預設：簡單 · 不儲存設定</span>
+  </aside>
+
+  <nav id="controls" class="controls" aria-label="接收控制" hidden>
+    <button id="broadcast-toggle" type="button" role="switch" aria-checked="false" aria-label="接收廣播">
+      <span class="switch-track" aria-hidden="true"></span><span id="broadcast-label">接收關閉</span>
+    </button>
+    <button id="open-settings" class="quiet" type="button" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#settings-icon"/></svg>設定</button>
+    <button id="motion-toggle" class="quiet" type="button" aria-pressed="false">暫停動態</button>
+    <button id="close-controls" class="close-controls quiet" type="button" aria-label="收起接收控制">×</button>
+  </nav>
+
+  <nav class="variant-switcher" aria-label="原型概念切換">
+    <button id="previous-variant" type="button" aria-label="上一款概念，左方向鍵">‹</button>
+    <div class="variant-label"><small>DESIGN STUDY · 原型概念 <span id="variant-counter">1 / 4</span><span id="variant-dots" class="variant-dots" aria-hidden="true"></span></small><strong id="variant-label">A / 山霧 · 流動地景</strong></div>
+    <button id="next-variant" type="button" aria-label="下一款概念，右方向鍵">›</button>
+  </nav>
+
+  <details id="inspector" class="inspector">
+    <summary>狀態檢視</summary>
+    <pre id="state-json" aria-label="目前完整原型狀態"></pre>
+  </details>
+  <div id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <dialog id="settings" aria-labelledby="settings-title" aria-describedby="settings-description">
+    <div class="dialog-heading">
+      <div><h2 id="settings-title">一般設定</h2><p id="settings-description">立即生效 · 僅供原型預覽 · 重新整理即重設</p></div>
+      <button id="close-settings" type="button">返回畫面 <span aria-hidden="true">↗</span></button>
+    </div>
+    <div class="dialog-body">
+      <fieldset>
+        <legend>首頁樣式</legend>
+        <div class="home-options">
+          <label class="radio-option"><input id="home-simple" type="radio" name="home-style" value="simple"><span><b>簡單</b><small>產品預設 · 簡化示意</small></span></label>
+          <label class="radio-option"><input id="home-big" type="radio" name="home-style" value="big" checked><span><b>Big Standby</b><small>全螢幕環境式接收畫面</small></span></label>
+        </div>
+        <p class="help">兩種首頁互斥。沒有閒置切換；Esc 或返回只收起設定，不變更樣式。</p>
+      </fieldset>
+      <fieldset>
+        <legend>本機背景</legend>
+        <label class="field-label" for="background-file">選取圖片、影片或 GIF</label>
+        <input id="background-file" type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif,video/mp4,video/webm,video/ogg,video/quicktime,.jpg,.jpeg,.png,.webp,.avif,.gif,.mp4,.m4v,.webm,.ogv,.mov" aria-describedby="file-help media-feedback">
+        <p id="file-help" class="help">僅在此瀏覽器以本機物件網址預覽，不上傳；重新整理會清除。填滿畫面（cover），邊緣可能裁切。影片靜音循環；格式支援取決於瀏覽器。不接受 SVG / HTML。</p>
+        <p id="media-feedback" class="media-feedback" role="status">目前使用生成式概念背景。</p>
+        <div class="button-row"><button id="clear-media" type="button" disabled>移除媒體，恢復概念背景</button><button id="retry-video" type="button" hidden>重試播放影片</button></div>
+        <p id="gif-warning" class="help" hidden>GIF 無法在此可靠暫停；暫停按鈕不會停止 GIF。若需完全靜止，請改選靜態圖或移除媒體。</p>
+      </fieldset>
+      <fieldset>
+        <legend>環境動態</legend>
+        <div class="setting-row"><span id="motion-description">緩慢背景與微幅文字漂移</span><button id="settings-motion-toggle" type="button" aria-pressed="false">暫停動態</button></div>
+        <p id="motion-help" class="help">暫停會停止生成背景、文字與影片；GIF 除外。遵循系統「減少動態」。分頁隱藏時暫停影片與背景繪製。</p>
+      </fieldset>
+      <fieldset>
+        <legend>連線模擬</legend>
+        <div class="setting-row"><span>接收廣播 · 初始關閉</span><button id="settings-broadcast-toggle" type="button" role="switch" aria-checked="false">開啟接收</button></div>
+        <div class="simulation-heading" style="margin-top:15px"><strong id="simulation-state">接收已關閉</strong><small>不是 Miracast 實際連線</small></div>
+        <div class="button-row" aria-label="連線模擬操作">
+          <button id="simulate-connect" type="button" disabled>模擬連接</button>
+          <button id="simulate-project" type="button" disabled>投放成功</button>
+          <button id="simulate-fail" type="button" disabled>連接失敗</button>
+          <button id="simulate-disconnect" type="button" disabled>中斷投放</button>
+          <button id="simulate-reset" type="button" disabled>返回等待</button>
+        </div>
+        <p class="help">開啟接收 → 模擬連接 → 投放成功或連接失敗。中斷後仍保留所選首頁樣式與背景。</p>
+      </fieldset>
+      <p class="safety-note">此網頁不驗證 Android 保持喚醒、亮度或實際接收能力。未來 Android 方案僅前景保持喚醒、沿用目前亮度；緩慢動態與文字漂移不代表已消除 OLED 烙印風險。</p>
+    </div>
+  </dialog>
+
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const variants = ['A', 'B', 'C', 'D'];
+    const concepts = {
+      A: { label: 'A / 山霧 · 流動地景', index: 'LANDSCAPE / 01', title: '山間，留白。' },
+      B: { label: 'B / 琥珀 · 光的建築', index: 'ARCHITECTURE / 02', title: '一道光，一個空間。' },
+      C: { label: 'C / 微粒 · 黑白場域', index: 'MATTER / 03', title: '安靜的引力。' },
+      D: { label: 'D / 硬線 · MIRAX 形構', index: 'HARD LINES / 04', title: 'MONO / X' }
+    };
+    const phases = {
+      off: { title: '接收已關閉', eyebrow: 'BROADCAST OFF', detail: '不會接受新的投放連線。' },
+      waiting: { title: '等待連接', eyebrow: 'BROADCAST ON · SIMULATED', detail: '接收已開啟 · 僅為網頁模擬' },
+      connecting: { title: '正在連接', eyebrow: 'CONNECTING · SIMULATED', detail: '模擬發送端已選取此裝置。' },
+      projecting: { title: '模擬投放中', eyebrow: 'PROJECTING · SIMULATED', detail: '沒有實際影音串流。' },
+      failed: { title: '連接未成功', eyebrow: 'CONNECTION FAILED · SIMULATED', detail: '模擬連接失敗；接收仍開啟，可再試一次。' }
+    };
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    function readVariant() {
+      const requested = new URL(location.href).searchParams.get('variant');
+      return variants.includes(requested) ? requested : 'A';
+    }
+    const state = {
+      home: 'big', variant: readVariant(), broadcast: false, phase: 'off',
+      controlsOpen: false, settingsOpen: false, inspectorOpen: false,
+      media: { kind: 'none', name: null, status: 'none', error: null, playbackBlocked: false },
+      motion: { paused: false, reduced: reducedMotion.matches, hidden: document.hidden },
+      lastAction: 'initial-preview'
+    };
+    let objectUrl = null;
+    let mediaToken = 0;
+    let videoElement = null;
+    let toastTimer = null;
+    let lastAnnouncement = '';
+    let lastFocusedElement = null;
+    let playbackPending = false;
+    const stage = $('stage');
+    const settings = $('settings');
+    const mediaHost = $('custom-media');
+
+    function effectiveMotion() {
+      return !state.motion.paused && !state.motion.reduced && !state.motion.hidden;
+    }
+    function mediaIsVisible() {
+      return state.home === 'big' && state.phase !== 'projecting' && state.media.status === 'ready';
+    }
+    function shouldPlayVideo() {
+      return effectiveMotion() && mediaIsVisible() && state.media.kind === 'video';
+    }
+    function shouldAnimateParticles() {
+      return effectiveMotion() && state.home === 'big' && state.variant === 'C' &&
+        state.phase !== 'projecting' && state.media.status !== 'ready';
+    }
+    function announce(message) {
+      if (message !== lastAnnouncement) {
+        $('announcement').textContent = message;
+        lastAnnouncement = message;
+      }
+    }
+    function showToast(message) {
+      clearTimeout(toastTimer);
+      $('toast').textContent = message;
+      $('toast').hidden = false;
+      toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5000);
+    }
+    function updateInspector() {
+      const snapshot = {
+        prototype: true,
+        home: state.home,
+        productDefaultHome: 'simple',
+        variant: state.variant,
+        broadcast: state.broadcast,
+        phase: state.phase,
+        controlsOpen: state.controlsOpen,
+        settingsOpen: state.settingsOpen,
+        inspectorOpen: state.inspectorOpen,
+        media: { ...state.media, visible: mediaIsVisible(), fit: 'cover', localOnly: true, objectUrlActive: Boolean(objectUrl), videoPaused: videoElement ? videoElement.paused : null },
+        motion: { ...state.motion, effective: effectiveMotion(), particleRendering: shouldAnimateParticles(), gifPausable: false },
+        persistence: 'none',
+        lastAction: state.lastAction
+      };
+      $('state-json').textContent = JSON.stringify(snapshot, null, 2);
+      stage.dataset.home = state.home;
+      stage.dataset.variant = state.variant;
+      stage.dataset.broadcast = String(state.broadcast);
+      stage.dataset.phase = state.phase;
+      stage.dataset.media = state.media.kind;
+      stage.dataset.motion = effectiveMotion() ? 'running' : 'paused';
+    }
+    function render() {
+      const phase = phases[state.phase];
+      const concept = concepts[state.variant];
+      stage.className = `stage v-${state.variant}`;
+      stage.classList.toggle('is-broadcasting', state.broadcast);
+      stage.classList.toggle('is-projecting', state.phase === 'projecting');
+      stage.classList.toggle('has-media', state.media.status === 'ready');
+      stage.classList.toggle('motion-stopped', !effectiveMotion() || state.home !== 'big' || state.phase === 'projecting');
+      stage.classList.toggle('page-hidden', state.motion.hidden);
+      $('standby-view').hidden = state.home !== 'big' || state.phase === 'projecting';
+      $('simple-view').hidden = state.home !== 'simple' || state.phase === 'projecting';
+      $('projection').hidden = state.phase !== 'projecting';
+      $('controls').hidden = !state.controlsOpen;
+      $('status-title').textContent = phase.title;
+      $('status-detail').textContent = phase.detail;
+      $('status-eyebrow').textContent = phase.eyebrow;
+      $('simple-status').textContent = phase.title;
+      $('simulation-state').textContent = phase.title;
+      $('connection-hint').innerHTML = `${state.broadcast ? 'Windows 按' : '開啟接收後，Windows 按'} <kbd>Win</kbd> + <kbd>K</kbd>，選擇「MIRAX · 客廳」`;
+      $('theme-index').textContent = concept.index;
+      $('theme-title').textContent = concept.title;
+      $('variant-label').textContent = concept.label;
+      $('variant-counter').textContent = `${variants.indexOf(state.variant) + 1} / 4`;
+      $('variant-dots').innerHTML = variants.map((variant) => `<i${variant === state.variant ? ' class="current"' : ''}></i>`).join('');
+      $('broadcast-toggle').setAttribute('aria-checked', String(state.broadcast));
+      $('settings-broadcast-toggle').setAttribute('aria-checked', String(state.broadcast));
+      $('broadcast-label').textContent = state.broadcast ? '接收開啟' : '接收關閉';
+      $('settings-broadcast-toggle').textContent = state.broadcast ? '關閉接收' : '開啟接收';
+      $('home-simple').checked = state.home === 'simple';
+      $('home-big').checked = state.home === 'big';
+      $('return-home-label').textContent = `中斷後返回 ${state.home === 'big' ? 'Big Standby' : '簡單首頁'}`;
+      $('simulate-connect').disabled = !state.broadcast || !['waiting', 'failed'].includes(state.phase);
+      $('simulate-project').disabled = state.phase !== 'connecting';
+      $('simulate-fail').disabled = state.phase !== 'connecting';
+      $('simulate-disconnect').disabled = state.phase !== 'projecting';
+      $('simulate-reset').disabled = !['connecting', 'failed'].includes(state.phase);
+      $('reveal-hint').textContent = state.controlsOpen ? 'Esc / 返回收起控制 · 不切換首頁樣式' : '點背景 / Enter 顯示接收控制 · 無自動切換首頁';
+      const gifSuffix = state.media.kind === 'gif' ? '（GIF 除外）' : '';
+      const motionLabel = state.motion.reduced ? '系統減少動態' : `${state.motion.paused ? '繼續動態' : '暫停動態'}${gifSuffix}`;
+      for (const id of ['motion-toggle', 'settings-motion-toggle']) {
+        $(id).textContent = motionLabel;
+        $(id).setAttribute('aria-pressed', String(state.motion.paused || state.motion.reduced));
+        $(id).disabled = state.motion.reduced;
+      }
+      $('motion-description').textContent = state.motion.reduced ? '已遵循系統「減少動態」，影片保持暫停。' : '緩慢背景與微幅文字漂移';
+      $('gif-warning').hidden = state.media.kind !== 'gif';
+      $('clear-media').disabled = state.media.kind === 'none' && !state.media.error;
+      $('retry-video').hidden = !state.media.playbackBlocked || state.media.kind !== 'video';
+      $('retry-video').disabled = !shouldPlayVideo();
+      const mediaFeedback = $('media-feedback');
+      mediaFeedback.classList.toggle('error', Boolean(state.media.error));
+      if (state.media.error) mediaFeedback.textContent = state.media.error;
+      else if (state.media.status === 'loading') mediaFeedback.textContent = `正在讀取：${state.media.name}`;
+      else if (state.media.status === 'ready') {
+        const suffix = state.media.kind === 'video' ? (state.media.playbackBlocked ? ' · 瀏覽器未自動播放，請重試。' : ' · 靜音循環；動態暫停時停格。') : (state.media.kind === 'gif' ? ' · GIF 動畫不受暫停控制。' : '');
+        mediaFeedback.textContent = `本機預覽：${state.media.name}${suffix}${state.home === 'simple' ? ' · 切換 Big Standby 才會顯示。' : ''}`;
+      } else mediaFeedback.textContent = '目前使用生成式概念背景。';
+      syncMotion();
+      updateInspector();
+    }
+    function act(action, mutation, message) {
+      mutation();
+      state.lastAction = action;
+      render();
+      if (message) announce(message);
+    }
+    function setVariant(offset) {
+      const index = (variants.indexOf(state.variant) + offset + variants.length) % variants.length;
+      const variant = variants[index];
+      const url = new URL(location.href);
+      url.searchParams.set('variant', variant);
+      history.pushState({ variant }, '', url);
+      act('change-variant', () => { state.variant = variant; }, concepts[variant].label);
+    }
+    function toggleBroadcast() {
+      act('toggle-broadcast', () => {
+        state.broadcast = !state.broadcast;
+        state.phase = state.broadcast ? 'waiting' : 'off';
+      }, state.broadcast ? '接收已關閉，模擬連線已結束。' : '接收已開啟，等待模擬連線。');
+    }
+    function setPhase(phase) {
+      const allowed = {
+        connecting: state.broadcast && ['waiting', 'failed'].includes(state.phase),
+        projecting: state.phase === 'connecting',
+        failed: state.phase === 'connecting',
+        waiting: state.broadcast && ['connecting', 'projecting', 'failed'].includes(state.phase)
+      };
+      if (!allowed[phase]) return;
+      act(`simulate-${phase}`, () => { state.phase = phase; }, phases[phase].title);
+      if (phase === 'projecting') {
+        closeSettings(false);
+        $('disconnect-projection').focus({ preventScroll: true });
+      }
+    }
+    function revealControls() {
+      if (!state.controlsOpen) act('reveal-controls', () => { state.controlsOpen = true; });
+    }
+    function dismissControls() {
+      const focusWasInside = $('controls').contains(document.activeElement);
+      act('dismiss-controls', () => { state.controlsOpen = false; });
+      if (focusWasInside) {
+        stage.setAttribute('tabindex', '-1');
+        stage.focus({ preventScroll: true });
+      }
+    }
+    function openSettings() {
+      if (settings.open) return;
+      lastFocusedElement = document.activeElement;
+      state.settingsOpen = true;
+      state.controlsOpen = true;
+      settings.showModal();
+      state.lastAction = 'open-settings';
+      render();
+    }
+    function closeSettings(restoreFocus = true) {
+      if (!settings.open) return;
+      settings.close();
+      state.settingsOpen = false;
+      state.lastAction = 'close-settings';
+      render();
+      if (restoreFocus && lastFocusedElement instanceof HTMLElement && !lastFocusedElement.closest('[hidden]')) lastFocusedElement.focus({ preventScroll: true });
+    }
+    function dismissAll() {
+      closeSettings(false);
+      dismissControls();
+      stage.setAttribute('tabindex', '-1');
+      stage.focus({ preventScroll: true });
+    }
+    function toggleMotion() {
+      if (state.motion.reduced) return;
+      act('toggle-motion', () => { state.motion.paused = !state.motion.paused; }, state.motion.paused ? '環境動態已恢復。' : '生成背景、文字與影片已暫停。GIF 除外。');
+    }
+
+    function releaseMedia() {
+      mediaToken += 1;
+      if (videoElement) {
+        videoElement.pause();
+        videoElement.removeAttribute('src');
+        videoElement.load();
+      }
+      videoElement = null;
+      playbackPending = false;
+      mediaHost.replaceChildren();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    }
+    function clearMedia() {
+      releaseMedia();
+      $('background-file').value = '';
+      act('clear-media', () => {
+        state.media = { kind: 'none', name: null, status: 'none', error: null, playbackBlocked: false };
+      }, '已移除本機媒體，恢復所選概念背景。');
+    }
+    // Validate a narrow non-executable allowlist before creating an object URL.
+    const fileTypes = {
+      jpg: ['image', ['image/jpeg']], jpeg: ['image', ['image/jpeg']],
+      png: ['image', ['image/png']], webp: ['image', ['image/webp']], avif: ['image', ['image/avif']],
+      gif: ['gif', ['image/gif']], mp4: ['video', ['video/mp4']], m4v: ['video', ['video/mp4', 'video/x-m4v']],
+      webm: ['video', ['video/webm']], ogv: ['video', ['video/ogg']], mov: ['video', ['video/quicktime']]
+    };
+    function loadFile(file) {
+      if (!file) return;
+      const extension = file.name.split('.').pop().toLowerCase();
+      const specification = Object.hasOwn(fileTypes, extension) ? fileTypes[extension] : null;
+      const safeType = specification && (!file.type || file.type === 'application/octet-stream' || specification[1].includes(file.type.toLowerCase()));
+      if (!safeType || file.size === 0) {
+        act('reject-media', () => {
+          state.media.error = file.size === 0 ? '檔案是空的；請選擇有效的圖片或影片。原背景未變更。' : '不接受此檔案。請選 JPG、PNG、WebP、AVIF、GIF、MP4、WebM、OGV 或 MOV；不接受 SVG / HTML。原背景未變更。';
+        }, '檔案未載入。原背景未變更。');
+        return;
+      }
+      releaseMedia();
+      const token = mediaToken;
+      const kind = specification[0];
+      state.media = { kind, name: file.name, status: 'loading', error: null, playbackBlocked: false };
+      objectUrl = URL.createObjectURL(file);
+      const element = document.createElement(kind === 'video' ? 'video' : 'img');
+      const fail = () => {
+        if (token !== mediaToken) return;
+        const name = state.media.name;
+        releaseMedia();
+        act('media-error', () => {
+          state.media = { kind, name, status: 'error', error: `無法預覽「${name}」：檔案可能損壞，或此瀏覽器不支援其格式／編碼。已恢復概念背景。`, playbackBlocked: false };
+        }, '媒體無法預覽，已恢復概念背景。');
+      };
+      const ready = () => {
+        if (token !== mediaToken) return;
+        act('media-ready', () => { state.media.status = 'ready'; state.media.error = null; }, `已載入本機${kind === 'video' ? '影片' : kind === 'gif' ? ' GIF' : '圖片'}背景。`);
+      };
+      element.addEventListener('error', fail, { once: true });
+      if (kind === 'video') {
+        videoElement = element;
+        element.muted = true;
+        element.defaultMuted = true;
+        element.loop = true;
+        element.playsInline = true;
+        element.preload = 'auto';
+        element.setAttribute('muted', '');
+        element.setAttribute('playsinline', '');
+        element.addEventListener('loadeddata', ready, { once: true });
+        for (const event of ['play', 'pause']) element.addEventListener(event, () => { if (token === mediaToken) updateInspector(); });
+      } else {
+        element.alt = '';
+        element.addEventListener('load', ready, { once: true });
+      }
+      element.src = objectUrl;
+      mediaHost.append(element);
+      state.lastAction = 'select-local-media';
+      render();
+    }
+    function playVideo() {
+      if (!videoElement || playbackPending || !shouldPlayVideo()) return;
+      const element = videoElement;
+      const token = mediaToken;
+      playbackPending = true;
+      element.play().then(() => {
+        if (token !== mediaToken) return;
+        playbackPending = false;
+        state.media.playbackBlocked = false;
+        if (!shouldPlayVideo()) element.pause();
+        updateInspector();
+      }).catch((error) => {
+        if (token !== mediaToken) return;
+        playbackPending = false;
+        if (!shouldPlayVideo() || error.name === 'AbortError') { updateInspector(); return; }
+        console.warn('Local background playback was blocked.', error);
+        state.media.playbackBlocked = true;
+        state.lastAction = 'video-playback-blocked';
+        render();
+        showToast('影片未自動播放；可在設定按「重試播放影片」。');
+      });
+    }
+
+    const canvas = $('particle-canvas');
+    const context = canvas.getContext('2d');
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+    let animationFrame = null;
+    let particleTime = 0;
+    let previousFrameTime = null;
+    let seed = 74321;
+    function random() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+    const particles = Array.from({ length: 1000 }, () => ({ angle: random() * Math.PI * 2, tube: random() * Math.PI * 2, radius: .21 + random() * .17, size: .45 + random() * 1.0, alpha: .25 + random() * .65 }));
+    function drawParticles() {
+      if (!context) return;
+      context.clearRect(0, 0, canvasWidth, canvasHeight);
+      const scale = Math.max(260, Math.min(canvasWidth * .47, canvasHeight * .64));
+      const rotation = particleTime * .000012;
+      for (const point of particles) {
+        const angle = point.angle + rotation;
+        const radius = 1 + Math.cos(point.tube) * point.radius;
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius * .45 + Math.sin(point.tube) * point.radius * .68;
+        const depth = Math.sin(angle) * .45 + Math.cos(point.tube) * .25;
+        const perspective = 1 + depth * .12;
+        const screenX = canvasWidth * .50 + (x * .93 + y * .27) * scale * perspective;
+        const screenY = canvasHeight * .51 + (y * .84 - x * .27) * scale * perspective;
+        context.beginPath();
+        context.arc(screenX, screenY, Math.max(.3, point.size * (1 + depth * .3)), 0, Math.PI * 2);
+        context.fillStyle = `rgba(231,231,224,${point.alpha * (.60 + depth * .3)})`;
+        context.fill();
+      }
+    }
+    function animateParticles(time) {
+      animationFrame = null;
+      if (!shouldAnimateParticles()) { previousFrameTime = null; return; }
+      if (previousFrameTime !== null) particleTime += Math.min(time - previousFrameTime, 80);
+      previousFrameTime = time;
+      drawParticles();
+      animationFrame = requestAnimationFrame(animateParticles);
+    }
+    function resizeCanvas() {
+      canvasWidth = stage.clientWidth;
+      canvasHeight = stage.clientHeight;
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(canvasWidth * ratio);
+      canvas.height = Math.round(canvasHeight * ratio);
+      if (context) context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      drawParticles();
+    }
+    function syncMotion() {
+      if (shouldAnimateParticles()) {
+        if (animationFrame === null) animationFrame = requestAnimationFrame(animateParticles);
+      } else if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+        previousFrameTime = null;
+      }
+      if (videoElement) {
+        if (!shouldPlayVideo()) videoElement.pause();
+        else if (videoElement.paused && !state.media.playbackBlocked) playVideo();
+      }
+    }
+
+    $('previous-variant').addEventListener('click', () => setVariant(-1));
+    $('next-variant').addEventListener('click', () => setVariant(1));
+    $('broadcast-toggle').addEventListener('click', toggleBroadcast);
+    $('settings-broadcast-toggle').addEventListener('click', toggleBroadcast);
+    $('motion-toggle').addEventListener('click', toggleMotion);
+    $('settings-motion-toggle').addEventListener('click', toggleMotion);
+    $('open-settings').addEventListener('click', openSettings);
+    $('simple-settings').addEventListener('click', openSettings);
+    $('close-settings').addEventListener('click', dismissAll);
+    $('close-controls').addEventListener('click', dismissControls);
+    $('simulate-connect').addEventListener('click', () => setPhase('connecting'));
+    $('simulate-project').addEventListener('click', () => setPhase('projecting'));
+    $('simulate-fail').addEventListener('click', () => setPhase('failed'));
+    $('simulate-disconnect').addEventListener('click', () => setPhase('waiting'));
+    $('simulate-reset').addEventListener('click', () => setPhase('waiting'));
+    $('disconnect-projection').addEventListener('click', () => {
+      setPhase('waiting');
+      revealControls();
+      $('broadcast-toggle').focus({ preventScroll: true });
+    });
+    document.querySelectorAll('input[name="home-style"]').forEach((input) => {
+      input.addEventListener('change', () => act('change-home-style', () => { state.home = input.value; }, `首頁已切換為 ${input.value === 'big' ? 'Big Standby' : '簡單'}。`));
+    });
+    $('background-file').addEventListener('change', (event) => {
+      loadFile(event.target.files[0]);
+      event.target.value = '';
+    });
+    $('clear-media').addEventListener('click', clearMedia);
+    $('retry-video').addEventListener('click', () => {
+      act('retry-video', () => { state.media.playbackBlocked = false; });
+      playVideo();
+    });
+    stage.addEventListener('click', (event) => {
+      if (event.target.closest('button, input, label, a, summary, details, [contenteditable]')) return;
+      revealControls();
+    });
+    settings.addEventListener('cancel', (event) => { event.preventDefault(); dismissAll(); });
+    settings.addEventListener('click', (event) => {
+      if (event.target !== settings) return;
+      const rect = settings.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dismissAll();
+    });
+    $('inspector').addEventListener('toggle', () => {
+      state.inspectorOpen = $('inspector').open;
+      state.lastAction = 'toggle-inspector';
+      updateInspector();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        if (!settings.open) { event.preventDefault(); dismissAll(); }
+        return;
+      }
+      // Preserve form navigation while allowing variant arrows on the switcher itself.
+      if (settings.open || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.target.closest('input, textarea, select, [contenteditable]')) return;
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        setVariant(event.key === 'ArrowLeft' ? -1 : 1);
+      } else if (event.key === 'Enter' && !event.target.closest('button, a, summary')) {
+        event.preventDefault();
+        revealControls();
+        $('broadcast-toggle').focus({ preventScroll: true });
+      }
+    });
+    window.addEventListener('popstate', () => act('history-variant', () => { state.variant = readVariant(); }));
+    window.addEventListener('resize', resizeCanvas);
+    document.addEventListener('visibilitychange', () => act('visibility-change', () => { state.motion.hidden = document.hidden; }));
+    reducedMotion.addEventListener('change', (event) => act('reduced-motion-change', () => { state.motion.reduced = event.matches; }));
+    window.addEventListener('beforeunload', releaseMedia);
+    // Small invariant checks are in-memory only; there are no persistent test artifacts.
+    console.assert(variants.length === 4 && variants.every((key) => Boolean(concepts[key])), 'Every variant must have a concept.');
+    console.assert(state.home === 'big' && state.broadcast === false && state.phase === 'off', 'Preview must start Big Standby with broadcast off.');
+    resizeCanvas();
+    render();
+  </script>
+</body>
+</html>
