@@ -67,11 +67,19 @@
     .device-name { font-size: 18px; font-weight: 400; letter-spacing: .15em; white-space: nowrap; }
     .connection-hint { position: absolute; top: calc(49% + 126px); left: 50%; transform: translateX(-50%); text-align: center; width: min(90%, 580px); color: #e0e4df; font-size: 12px; letter-spacing: .08em; }
     kbd { font: inherit; font-weight: 600; border-bottom: 1px solid #ffffff70; padding: 0 3px 3px; margin: 0 3px; }
-    /* Slow mist and restrained text drift reduce static composition without competing with status. */
-    .mist { animation: mist-drift 65s ease-in-out infinite alternate; transform-origin: center; }
-    .drift { animation: text-drift 85s linear infinite; }
-    @keyframes mist-drift { from { transform: translateX(-30px); opacity: .65; } to { transform: translateX(30px); opacity: .9; } }
-    @keyframes text-drift { 0%,100% { transform: translate(0,0); } 25% { transform: translate(4px,2px); } 50% { transform: translate(1px,-3px); } 75% { transform: translate(-3px,1px); } }
+    /* Shift the entire standby layer and background so no UI pixel stays fixed; this is still not a burn-in guarantee. */
+    #standby-view { position: absolute; inset: 0; }
+    .oled-shift { animation: pixel-shift 48s linear infinite; }
+    .scene-pan { animation: scene-pan 24s ease-in-out infinite alternate; transform-origin: center; }
+    .mist { animation: mist-drift 24s ease-in-out infinite alternate; transform-origin: center; }
+    @keyframes pixel-shift {
+      0%,100% { transform: translate(-10px,-6px); }
+      25% { transform: translate(10px,-3px); }
+      50% { transform: translate(7px,7px); }
+      75% { transform: translate(-8px,5px); }
+    }
+    @keyframes scene-pan { from { transform: scale(1.08) translate(-1.5%,-.7%); } to { transform: scale(1.08) translate(1.5%,.7%); } }
+    @keyframes mist-drift { from { transform: translateX(-80px); opacity: .65; } to { transform: translateX(80px); opacity: .9; } }
     /* B uses perspective and negative space, not a recolored landscape. */
     .v-B { background: #100e0a; --accent: #ffe1a6; }
     .v-B .center { top: 48%; }
@@ -81,8 +89,8 @@
     .v-B .device { left: 5.2%; top: auto; bottom: 174px; transform: none; text-align: left; padding-left: 18px; border-left: 2px solid #edbc70; }
     .v-B .device-name { font-size: 23px; }
     .v-B .connection-hint { left: auto; right: 5.2%; top: auto; bottom: 176px; transform: none; text-align: right; width: 430px; }
-    .light-plane { animation: light-breathe 35s ease-in-out infinite alternate; }
-    @keyframes light-breathe { from { opacity: .60; } to { opacity: 1; } }
+    .light-plane { animation: light-breathe 18s ease-in-out infinite alternate; }
+    @keyframes light-breathe { from { transform: translateX(-18px); opacity: .60; } to { transform: translateX(18px); opacity: 1; } }
     /* C's particle annulus leaves a quiet center; it is not a data visualization. */
     .v-C { background: #080808; }
     #particle-scene { background: #080808; }
@@ -92,23 +100,24 @@
     .v-C .device-name { font-size: 15px; }
     .v-C .connection-hint { top: auto; bottom: 172px; font-size: 12px; }
     .field-caption { position: absolute; left: 5.2%; bottom: 176px; color: #bdbdb8; font-size: 10px; letter-spacing: .3em; line-height: 2.2; }
-    /* D directly reuses the actual Mirax X/diamond path, enlarged into hard-edged identity. */
+    /* D directly reuses the actual Mirax X/diamond path as thin monochrome wireframe geometry. */
     .v-D { background: #090909; color: #f1f1ec; --accent: #fff; }
-    .v-D .brand { top: 99px; padding: 11px 17px 13px 0; border-top: 3px solid #eeeeea; }
-    .v-D .brand-name { font-weight: 800; letter-spacing: .10em; }
+    .v-D .brand { top: 99px; padding: 11px 17px 13px 0; border-top: 1px solid #eeeeea; }
+    .v-D .brand-name { font-weight: 500; letter-spacing: .16em; }
     .v-D .center { width: 100%; top: 48%; padding: 26px 5%; background: #090909; border-top: 1px solid #eeeeea; border-bottom: 1px solid #eeeeea; }
-    .v-D h1 { font-size: clamp(39px, 6.4vw, 96px); font-weight: 850; letter-spacing: .025em; text-indent: 0; line-height: 1.1; }
-    .v-D .status-indicator { margin-bottom: 17px; letter-spacing: .12em; font-weight: 650; }
+    .v-D h1 { font-size: clamp(39px, 5.8vw, 86px); font-weight: 400; letter-spacing: .12em; text-indent: 0; line-height: 1.1; }
+    .v-D .status-indicator { margin-bottom: 17px; letter-spacing: .12em; font-weight: 450; }
     .v-D .status-detail { margin-top: 18px; letter-spacing: .06em; }
-    .v-D .device { top: 188px; right: 5.2%; left: auto; transform: none; text-align: right; background: #090909; padding: 10px 0 10px 18px; border-left: 4px solid #eee; }
-    .v-D .device-name { font-size: 18px; font-weight: 700; letter-spacing: .06em; }
+    .v-D .device { top: 188px; right: 5.2%; left: auto; transform: none; text-align: right; background: #090909; padding: 10px 0 10px 18px; border-left: 1px solid #eee; }
+    .v-D .device-name { font-size: 18px; font-weight: 400; letter-spacing: .10em; }
     .v-D .theme-caption { background: #090909; padding: 6px 10px; }
-    .v-D .connection-hint { top: auto; bottom: 181px; left: auto; right: 5.2%; transform: none; text-align: right; width: 430px; background: #090909; padding: 12px; border-right: 3px solid #eee; }
-    .hardline-caption { position: absolute; bottom: 164px; left: 5.2%; font-size: clamp(28px, 3.8vw, 55px); line-height: .95; font-weight: 850; letter-spacing: -.04em; }
+    .v-D .connection-hint { top: auto; bottom: 181px; left: auto; right: 5.2%; transform: none; text-align: right; width: 430px; background: #090909; padding: 12px; border-right: 1px solid #eee; }
+    .hardline-caption { position: absolute; bottom: 164px; left: 5.2%; font-size: clamp(28px, 3.8vw, 55px); line-height: 1; font-weight: 400; letter-spacing: .04em; }
     .hardline-caption small { font-size: 9px; font-weight: 500; display: block; letter-spacing: .23em; margin-top: 15px; }
-    .x-plane { animation: x-shift 75s ease-in-out infinite alternate; }
-    @keyframes x-shift { from { transform: translate(0,0); } to { transform: translate(-9px,5px); } }
-    .motion-stopped .ambient, .motion-stopped .drift { animation-play-state: paused !important; }
+    .x-plane { animation: x-shift 24s ease-in-out infinite alternate; }
+    @keyframes x-shift { from { transform: translate(-32px,16px); } to { transform: translate(32px,-16px); } }
+    .motion-stopped .ambient { animation-play-state: paused !important; }
+    .motion-reduced .ambient:not(.oled-shift) { animation-play-state: paused !important; }
     .page-hidden .custom-media { display: none; }
     .prototype-note { position: fixed; z-index: 25; left: 20px; top: 17px; color: #efefea; font-size: 10px; line-height: 1.7; letter-spacing: .04em; padding: 7px 11px; background: #101210ee; border-left: 2px solid #c9ccc3; }
     .prototype-note strong { font-size: 10px; font-weight: 650; letter-spacing: .14em; }
@@ -309,7 +318,11 @@
       .projection button { font-size: 11px; padding: 6px 12px; margin-top: 8px; }
       .toast { top: 116px; }
     }
-    @media (prefers-reduced-motion: reduce) { .ambient, .drift { animation: none !important; } }
+    /* Reduced motion pauses ambient backdrop animation while keeping a slower positional shift. */
+    @media (prefers-reduced-motion: reduce) {
+      .ambient:not(.oled-shift) { animation-play-state: paused !important; }
+      .oled-shift { animation-duration: 120s; }
+    }
   </style>
 </head>
 <body>
@@ -337,15 +350,17 @@
             <radialGradient id="a-light"><stop stop-color="#d4d8c3" stop-opacity=".4"/><stop offset="1" stop-color="#d4d8c3" stop-opacity="0"/></radialGradient>
           </defs>
           <rect width="1600" height="1000" fill="url(#a-sky)"/>
-          <ellipse cx="1110" cy="220" rx="380" ry="290" fill="url(#a-light)"/>
-          <circle cx="1110" cy="204" r="27" fill="#dadfc8" opacity=".68"/>
-          <path d="M0 496 96 464 169 478 276 375 342 420 440 315 525 397 588 363 688 449 783 371 837 399 928 310 1020 355 1082 324 1180 405 1285 340 1379 392 1494 306 1600 367V1000H0Z" fill="#6d827a"/>
-          <path d="M0 574 115 502 180 522 270 475 340 495 446 459 532 492 585 483 685 563 793 518 863 528 973 436 1058 460 1148 389 1196 433 1308 405 1438 483 1545 456 1600 471V1000H0Z" fill="#4e6b60"/>
-          <path d="M1600 599 1472 529 1346 551 1241 499 1115 553 1052 521 962 572 852 545 730 587 603 558 476 606 328 567 166 640 0 597V1000H1600Z" fill="#3c5a50"/>
-          <g class="ambient mist"><path d="M-100 518Q250 473 580 558T1200 526T1700 543V710Q1280 658 1000 699T430 649T-100 691Z" fill="url(#a-mist)"/><ellipse cx="990" cy="650" rx="710" ry="64" fill="url(#a-mist)"/></g>
-          <path d="M0 1000V729L80 702 179 720 250 674 324 685 386 650 450 669 519 626 599 651 685 633 769 695 883 710 978 766 1114 791 1271 855 1446 895 1600 925V1000Z" fill="url(#a-near)"/>
-          <path d="M1600 666 1481 695 1437 740 1361 751 1291 810 1200 831 1129 879 1010 901 947 960 855 1000H1600Z" fill="#0d2520"/>
-          <path d="M0 915 146 882 290 913 368 893 443 935 577 944 706 1000H0Z" fill="#081a16"/>
+          <g class="ambient scene-pan">
+            <ellipse cx="1110" cy="220" rx="380" ry="290" fill="url(#a-light)"/>
+            <circle cx="1110" cy="204" r="27" fill="#dadfc8" opacity=".68"/>
+            <path d="M0 496 96 464 169 478 276 375 342 420 440 315 525 397 588 363 688 449 783 371 837 399 928 310 1020 355 1082 324 1180 405 1285 340 1379 392 1494 306 1600 367V1000H0Z" fill="#6d827a"/>
+            <path d="M0 574 115 502 180 522 270 475 340 495 446 459 532 492 585 483 685 563 793 518 863 528 973 436 1058 460 1148 389 1196 433 1308 405 1438 483 1545 456 1600 471V1000H0Z" fill="#4e6b60"/>
+            <path d="M1600 599 1472 529 1346 551 1241 499 1115 553 1052 521 962 572 852 545 730 587 603 558 476 606 328 567 166 640 0 597V1000H1600Z" fill="#3c5a50"/>
+            <g class="ambient mist"><path d="M-100 518Q250 473 580 558T1200 526T1700 543V710Q1280 658 1000 699T430 649T-100 691Z" fill="url(#a-mist)"/><ellipse cx="990" cy="650" rx="710" ry="64" fill="url(#a-mist)"/></g>
+            <path d="M0 1000V729L80 702 179 720 250 674 324 685 386 650 450 669 519 626 599 651 685 633 769 695 883 710 978 766 1114 791 1271 855 1446 895 1600 925V1000Z" fill="url(#a-near)"/>
+            <path d="M1600 666 1481 695 1437 740 1361 751 1291 810 1200 831 1129 879 1010 901 947 960 855 1000H1600Z" fill="#0d2520"/>
+            <path d="M0 915 146 882 290 913 368 893 443 935 577 944 706 1000H0Z" fill="#081a16"/>
+          </g>
         </svg>
       </div>
       <div id="architecture" class="scene">
@@ -356,25 +371,27 @@
             <linearGradient id="b-floor" x2="0" y2="1"><stop stop-color="#3e2a16"/><stop offset="1" stop-color="#100e0b"/></linearGradient>
           </defs>
           <rect width="1600" height="1000" fill="#100e0b"/>
-          <path d="M0 0H1600L1123 245H398Z" fill="#19150e"/>
-          <path d="M1600 0 1110 236V776L1600 1000Z" fill="url(#b-wall)"/>
-          <path d="M1600 0 1454 88V926L1600 1000Z" fill="#694a27"/>
-          <path d="M1391 120 1302 165V855L1391 900Z" fill="#8d622e"/>
-          <path d="M1250 190 1192 220V800L1250 830Z" fill="#aa7838"/>
-          <path d="M1149 242 1118 257V763L1149 779Z" fill="#d0a05b"/>
-          <path d="M1600 1000 1118 766H401L0 1000Z" fill="url(#b-floor)"/>
-          <path d="M0 0 398 245V766L0 1000Z" fill="#1d1910"/>
-          <path d="M0 0 72 44V960L0 1000Z" fill="#272016"/>
-          <path d="M1391 900 1015 784M1454 926 1044 788M1250 830 987 775" stroke="#b7894738"/>
-          <g class="ambient light-plane">
-            <path d="M1009 207H1116V773H1009Z" fill="url(#b-light)"/>
-            <path d="M1017 215H1099V759H1017Z" fill="#16120c"/>
-            <path d="M1009 773 754 1000H1055L1116 773Z" fill="#ca91451c"/>
-            <path d="M1109 215V763" stroke="#ffe3a1" stroke-width="3"/>
-            <path d="M1116 773 1226 1000" stroke="#edb867" stroke-opacity=".18"/>
+          <g class="ambient scene-pan">
+            <path d="M0 0H1600L1123 245H398Z" fill="#19150e"/>
+            <path d="M1600 0 1110 236V776L1600 1000Z" fill="url(#b-wall)"/>
+            <path d="M1600 0 1454 88V926L1600 1000Z" fill="#694a27"/>
+            <path d="M1391 120 1302 165V855L1391 900Z" fill="#8d622e"/>
+            <path d="M1250 190 1192 220V800L1250 830Z" fill="#aa7838"/>
+            <path d="M1149 242 1118 257V763L1149 779Z" fill="#d0a05b"/>
+            <path d="M1600 1000 1118 766H401L0 1000Z" fill="url(#b-floor)"/>
+            <path d="M0 0 398 245V766L0 1000Z" fill="#1d1910"/>
+            <path d="M0 0 72 44V960L0 1000Z" fill="#272016"/>
+            <path d="M1391 900 1015 784M1454 926 1044 788M1250 830 987 775" stroke="#b7894738"/>
+            <g class="ambient light-plane">
+              <path d="M1009 207H1116V773H1009Z" fill="url(#b-light)"/>
+              <path d="M1017 215H1099V759H1017Z" fill="#16120c"/>
+              <path d="M1009 773 754 1000H1055L1116 773Z" fill="#ca91451c"/>
+              <path d="M1109 215V763" stroke="#ffe3a1" stroke-width="3"/>
+              <path d="M1116 773 1226 1000" stroke="#edb867" stroke-opacity=".18"/>
+            </g>
+            <path d="M0 0H1600M0 1000H1600" stroke="#e7c38a22"/>
+            <path d="M65 240V580" stroke="#c99f5d" stroke-width="1"/>
           </g>
-          <path d="M0 0H1600M0 1000H1600" stroke="#e7c38a22"/>
-          <path d="M65 240V580" stroke="#c99f5d" stroke-width="1"/>
         </svg>
       </div>
       <div id="particle-scene" class="scene">
@@ -385,14 +402,14 @@
         <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
           <rect width="1600" height="1000" fill="#090909"/>
           <g class="ambient x-plane">
-            <use href="#mirax-mark" x="510" y="-335" width="1370" height="1370" fill="#d9d9d2"/>
-            <use href="#mirax-mark" x="515" y="-330" width="1370" height="1370" fill="none" stroke="#090909" stroke-width=".15"/>
+            <use href="#mirax-mark" x="510" y="-335" width="1370" height="1370" fill="none" stroke="#d8d8d0" stroke-width=".16"/>
+            <use href="#mirax-mark" x="526" y="-323" width="1370" height="1370" fill="none" stroke="#ffffff3d" stroke-width=".08"/>
           </g>
           <path d="M0 810 430 380M0 849 468 381" stroke="#777771" stroke-width="1"/>
           <path d="M58 0V1000M1542 0V1000" stroke="#ffffff21"/>
-          <path d="M0 68H1600" stroke="#eeeee6" stroke-width="3"/>
-          <path d="M1390 0H1444V65H1390Z" fill="#eee"/>
-          <path d="M340 720 372 752 340 784 308 752Z" fill="none" stroke="#e8e8e0" stroke-width="2"/>
+          <path d="M0 68H1600" stroke="#eeeee6" stroke-width="1"/>
+          <path d="M1390 0H1444V65H1390Z" fill="none" stroke="#eeeee6" stroke-width="1"/>
+          <path d="M340 720 372 752 340 784 308 752Z" fill="none" stroke="#e8e8e0" stroke-width="1"/>
         </svg>
         <div class="hardline-caption">BIG<br>STANDBY<span aria-hidden="true">.</span><small>X / MIRAX ORIGINAL GEOMETRY</small></div>
       </div>
@@ -400,7 +417,7 @@
     <div id="custom-media" class="custom-media" aria-hidden="true"></div>
     <div class="readability-scrim"></div>
 
-    <section id="standby-view" aria-label="Big Standby 首頁">
+    <section id="standby-view" class="ambient oled-shift" aria-label="Big Standby 首頁">
       <header class="brand">
         <svg class="brand-mark" aria-hidden="true"><use href="#mirax-mark"/></svg>
         <div class="brand-name">MIRAX<small>BIG STANDBY</small></div>
@@ -408,7 +425,7 @@
       <div class="theme-caption" aria-hidden="true"><span id="theme-index">LANDSCAPE / 01</span><strong id="theme-title">山間，留白。</strong></div>
       <div class="device"><span class="micro-label">模擬接收裝置 / RECEIVER</span><strong class="device-name">MIRAX · 客廳</strong></div>
       <div class="center">
-        <div class="drift">
+        <div>
           <div class="status-indicator"><span class="status-dot"></span><span id="status-eyebrow">BROADCAST OFF</span></div>
           <h1 id="status-title">接收已關閉</h1>
           <p id="status-detail" class="status-detail">不會接受新的投放連線。</p>
@@ -417,13 +434,12 @@
       <p id="connection-hint" class="connection-hint">開啟接收後，Windows 按 <kbd>Win</kbd> + <kbd>K</kbd>，選擇「MIRAX · 客廳」</p>
     </section>
 
-    <section id="simple-view" class="simple-view" aria-label="簡單首頁示意" hidden>
+    <section id="simple-view" class="simple-view" aria-label="現有首頁說明" hidden>
       <svg class="brand-mark" aria-hidden="true"><use href="#mirax-mark"/></svg>
-      <div class="mock-label">產品預設版型 · 僅為簡單首頁示意</div>
-      <h1>簡單首頁</h1>
-      <p class="simple-device">模擬裝置：MIRAX · 客廳</p>
+      <div class="mock-label">產品預設 · 沿用現有首頁</div>
+      <h1>現有簡單首頁</h1>
+      <p class="simple-device">此選項即保留原本的 Mirax 首頁，不新增也不重做功能。</p>
       <p id="simple-status" class="simple-status">接收已關閉</p>
-      <p>點背景或按 Enter 開啟接收控制</p>
       <button id="simple-settings" type="button">一般設定</button>
     </section>
 
@@ -474,10 +490,10 @@
       <fieldset>
         <legend>首頁樣式</legend>
         <div class="home-options">
-          <label class="radio-option"><input id="home-simple" type="radio" name="home-style" value="simple"><span><b>簡單</b><small>產品預設 · 簡化示意</small></span></label>
+          <label class="radio-option"><input id="home-simple" type="radio" name="home-style" value="simple"><span><b>簡單（現有首頁）</b><small>產品預設 · 原樣保留，不改功能</small></span></label>
           <label class="radio-option"><input id="home-big" type="radio" name="home-style" value="big" checked><span><b>Big Standby</b><small>全螢幕環境式接收畫面</small></span></label>
         </div>
-        <p class="help">兩種首頁互斥。沒有閒置切換；Esc 或返回只收起設定，不變更樣式。</p>
+        <p class="help">兩種首頁互斥；選「簡單」即使用原本的 Mirax 首頁，不額外做新功能。沒有閒置切換；Esc 或返回只收起設定，不變更樣式。</p>
       </fieldset>
       <fieldset>
         <legend>本機背景</legend>
@@ -550,6 +566,9 @@
     const settings = $('settings');
     const mediaHost = $('custom-media');
 
+    function oledShiftActive() {
+      return !state.motion.paused && !state.motion.hidden && state.home === 'big' && state.phase !== 'projecting';
+    }
     function effectiveMotion() {
       return !state.motion.paused && !state.motion.reduced && !state.motion.hidden;
     }
@@ -587,7 +606,7 @@
         settingsOpen: state.settingsOpen,
         inspectorOpen: state.inspectorOpen,
         media: { ...state.media, visible: mediaIsVisible(), fit: 'cover', localOnly: true, objectUrlActive: Boolean(objectUrl), videoPaused: videoElement ? videoElement.paused : null },
-        motion: { ...state.motion, effective: effectiveMotion(), particleRendering: shouldAnimateParticles(), gifPausable: false },
+        motion: { ...state.motion, effective: effectiveMotion(), oledShift: oledShiftActive(), particleRendering: shouldAnimateParticles(), gifPausable: false },
         persistence: 'none',
         lastAction: state.lastAction
       };
@@ -597,7 +616,7 @@
       stage.dataset.broadcast = String(state.broadcast);
       stage.dataset.phase = state.phase;
       stage.dataset.media = state.media.kind;
-      stage.dataset.motion = effectiveMotion() ? 'running' : 'paused';
+      stage.dataset.motion = !oledShiftActive() ? 'paused' : effectiveMotion() ? 'running' : 'reduced-shift';
     }
     function render() {
       const phase = phases[state.phase];
@@ -606,7 +625,8 @@
       stage.classList.toggle('is-broadcasting', state.broadcast);
       stage.classList.toggle('is-projecting', state.phase === 'projecting');
       stage.classList.toggle('has-media', state.media.status === 'ready');
-      stage.classList.toggle('motion-stopped', !effectiveMotion() || state.home !== 'big' || state.phase === 'projecting');
+      stage.classList.toggle('motion-stopped', !oledShiftActive());
+      stage.classList.toggle('motion-reduced', state.motion.reduced);
       stage.classList.toggle('page-hidden', state.motion.hidden);
       $('standby-view').hidden = state.home !== 'big' || state.phase === 'projecting';
       $('simple-view').hidden = state.home !== 'simple' || state.phase === 'projecting';
@@ -629,7 +649,7 @@
       $('settings-broadcast-toggle').textContent = state.broadcast ? '關閉接收' : '開啟接收';
       $('home-simple').checked = state.home === 'simple';
       $('home-big').checked = state.home === 'big';
-      $('return-home-label').textContent = `中斷後返回 ${state.home === 'big' ? 'Big Standby' : '簡單首頁'}`;
+      $('return-home-label').textContent = `中斷後返回 ${state.home === 'big' ? 'Big Standby' : '現有簡單首頁'}`;
       $('simulate-connect').disabled = !state.broadcast || !['waiting', 'failed'].includes(state.phase);
       $('simulate-project').disabled = state.phase !== 'connecting';
       $('simulate-fail').disabled = state.phase !== 'connecting';
@@ -637,13 +657,13 @@
       $('simulate-reset').disabled = !['connecting', 'failed'].includes(state.phase);
       $('reveal-hint').textContent = state.controlsOpen ? 'Esc / 返回收起控制 · 不切換首頁樣式' : '點背景 / Enter 顯示接收控制 · 無自動切換首頁';
       const gifSuffix = state.media.kind === 'gif' ? '（GIF 除外）' : '';
-      const motionLabel = state.motion.reduced ? '系統減少動態' : `${state.motion.paused ? '繼續動態' : '暫停動態'}${gifSuffix}`;
+      const motionLabel = `${state.motion.paused ? '繼續動態' : '暫停動態'}${gifSuffix}`;
       for (const id of ['motion-toggle', 'settings-motion-toggle']) {
         $(id).textContent = motionLabel;
-        $(id).setAttribute('aria-pressed', String(state.motion.paused || state.motion.reduced));
-        $(id).disabled = state.motion.reduced;
+        $(id).setAttribute('aria-pressed', String(state.motion.paused));
+        $(id).disabled = false;
       }
-      $('motion-description').textContent = state.motion.reduced ? '已遵循系統「減少動態」，影片保持暫停。' : '緩慢背景與微幅文字漂移';
+      $('motion-description').textContent = state.motion.reduced ? '系統「減少動態」開啟：保留緩慢像素位移；背景與影片已暫停。' : '背景緩動與全畫面像素位移（減緩 OLED 定點老化）';
       $('gif-warning').hidden = state.media.kind !== 'gif';
       $('clear-media').disabled = state.media.kind === 'none' && !state.media.error;
       $('retry-video').hidden = !state.media.playbackBlocked || state.media.kind !== 'video';
@@ -728,8 +748,7 @@
       stage.focus({ preventScroll: true });
     }
     function toggleMotion() {
-      if (state.motion.reduced) return;
-      act('toggle-motion', () => { state.motion.paused = !state.motion.paused; }, state.motion.paused ? '環境動態已恢復。' : '生成背景、文字與影片已暫停。GIF 除外。');
+      act('toggle-motion', () => { state.motion.paused = !state.motion.paused; }, state.motion.paused ? '環境動態與像素位移已恢復。' : '生成背景、像素位移與影片已暫停。GIF 除外。');
     }
 
     function releaseMedia() {
@@ -846,7 +865,7 @@
       if (!context) return;
       context.clearRect(0, 0, canvasWidth, canvasHeight);
       const scale = Math.max(260, Math.min(canvasWidth * .47, canvasHeight * .64));
-      const rotation = particleTime * .000012;
+      const rotation = particleTime * .000045;
       for (const point of particles) {
         const angle = point.angle + rotation;
         const radius = 1 + Math.cos(point.tube) * point.radius;
