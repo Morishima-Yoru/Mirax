@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Mirax — icon system</title>
+    <style>
+        :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: #fff; background: #121418; }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        main { max-width: 1120px; margin: auto; padding: 36px 32px 48px; }
+        h1, h2, h3, p, figure { margin: 0; }
+        h1 { font-size: clamp(38px, 6vw, 64px); line-height: 1.08; font-weight: 600; letter-spacing: -.055em; }
+        h2 { font-size: 20px; font-weight: 550; letter-spacing: -.025em; }
+        h3 { font-size: 16px; font-weight: 550; letter-spacing: -.015em; }
+        p { line-height: 1.65; }
+        code, .eyebrow, .size { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+        code { font-size: 11px; }
+        .definitions { position: absolute; width: 0; height: 0; overflow: hidden; }
+        .masthead { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 24px; border-bottom: 1px solid #34383f; }
+        .wordmark { font-size: 19px; font-weight: 650; letter-spacing: -.04em; }
+        .eyebrow { color: #a7adb6; font-size: 11px; line-height: 1.5; letter-spacing: .1em; text-transform: uppercase; }
+        .hero { display: grid; grid-template-columns: 1.4fr 1fr; align-items: center; gap: 48px; padding: 56px 0; }
+        .hero .eyebrow { margin-bottom: 18px; }
+        .lede { max-width: 420px; margin-top: 22px; color: #b5bac2; font-size: 15px; }
+        .specs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+        .specs span { padding: 6px 10px; border: 1px solid #383d45; border-radius: 6px; color: #d2d6dc; font-size: 11px; }
+        .master-block { justify-self: center; text-align: center; }
+        .master { display: block; width: 240px; height: 240px; border: 1px solid #3a3e46; }
+        figcaption { margin-top: 14px; color: #a7adb6; font-size: 12px; line-height: 1.6; }
+        figcaption strong { display: block; color: #fff; font-size: 13px; font-weight: 500; }
+        .section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 20px; }
+        .section-heading p { color: #a7adb6; font-size: 12px; }
+        .launchers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+        .launcher-study { padding: 24px 12px 18px; background: #1b1e24; border: 1px solid #30353d; border-radius: 14px; text-align: center; }
+        .launcher { display: block; width: 96px; height: 96px; margin: auto; color: #fff; }
+        .theme-light { color: #34383e; }
+        .theme-dark { color: #d9dde3; }
+        .system-heading { margin-top: 48px; }
+        .system-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+        .panel { padding: 24px; border: 1px solid #34383f; border-radius: 14px; }
+        .panel-note { margin-top: 7px; color: #a7adb6; font-size: 12px; }
+        .notifications { grid-row: span 2; }
+        .bars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+        .bar-label { margin-bottom: 8px; color: #b5bac2; font-size: 11px; }
+        .status-bar { display: grid; grid-template-columns: 36px 32px 1fr; align-items: center; gap: 10px; height: 64px; padding: 0 12px; background: #20242a; }
+        .status-bar + .status-bar { border-top: 1px solid #3b4048; }
+        .status-bar.light { color: #25282d; background: #e8eaed; border-color: #c7cbd0; }
+        .time { font-size: 11px; font-weight: 550; }
+        .status-slot { display: grid; place-items: center; }
+        .status-slot svg { display: block; }
+        .size { font-size: 11px; white-space: nowrap; }
+        .footnote { margin-top: 18px; color: #a7adb6; font-size: 11px; line-height: 1.7; }
+        .qs-studies { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+        .qs-tile { display: flex; align-items: center; gap: 12px; min-height: 70px; padding: 14px; border-radius: 24px; color: #25282d; background: #e8eaed; }
+        .qs-tile.inactive { color: #fff; background: #30353d; }
+        .glyph { display: block; flex: 0 0 auto; width: 24px; height: 24px; }
+        .qs-label { font-size: 12px; line-height: 1.4; }
+        .qs-label strong { display: block; font-size: 13px; font-weight: 550; }
+        .float-stage { display: flex; justify-content: space-between; align-items: center; gap: 20px; min-height: 108px; margin-top: 20px; padding: 22px; background: #dddfe2; color: #515760; }
+        .float-stage p { font-size: 12px; }
+        .floating-ball { display: grid; place-items: center; flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%; background: #121418; color: #fff; }
+        .floating-ball svg { display: block; width: 84px; height: 84px; }
+        .navigation { margin-top: 16px; }
+        .nav-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+        .nav-item { display: grid; justify-items: center; gap: 10px; }
+        .nav-specimen { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid #3b4048; border-radius: 12px; }
+        .nav-item figcaption { margin: 0; text-align: center; }
+        .notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin-top: 48px; padding-top: 24px; border-top: 1px solid #34383f; }
+        .notes h3 { margin-bottom: 8px; font-size: 13px; }
+        .notes p { color: #a7adb6; font-size: 12px; }
+        @media (max-width: 860px) {
+            .system-grid { grid-template-columns: 1fr; }
+            .notifications { grid-row: auto; }
+            .status-bar { grid-template-columns: 1fr 32px 1fr; }
+        }
+        @media (max-width: 560px) {
+            main { padding: 24px 20px 36px; }
+            .hero { grid-template-columns: 1fr; gap: 32px; padding: 36px 0; }
+            .master { width: 216px; height: 216px; }
+            .launchers { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+            .panel { padding: 20px 16px; }
+            .status-bar { grid-template-columns: 30px 32px 1fr; gap: 6px; padding: 0 8px; }
+            .nav-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+            .notes { grid-template-columns: 1fr; gap: 20px; margin-top: 32px; }
+        }
+    </style>
+</head>
+<body>
+    <svg class="definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+            <symbol id="mirax-mark" viewBox="0 0 108 108" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M40,36 H30 V72 H40 M68,36 H78 V72 H68 M44,42 L64,66 M64,42 L44,66" />
+            </symbol>
+            <symbol id="mirax-tile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7,5 H4 V19 H7 M17,5 H20 V19 H17 M9,8 L15,16 M15,8 L9,16" />
+            </symbol>
+            <symbol id="nav-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4,7H20M4,12H20M4,17H20" />
+            </symbol>
+            <symbol id="nav-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15,5L8,12L15,19" />
+            </symbol>
+            <symbol id="nav-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6,6L18,18M18,6L6,18" />
+            </symbol>
+            <symbol id="content-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6,16 H5 Q4,16 4,15 V4 Q4,3 5,3 H14 M10,7 H19 Q20,7 20,8 V20 Q20,21 19,21 H10 Q9,21 9,20 V8 Q9,7 10,7 Z" />
+            </symbol>
+            <clipPath id="circle-mask"><circle cx="54" cy="54" r="36" /></clipPath>
+            <clipPath id="squircle-mask"><path d="M54,18 C86,18 90,22 90,54 C90,86 86,90 54,90 C22,90 18,86 18,54 C18,22 22,18 54,18 Z" /></clipPath>
+        </defs>
+    </svg>
+    <main>
+        <header class="masthead">
+            <span class="wordmark">Mirax</span>
+            <span class="eyebrow">Android / icon system</span>
+        </header>
+        <section class="hero" aria-labelledby="hero-title">
+            <div>
+                <p class="eyebrow">01 / The master</p>
+                <h1 id="hero-title">Two screens.<br>One Mirax.</h1>
+                <p class="lede">Opposing display edges frame a mirrored crossing. White lines, open space, no ornament.</p>
+                <div class="specs"><span>5dp master stroke</span><span>2dp system stroke</span><span>White + transparent</span></div>
+            </div>
+            <figure class="master-block">
+                <svg class="master" viewBox="0 0 108 108" role="img" aria-label="Full square Mirax logo, white mark on charcoal">
+                    <rect width="108" height="108" fill="#121418" />
+                    <use href="#mirax-mark" width="108" height="108" />
+                </svg>
+                <figcaption><strong>Square master · no baked mask</strong><code>mirax-icon.svg</code> · 1024 × 1024</figcaption>
+            </figure>
+        </section>
+        <section aria-labelledby="launcher-title">
+            <div class="section-heading">
+                <h2 id="launcher-title">02 / Launcher</h2>
+                <p>Native foreground · illustrative masks &amp; system tints</p>
+            </div>
+            <div class="launchers">
+                <figure class="launcher-study">
+                    <svg class="launcher" viewBox="18 18 72 72" role="img" aria-label="Mirax in a circular launcher mask">
+                        <g clip-path="url(#circle-mask)"><rect width="108" height="108" fill="#121418" /><use href="#mirax-mark" width="108" height="108" /></g>
+                    </svg>
+                    <figcaption><strong>Circle</strong>Standard white foreground</figcaption>
+                </figure>
+                <figure class="launcher-study">
+                    <svg class="launcher" viewBox="18 18 72 72" role="img" aria-label="Mirax in a squircle launcher mask">
+                        <g clip-path="url(#squircle-mask)"><rect width="108" height="108" fill="#121418" /><use href="#mirax-mark" width="108" height="108" /></g>
+                    </svg>
+                    <figcaption><strong>Squircle</strong>Same paths, different mask</figcaption>
+                </figure>
+                <figure class="launcher-study">
+                    <svg class="launcher theme-light" viewBox="18 18 72 72" role="img" aria-label="Simulated light Android themed Mirax icon">
+                        <g clip-path="url(#circle-mask)"><rect width="108" height="108" fill="#d9dde3" /><use href="#mirax-mark" width="108" height="108" /></g>
+                    </svg>
+                    <figcaption><strong>Themed · light</strong>Illustrative system tint</figcaption>
+                </figure>
+                <figure class="launcher-study">
+                    <svg class="launcher theme-dark" viewBox="18 18 72 72" role="img" aria-label="Simulated dark Android themed Mirax icon">
+                        <g clip-path="url(#circle-mask)"><rect width="108" height="108" fill="#363b43" /><use href="#mirax-mark" width="108" height="108" /></g>
+                    </svg>
+                    <figcaption><strong>Themed · dark</strong>Illustrative system tint</figcaption>
+                </figure>
+            </div>
+        </section>
+        <section aria-labelledby="system-title">
+            <div class="section-heading system-heading">
+                <h2 id="system-title">03 / In the system</h2>
+                <p>Native vector paths · illustrative UI surfaces</p>
+            </div>
+            <div class="system-grid">
+                <article class="panel notifications">
+                    <h3>Notification &amp; status bar</h3>
+                    <p class="panel-note">Optically simplified mark. No hairlines, no tiny details.</p>
+                    <div class="bars">
+                        <div>
+                            <p class="bar-label">Dark surface</p>
+                            <div class="status-bar"><span class="time">9:41</span><span class="status-slot"><svg width="16" height="16" viewBox="0 0 24 24" role="img" aria-label="Mirax notification at 16 pixels"><use href="#mirax-tile" /></svg></span><span class="size">16 px</span></div>
+                            <div class="status-bar"><span class="time">9:41</span><span class="status-slot"><svg width="24" height="24" viewBox="0 0 24 24" role="img" aria-label="Mirax notification at 24 pixels"><use href="#mirax-tile" /></svg></span><span class="size">24 px</span></div>
+                            <div class="status-bar"><span class="time">9:41</span><span class="status-slot"><svg width="32" height="32" viewBox="0 0 24 24" role="img" aria-label="Mirax notification at 32 pixels"><use href="#mirax-tile" /></svg></span><span class="size">32 px</span></div>
+                        </div>
+                        <div>
+                            <p class="bar-label">Light surface · system tint</p>
+                            <div class="status-bar light"><span class="time">9:41</span><span class="status-slot"><svg width="16" height="16" viewBox="0 0 24 24" role="img" aria-label="Dark-tinted Mirax notification at 16 pixels"><use href="#mirax-tile" /></svg></span><span class="size">16 px</span></div>
+                            <div class="status-bar light"><span class="time">9:41</span><span class="status-slot"><svg width="24" height="24" viewBox="0 0 24 24" role="img" aria-label="Dark-tinted Mirax notification at 24 pixels"><use href="#mirax-tile" /></svg></span><span class="size">24 px</span></div>
+                            <div class="status-bar light"><span class="time">9:41</span><span class="status-slot"><svg width="32" height="32" viewBox="0 0 24 24" role="img" aria-label="Dark-tinted Mirax notification at 32 pixels"><use href="#mirax-tile" /></svg></span><span class="size">32 px</span></div>
+                        </div>
+                    </div>
+                    <p class="footnote">Shown at 1× CSS pixel sizes, not enlarged screenshots. Android supplies the final notification tint. Bar layouts are size proofs, not platform screenshots.</p>
+                </article>
+                <article class="panel">
+                    <h3>Quick Settings</h3>
+                    <p class="panel-note">The same 24dp notification asset.</p>
+                    <div class="qs-studies">
+                        <div class="qs-tile"><svg class="glyph" viewBox="0 0 24 24" role="img" aria-label="Simulated active Mirax tile"><use href="#mirax-tile" /></svg><span class="qs-label"><strong>Mirax</strong>Active</span></div>
+                        <div class="qs-tile inactive"><svg class="glyph" viewBox="0 0 24 24" role="img" aria-label="Simulated inactive Mirax tile"><use href="#mirax-tile" /></svg><span class="qs-label"><strong>Mirax</strong>Inactive</span></div>
+                    </div>
+                </article>
+                <article class="panel">
+                    <h3>Floating ball</h3>
+                    <p class="panel-note">Native foreground. The circle is a separate UI background.</p>
+                    <div class="float-stage">
+                        <p>84dp container<br>Opaque contrast surface</p>
+                        <div class="floating-ball"><svg viewBox="0 0 108 108" role="img" aria-label="Mirax floating ball using the full transparent foreground"><use href="#mirax-mark" width="108" height="108" /></svg></div>
+                    </div>
+                </article>
+            </div>
+            <article class="panel navigation">
+                <h3>Navigation &amp; actions</h3>
+                <p class="panel-note">24dp native vectors · 2dp rounded white strokes · back auto-mirrors in RTL</p>
+                <div class="nav-grid">
+                    <figure class="nav-item"><div class="nav-specimen"><svg class="glyph" viewBox="0 0 24 24" role="img" aria-label="Menu icon"><use href="#nav-menu" /></svg></div><figcaption>Menu</figcaption></figure>
+                    <figure class="nav-item"><div class="nav-specimen"><svg class="glyph" viewBox="0 0 24 24" role="img" aria-label="Back icon in left-to-right layout"><use href="#nav-back" /></svg></div><figcaption>Back</figcaption></figure>
+                    <figure class="nav-item"><div class="nav-specimen"><svg class="glyph" viewBox="0 0 24 24" role="img" aria-label="Close icon"><use href="#nav-close" /></svg></div><figcaption>Close</figcaption></figure>
+                    <figure class="nav-item"><div class="nav-specimen"><svg class="glyph" viewBox="0 0 24 24" role="img" aria-label="Copy icon"><use href="#content-copy" /></svg></div><figcaption>Copy</figcaption></figure>
+                </div>
+            </article>
+        </section>
+        <footer class="notes">
+            <div><h3>One visual grammar</h3><p>Screen brackets retain the display identity. The crossing recalls Mirax's X. Every stroke ends and joins round; the smaller system mark opens up for legibility.</p></div>
+            <div><h3>Adaptive-safe</h3><p>The foreground uses a 108dp canvas. All visible strokes sit inside the centered 66dp safe circle. Launcher studies show the central 72dp mask window; the square master keeps the full canvas.</p></div>
+            <div><h3>Assets vs. illustration</h3><p>All six glyphs use the exact Android path data. Masks, tints, tile states, bars and overlay surfaces are illustrative, not additional assets or implemented settings. No external resources are loaded.</p></div>
+        </footer>
+    </main>
+</body>
+</html>

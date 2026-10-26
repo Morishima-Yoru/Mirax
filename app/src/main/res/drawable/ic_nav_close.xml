@@ -8,6 +8,7 @@
         android:fillColor="@android:color/transparent"
         android:pathData="M6,6L18,18M18,6L6,18"
         android:strokeWidth="2"
-        android:strokeColor="@color/mirax_on_surface"
-        android:strokeLineCap="round" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>

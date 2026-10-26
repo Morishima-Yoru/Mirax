@@ -35,6 +35,7 @@ class MiraxSession(
         initialBroadcastAutoStopMinutes = initialSettings.broadcastAutoStopMinutes,
         initialShowDebugOverlay = initialSettings.showDebugOverlay,
         initialControlPanelEnabled = initialSettings.controlPanelEnabled,
+        initialControlPanelEntry = initialSettings.controlPanelEntry,
         initialOrientationLockEnabled = initialSettings.orientationLockEnabled,
     )
     private var activeConnection = ActiveConnectionState()
@@ -47,7 +48,8 @@ class MiraxSession(
     private var systemLocale: SystemLocaleReport = SystemLocaleReport()
     private var deviceName: String = ""
     private var sourceDeviceName: String? = null
-    var sourceNameGeneration: Long = 0L
+    /** Invalidates pending display calibration when the user edits the preferred mode. */
+    internal var preferredModeGeneration: Long = 0L
         private set
     private var miraxDisplayId: Int = 0
     private var pictureRotationDegrees: Int = 0
@@ -126,7 +128,6 @@ class MiraxSession(
 
     /** Enter a mock connected state with [mode] and a visible source [name]. */
     fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60), name: String = "Mock Device") {
-        sourceNameGeneration++
         activeConnection.enterMockConnected(mode)
         sourceDeviceName = name
     }
@@ -169,8 +170,7 @@ class MiraxSession(
                 endConnectionState(emitDrop = false)
             }
             is SessionAction.BeginConnectionRun -> {
-                sourceNameGeneration++
-                sourceDeviceName = null
+                sourceDeviceName = action.sourceDeviceName?.trim()?.ifEmpty { null }
                 activeConnection.onPrePlayProgress(caps.resolveNextAdvertisementModes())
                 diagnostics.beginRun(action.remoteHost, configurationBackup())
                 connectionHistory.start(action.remoteHost, configurationBackup())
@@ -193,9 +193,11 @@ class MiraxSession(
                 displayNameOverride = normalizeOverride(action.value)
             }
             SessionAction.PreferredModeFieldEdited -> {
+                preferredModeGeneration++
                 consumeProvisioning()
             }
             is SessionAction.CommitPreferredModeText -> {
+                preferredModeGeneration++
                 caps.commitPreferredModeText(action.text)
             }
             is SessionAction.SetStandardModeChecked -> {
@@ -213,7 +215,7 @@ class MiraxSession(
                 applyProvisioningWmSize(action.reading)
             }
             SessionAction.SystemBack -> {
-                onSystemBack()
+                activeConnection.onSystemBack()
             }
             SessionAction.RequestEndConnection -> {
                 requestEndConnectionFromUser()
@@ -228,6 +230,9 @@ class MiraxSession(
             }
             is SessionAction.SetControlPanelEnabled -> {
                 display.setControlPanelEnabled(action.enabled)
+            }
+            is SessionAction.SetControlPanelEntry -> {
+                display.setControlPanelEntry(action.entry)
             }
             is SessionAction.SetFloatingBallEnabled -> {
                 display.setFloatingBallEnabled(action.enabled)
@@ -339,6 +344,9 @@ fun snapshot(): SessionSnapshot {
             preferredModeText = caps.preferredMode?.format().orEmpty(),
             canUseThisScreen = canRead,
             standardModes = standardRows,
+            microsoftModes = MicrosoftVideoModes.catalog().map { mode ->
+                StandardModeRow(mode = mode, checked = mode in caps.checkedStandardModes)
+            },
             nextAdvertisementModes = nextModes,
             currentResolutionText = resolutionText,
             miraxDisplayId = miraxDisplayId,
@@ -361,6 +369,7 @@ fun snapshot(): SessionSnapshot {
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
             controlPanelExpanded = activeConnection.controlPanelExpandedState,
+            controlPanelEntry = display.controlPanelEntry,
             orientationLockEnabled = display.orientationLockEnabled,
             sourceDeviceName = sourceDeviceName,
             handshakeLog = if (phase == ScreenPhase.CONNECTING && display.showDebugMessages) {
@@ -392,6 +401,7 @@ fun snapshot(): SessionSnapshot {
             cameraCutoutAffectsLayout = display.cameraCutoutAffectsLayout,
             broadcastAutoStopMinutes = display.broadcastAutoStopMinutes,
             controlPanelEnabled = display.controlPanelEnabled,
+            controlPanelEntry = display.controlPanelEntry,
             orientationLockEnabled = display.orientationLockEnabled,
         )
     }
@@ -431,7 +441,6 @@ fun snapshot(): SessionSnapshot {
     private fun onFloatingBallTapped() {
         if (!activeConnection.isConnected || !activeConnection.awayOnHomeScreenState) return
         activeConnection.setAwayOnHomeScreen(false)
-        activeConnection.setBackEndsConnectionPending(false)
         pendingEffects = pendingEffects.filterNot { it is SessionEffect.ConfirmEndConnection }
         enqueueEffect(SessionEffect.BringProjectionToFront)
     }
@@ -484,17 +493,6 @@ fun snapshot(): SessionSnapshot {
         }
     }
 
-    private fun onSystemBack() {
-        if (!activeConnection.isConnected) return
-        when (activeConnection.onSystemBack()) {
-            ActiveConnectionState.BackResult.ExpandControlPanel -> Unit
-            ActiveConnectionState.BackResult.ArmedSecondBack -> {
-                enqueueEffect(SessionEffect.ShowPressBackAgainToEndToast)
-            }
-            ActiveConnectionState.BackResult.RequestEnd -> requestEndConnectionFromUser()
-        }
-    }
-
     private fun requestEndConnectionFromUser() {
         if (!activeConnection.isConnected) return
         if (SessionEffect.ConfirmEndConnection !in pendingEffects) {
@@ -521,15 +519,17 @@ fun snapshot(): SessionSnapshot {
         if (resolveOwner(privilege) == WfdOwner.NONE || !advertisingState.advertisingEnabledState || !wifiEnabled) {
             return
         }
+        val savedModes = caps.resolveNextAdvertisementModes()
         val injectedMode = if (caps.autoAddWmSizeOnConnect) {
             modeFromWmSize(reading, display.touchEnabled, pictureRotationDegrees)
+                ?.takeIf { !MicrosoftVideoModes.contains(it) || it in savedModes }
         } else {
             null
         }
         val finalOfferedModes = if (caps.autoAddWmSizeOnConnect && injectedMode != null) {
-            caps.resolveNextAdvertisementModes() + injectedMode
+            savedModes + injectedMode
         } else {
-            caps.resolveNextAdvertisementModes()
+            savedModes
         }
         val preferredMode = injectedMode ?: caps.customModes.firstOrNull() ?: caps.preferredMode
         activeConnection.freezeOffer(
@@ -564,7 +564,6 @@ fun snapshot(): SessionSnapshot {
     }
 
     private fun clearConnectionEphemerals() {
-        sourceNameGeneration++
         activeConnection = ActiveConnectionState()
         sourceDeviceName = null
     }

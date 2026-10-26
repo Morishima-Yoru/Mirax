@@ -8,6 +8,7 @@ import org.junit.Test
 
 /** Checks real worker cancellation and output ownership without touching Android hardware. */
 class LpcmAudioPlayerLifecycleTest {
+    /** Interrupts blocked output without delaying producers and releases it exactly once. */
     @Test
     fun stopInterruptsBlockedWriteAndReleasesExactlyOnce() {
         val output = BlockingOutput()
@@ -28,6 +29,7 @@ class LpcmAudioPlayerLifecycleTest {
         }
     }
 
+    /** Waits for old output release before opening the surviving replacement connection. */
     @Test
     fun cancelledIntermediateConnectionCannotBypassTheOldOutputsRelease() {
         val first = BlockingOutput(holdClose = true)
@@ -95,6 +97,7 @@ class LpcmAudioPlayerLifecycleTest {
         }
 
         override fun playedFrames(): Long = 0
+        override fun underrunCount(): Int = 0
 
         override fun interrupt() {
             interruptCount.incrementAndGet()

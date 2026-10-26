@@ -50,6 +50,7 @@ import me.trinitrix.mirax.host.PrivilegeProbe
 import me.trinitrix.mirax.session.AppLanguage
 import me.trinitrix.mirax.session.BroadcastNameRules
 import me.trinitrix.mirax.session.ConnectionRun
+import me.trinitrix.mirax.session.ControlPanelEntry
 import me.trinitrix.mirax.session.DeviceNameReport
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.MiraxDisplayReport
@@ -58,6 +59,7 @@ import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.StandardModeGroups
+import me.trinitrix.mirax.session.StandardModeRow
 import me.trinitrix.mirax.session.StandardVideoModes
 import me.trinitrix.mirax.session.SystemLocaleReport
 import me.trinitrix.mirax.session.VideoMode
@@ -810,10 +812,11 @@ class MainActivity : AppCompatActivity() {
             Page.PICTURE -> "${customSummary(snapshot)}|${modesSummary(snapshot)}|${scaleLabel(snapshot.pictureScale)}|${snapshot.touchEnabled}|${snapshot.orientationLockEnabled}|${snapshot.maxVideoBitrateBps}"
             Page.CUSTOM -> "${snapshot.autoAddWmSizeOnConnect}|${snapshot.customModes.joinToString { it.format() }}"
             Page.GENERAL -> "${snapshot.displayNameOverride}|${ballOn(snapshot)}|${snapshot.languagePreference}"
-            Page.MODES -> snapshot.standardModes.joinToString { "${it.mode.format()}=${it.checked}" }
+            Page.MODES -> (snapshot.standardModes + snapshot.microsoftModes)
+                .joinToString { "${it.mode.format()}=${it.checked}" }
             Page.SCALE -> snapshot.pictureScale.name
             Page.LANGUAGE -> snapshot.languagePreference.name
-            Page.ADVANCED -> "${snapshot.showDebugMessages}|${snapshot.cameraCutoutAffectsLayout}|${snapshot.broadcastAutoStopMinutes}"
+            Page.ADVANCED -> "${snapshot.showDebugMessages}|${snapshot.cameraCutoutAffectsLayout}|${snapshot.broadcastAutoStopMinutes}|${snapshot.controlPanelEntry}"
             Page.COMPATIBILITY ->
                 "${snapshot.showCompatibilityNotice}|${snapshot.wfdOwner}|${snapshot.rootAvailable}"
             Page.HISTORY -> snapshot.connectionRuns.joinToString { "${it.startedAtEpochMs}:${it.succeeded}" } + historyOpen.joinToString()
@@ -866,6 +869,7 @@ class MainActivity : AppCompatActivity() {
             Page.ADVANCED -> {
                 updateSwitch(root, "debug", snapshot.showDebugMessages)
                 updateSwitch(root, "cutout", snapshot.cameraCutoutAffectsLayout)
+                restyleChoices(root, "control-panel-entry", snapshot.controlPanelEntry.name)
                 contentColumn(root).findViewWithTag<TextView>("auto-stop")?.text =
                     getString(R.string.broadcast_auto_stop_value, snapshot.broadcastAutoStopMinutes)
             }
@@ -1701,7 +1705,12 @@ class MainActivity : AppCompatActivity() {
         val frame = column.findViewWithTag<LinearLayout>("modes") ?: return
         val tabs = frame.findViewWithTag<LinearLayout>("mode-tabs") ?: return
         val body = frame.findViewWithTag<LinearLayout>("mode-body") ?: return
-        val groups = StandardModeGroups.groups(snapshot.standardModes)
+        val microsoftRows = snapshot.microsoftModes.sortedWith(
+            compareByDescending<StandardModeRow> { it.mode.width }.thenByDescending { it.mode.refreshHz },
+        )
+        val groups = StandardModeGroups.groups(snapshot.standardModes) + listOfNotNull(
+            microsoftRows.takeIf { it.isNotEmpty() }?.let { StandardModeGroups.Group("3:2", it) },
+        )
         if (groups.none { it.label == modesRatio }) {
             modesRatio = groups.firstOrNull()?.label ?: "16:9"
         }
@@ -1722,6 +1731,9 @@ class MainActivity : AppCompatActivity() {
         body.removeAllViews()
         if (group == null) {
             return
+        }
+        if (group.label == "3:2") {
+            body.addView(hint(getString(R.string.microsoft_modes_hint)))
         }
         if (openSize == null) {
             sizes.forEachIndexed { index, size ->
@@ -1956,12 +1968,33 @@ class MainActivity : AppCompatActivity() {
     private fun buildAdvanced(snapshot: SessionSnapshot): LinearLayout {
         val column = column()
         column.addView(pageTitle(getString(R.string.nav_advanced)))
+        column.addView(section(getString(R.string.control_panel_entry_title)))
+        val entryChoices = choiceStack("control-panel-entry")
+        val entries = listOf(
+            ControlPanelEntry.FLOATING_BUTTON to getString(R.string.control_panel_entry_button),
+            ControlPanelEntry.VOLUME_KEYS to getString(R.string.control_panel_entry_volume),
+        )
+        for ((entry, label) in entries) {
+            entryChoices.addView(choiceChip(label, entry.name, entry == snapshot.controlPanelEntry) {
+                if (updatingControls || entry == MiraxApp.instance.session.snapshot().controlPanelEntry) {
+                    return@choiceChip
+                }
+                render(SessionHost.setControlPanelEntry(this, entry))
+            })
+        }
+        column.addView(entryChoices)
+        column.addView(hint(getString(R.string.control_panel_entry_setting_hint)).apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(8)
+        })
         column.addView(switchRow(getString(R.string.debug_messages), snapshot.showDebugMessages) { enabled ->
             val session = MiraxApp.instance.session
             session.handle(SessionAction.SetShowDebugMessages(enabled))
             persist(session)
             render(session.snapshot())
-        }.apply { tag = "debug" })
+        }.apply {
+            tag = "debug"
+            (layoutParams as LinearLayout.LayoutParams).topMargin = dp(28)
+        })
         
         column.addView(switchRow(
             getString(R.string.camera_cutout_affects_layout),
@@ -2100,6 +2133,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun pictureDetail(snapshot: SessionSnapshot): String {
         val labels = snapshot.customModes.map { it.format() } +
+            snapshot.microsoftModes.filter { it.checked }.map { it.mode.format() } +
             snapshot.standardModes.filter { it.checked }.map { it.mode.format() }
         val first = labels.firstOrNull() ?: getString(R.string.custom_empty)
         val others = (labels.size - 1).coerceAtLeast(0)
@@ -2122,7 +2156,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun modesSummary(snapshot: SessionSnapshot): String {
-        val checked = snapshot.standardModes.count { it.checked }
+        val checked = snapshot.standardModes.count { it.checked } + snapshot.microsoftModes.count { it.checked }
         return getString(R.string.modes_checked_count, checked)
     }
 

@@ -69,12 +69,34 @@ internal class LpcmAudioPlayer(
      * @param pcm signed stereo PCM16 in little-endian order.
      */
     fun submit(pcm: ByteArray) {
+        submit(active, pcm)
+    }
+
+    /**
+     * Validates an input without allowing it to move to a later playback generation.
+     *
+     * @param playback the captured connection, or null after a failed start.
+     * @param pcm signed stereo PCM16 bytes.
+     */
+    private fun submit(playback: Playback?, pcm: ByteArray) {
         if (pcm.isEmpty()) return
         if (pcm.size % FRAME_BYTES != 0) {
             Log.w(TAG, "Ignoring PCM not aligned to a stereo frame: ${pcm.size}")
             return
         }
-        active?.offer(pcm, nowMillis())
+        playback?.offer(pcm, nowMillis())
+    }
+
+    /**
+     * Starts a connection and returns its producer input without changing the legacy entry points.
+     *
+     * @return PCM submission callback for the connection being started.
+     */
+    @Synchronized
+    fun startInput(): (ByteArray) -> Unit {
+        start()
+        val playback = active
+        return { pcm -> submit(playback, pcm) }
     }
 
     /** Cancels this connection and requests interruption of any blocking output write. */
@@ -126,7 +148,7 @@ internal class LpcmAudioPlayer(
     private suspend fun stream(playback: Playback, output: PcmOutput) {
         val block = ByteArray((BLOCK_FRAMES + SPLICE_FRAMES) * FRAME_BYTES)
         val tail = ByteArray(SPLICE_FRAMES * FRAME_BYTES)
-        val fades = Fades()
+        val fades = Fades(output.underrunCount())
         var buffering = true
         var deadline = playback.preloadDeadline
         var writtenFrames = 0L
@@ -154,16 +176,14 @@ internal class LpcmAudioPlayer(
             if (count == DISCONTINUITY) {
                 val tailFrames = playback.takeTail()
                 if (tailFrames > 0) {
-                    fades.apply(tail, tailFrames, fadeOut = true)
-                    if (!write(output, tail, tailFrames)) return
+                    if (!write(output, tail, tailFrames, fades, fadeOut = true)) return
                     writtenFrames += tailFrames
                 }
                 fades.beginSplice()
                 continue
             }
             if (count > 0) {
-                fades.apply(block, count)
-                if (!write(output, block, count)) return
+                if (!write(output, block, count, fades)) return
                 writtenFrames += count
                 continue
             }
@@ -173,8 +193,7 @@ internal class LpcmAudioPlayer(
             } else if (!playback.hasQueuedFrames()) {
                 val tailFrames = playback.takeTail()
                 if (tailFrames > 0) {
-                    fades.apply(tail, tailFrames, fadeOut = true)
-                    if (!write(output, tail, tailFrames)) return
+                    if (!write(output, tail, tailFrames, fades, fadeOut = true)) return
                     writtenFrames += tailFrames
                 }
                 buffering = true
@@ -184,23 +203,33 @@ internal class LpcmAudioPlayer(
     }
 
     /**
-     * Continues short writes without processing the same samples twice.
+     * Checks native underruns before each write, reshaping only unaccepted original samples.
      *
      * @param output playback device.
-     * @param pcm already processed PCM.
-     * @param frames number of complete stereo frames.
+     * @param pcm unmodified worker-owned source PCM.
+     * @param frames complete stereo frames in this block.
+     * @param fades accepted-frame gain state and reusable shaped buffer.
+     * @param fadeOut whether this block is the retained tail before a discontinuity.
      * @return whether the entire block was accepted.
      */
-    private suspend fun write(output: PcmOutput, pcm: ByteArray, frames: Int): Boolean {
+    private suspend fun write(
+        output: PcmOutput,
+        pcm: ByteArray,
+        frames: Int,
+        fades: Fades,
+        fadeOut: Boolean = false,
+    ): Boolean {
         var offset = 0
         val length = frames * FRAME_BYTES
         while (offset < length) {
             currentCoroutineContext().ensureActive()
-            val written = output.write(pcm, offset, length - offset)
+            val shaped = fades.prepareWrite(pcm, frames, offset / FRAME_BYTES, fadeOut, output.underrunCount())
+            val written = output.write(shaped, offset, length - offset)
             if (written <= 0 || written > length - offset || written % FRAME_BYTES != 0) {
                 Log.e(TAG, "AudioTrack write failed or returned an invalid frame count: $written")
                 return false
             }
+            fades.advance(written / FRAME_BYTES)
             offset += written
         }
         return true
@@ -387,7 +416,8 @@ internal class LpcmAudioPlayer(
     }
 
     /** Event-only gains; steady playback bypasses the per-frame processing loop entirely. */
-    private class Fades {
+    private class Fades(private var observedUnderruns: Int) {
+        private val shaped = ByteArray((BLOCK_FRAMES + SPLICE_FRAMES) * FRAME_BYTES)
         private var startupFrame = FADE_IN_FRAMES
         private var spliceFrame = SPLICE_FRAMES
 
@@ -403,27 +433,64 @@ internal class LpcmAudioPlayer(
         }
 
         /**
-         * Applies the most conservative active gain once to the samples being submitted.
+         * Reshapes raw PCM only at a block boundary or after a newly observed native underrun.
          *
-         * @param pcm worker-owned samples.
-         * @param frames complete stereo frames in this block.
-         * @param fadeOut whether this is the final retained tail before a discontinuity.
+         * @param pcm unmodified source block.
+         * @param frames complete stereo frames in the original block.
+         * @param offsetFrames already accepted prefix, preserved across short writes.
+         * @param fadeOut whether the original block has a retained-tail envelope.
+         * @param underruns cumulative application write-buffer underrun count.
+         * @return the reusable worker-owned buffer; no allocation occurs per write.
          */
-        fun apply(pcm: ByteArray, frames: Int, fadeOut: Boolean = false) {
+        fun prepareWrite(
+            pcm: ByteArray,
+            frames: Int,
+            offsetFrames: Int,
+            fadeOut: Boolean,
+            underruns: Int,
+        ): ByteArray {
+            val restarted = underruns != observedUnderruns
+            if (restarted) {
+                observedUnderruns = underruns
+                beginStartup()
+            }
+            if (offsetFrames == 0 || restarted) {
+                val offset = offsetFrames * FRAME_BYTES
+                pcm.copyInto(shaped, offset, offset, frames * FRAME_BYTES)
+                apply(shaped, frames, fadeOut, offsetFrames)
+            }
+            return shaped
+        }
+
+        /** @param frames successfully accepted frames, not the originally requested length. */
+        fun advance(frames: Int) {
+            startupFrame = minOf(FADE_IN_FRAMES, startupFrame + frames)
+            spliceFrame = minOf(SPLICE_FRAMES, spliceFrame + frames)
+        }
+
+        /**
+         * Applies conservative gains without consuming state for an unaccepted suffix.
+         *
+         * @param pcm reusable shaped samples.
+         * @param frames complete stereo frames in the original block.
+         * @param fadeOut whether the original tail must end at zero.
+         * @param offsetFrames accepted prefix excluded from processing.
+         */
+        private fun apply(pcm: ByteArray, frames: Int, fadeOut: Boolean, offsetFrames: Int) {
             if (!fadeOut && startupFrame == FADE_IN_FRAMES && spliceFrame == SPLICE_FRAMES) return
-            val fadingFrames = if (fadeOut) frames else minOf(
-                frames,
+            val remaining = frames - offsetFrames
+            val fadingFrames = if (fadeOut) remaining else minOf(
+                remaining,
                 maxOf(FADE_IN_FRAMES - startupFrame, SPLICE_FRAMES - spliceFrame),
             )
-            for (frame in 0 until fadingFrames) {
-                val startupGain = minOf(UNITY_GAIN, startupFrame * UNITY_GAIN / (FADE_IN_FRAMES - 1))
-                val spliceGain = minOf(UNITY_GAIN, spliceFrame * UNITY_GAIN / (SPLICE_FRAMES - 1))
+            for (relative in 0 until fadingFrames) {
+                val frame = offsetFrames + relative
+                val startupGain = minOf(UNITY_GAIN, (startupFrame + relative) * UNITY_GAIN / (FADE_IN_FRAMES - 1))
+                val spliceGain = minOf(UNITY_GAIN, (spliceFrame + relative) * UNITY_GAIN / (SPLICE_FRAMES - 1))
                 val tailGain = if (!fadeOut) UNITY_GAIN else if (frames == 1) 0 else
                     (frames - frame - 1) * UNITY_GAIN / (frames - 1)
                 val gain = minOf(startupGain, spliceGain, tailGain)
                 if (gain != UNITY_GAIN) scaleFrame(pcm, frame, gain)
-                startupFrame = minOf(FADE_IN_FRAMES, startupFrame + 1)
-                spliceFrame = minOf(SPLICE_FRAMES, spliceFrame + 1)
             }
         }
     }
@@ -503,6 +570,9 @@ internal interface PcmOutput {
 
     /** @return monotonic played stereo frames for this output, extending any hardware counter wrap. */
     fun playedFrames(): Long
+
+    /** @return application-level write-buffer underruns since this output was created. */
+    fun underrunCount(): Int
 
     /** Requests that an in-flight write return without releasing resources owned by its worker. */
     fun interrupt()

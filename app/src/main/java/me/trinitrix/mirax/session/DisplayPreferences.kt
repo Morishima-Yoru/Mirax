@@ -13,6 +13,7 @@ internal class DisplayPreferences(
     initialBroadcastAutoStopMinutes: Int = 1,
     initialShowDebugOverlay: Boolean = false,
     initialControlPanelEnabled: Boolean = true,
+    initialControlPanelEntry: ControlPanelEntry = ControlPanelEntry.FLOATING_BUTTON,
     initialOrientationLockEnabled: Boolean = false,
 ) {
 
@@ -38,6 +39,9 @@ internal class DisplayPreferences(
         private set
 
     var controlPanelEnabled: Boolean = initialControlPanelEnabled
+        private set
+
+    var controlPanelEntry: ControlPanelEntry = initialControlPanelEntry
         private set
 
     var orientationLockEnabled: Boolean = initialOrientationLockEnabled
@@ -74,6 +78,11 @@ internal class DisplayPreferences(
     /** Record whether the picture control panel is available. */
     fun setControlPanelEnabled(enabled: Boolean) {
         controlPanelEnabled = enabled
+    }
+
+    /** Record how the projection control panel opens. */
+    fun setControlPanelEntry(entry: ControlPanelEntry) {
+        controlPanelEntry = entry
     }
 
     /** Record whether projection orientation is locked. */

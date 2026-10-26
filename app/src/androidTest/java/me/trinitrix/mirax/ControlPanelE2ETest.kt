@@ -19,6 +19,7 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import com.google.common.truth.Truth.assertThat
 import me.trinitrix.mirax.session.PictureScale
+import me.trinitrix.mirax.session.SessionAction
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -40,6 +41,8 @@ class ControlPanelE2ETest {
     private lateinit var context: Context
     private val packageName = "me.trinitrix.mirax"
     private val launchTimeoutMs = 10000L
+    private var originalOrientationLock = false
+    private var originalPersistedOrientationLock: Boolean? = null
 
     /**
      * Helper to get a non-null UiObject2 by polling device.findObject() until found or timeout.
@@ -63,12 +66,21 @@ class ControlPanelE2ETest {
         return device.findObject(selector) ?: throw AssertionError("UI object not found")
     }
 
+    /** Isolate default/unlocked layout cases from a saved user orientation lock. */
     @Before
     fun setUp() {
         val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
         device = UiDevice.getInstance(instrumentation)
         context = ApplicationProvider.getApplicationContext<Context>()
         val session = (context as MiraxApp).session
+        originalOrientationLock = session.snapshot().orientationLockEnabled
+        val preferences = context.getSharedPreferences("mirax_session", Context.MODE_PRIVATE)
+        originalPersistedOrientationLock = if (preferences.contains("orientation_lock_enabled")) {
+            preferences.getBoolean("orientation_lock_enabled", false)
+        } else {
+            null
+        }
+        session.handle(SessionAction.SetOrientationLock(false))
         if (session.snapshot().controlPanelExpanded) {
             session.handle(me.trinitrix.mirax.session.SessionAction.ToggleControlPanel)
         }
@@ -78,9 +90,22 @@ class ControlPanelE2ETest {
         device.pressHome()
     }
 
+    /** Restore both the runtime lock and the exact persisted key presence after each case. */
     @After
     fun tearDown() {
-        device.pressHome()
+        try {
+            device.pressHome()
+        } finally {
+            (context as MiraxApp).session.handle(SessionAction.SetOrientationLock(originalOrientationLock))
+            val editor = context.getSharedPreferences("mirax_session", Context.MODE_PRIVATE).edit()
+            val persisted = originalPersistedOrientationLock
+            if (persisted == null) {
+                editor.remove("orientation_lock_enabled")
+            } else {
+                editor.putBoolean("orientation_lock_enabled", persisted)
+            }
+            check(editor.commit()) { "Could not restore the original orientation-lock preference" }
+        }
     }
 
     /** Verify the debug mock opens the control panel on launch. */
@@ -211,7 +236,7 @@ class ControlPanelE2ETest {
         }
     }
 
-    /** Verify Back collapses the expanded panel, then requests end confirmation. */
+    /** Verify Back only collapses the panel and never requests disconnection. */
     @Test
     fun testMockSession_backKeyLogic() {
         val intent = Intent(context, PictureActivity::class.java).apply {
@@ -220,8 +245,6 @@ class ControlPanelE2ETest {
         val scenario = ActivityScenario.launch<PictureActivity>(intent)
 
         scenario.onActivity { activity: PictureActivity ->
-            Thread.sleep(1000)
-
             val session = activity.application as me.trinitrix.mirax.MiraxApp
 
             var snapshot = session.session.snapshot()
@@ -230,11 +253,11 @@ class ControlPanelE2ETest {
             session.session.handle(me.trinitrix.mirax.session.SessionAction.SystemBack)
             snapshot = session.session.snapshot()
             assertThat(snapshot.controlPanelExpanded).isFalse()
-            assertThat(snapshot.effects).contains(me.trinitrix.mirax.session.SessionEffect.ShowPressBackAgainToEndToast)
 
             session.session.handle(me.trinitrix.mirax.session.SessionAction.SystemBack)
             snapshot = session.session.snapshot()
-            assertThat(snapshot.effects).contains(me.trinitrix.mirax.session.SessionEffect.ConfirmEndConnection)
+            assertThat(snapshot.controlPanelExpanded).isFalse()
+            assertThat(snapshot.effects).doesNotContain(me.trinitrix.mirax.session.SessionEffect.ConfirmEndConnection)
             assertThat(snapshot.phase).isEqualTo(me.trinitrix.mirax.session.ScreenPhase.CONNECTED)
             session.session.handle(me.trinitrix.mirax.session.SessionAction.AcknowledgeEffects)
         }

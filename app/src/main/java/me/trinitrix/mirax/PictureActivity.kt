@@ -7,10 +7,12 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -34,6 +36,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import android.graphics.Rect
 import android.graphics.RectF
 import me.trinitrix.mirax.session.PicturePlacement
+import me.trinitrix.mirax.session.ControlPanelEntry
 import me.trinitrix.mirax.session.PictureContactState
 import me.trinitrix.mirax.session.PictureRotationReport
 import me.trinitrix.mirax.session.PictureScale
@@ -59,8 +62,8 @@ import kotlin.math.roundToInt
  * via [PicturePlacement]; views only render. Contacts on the picture are general
  * touch or S Pen when that switch is on. They do not open settings.
  *
- * System Back and the control panel are decided by [me.trinitrix.mirax.session.MiraxSession];
- * this activity only renders [SessionSnapshot] outputs and forwards actions.
+ * System Back only closes the control panel; the selected explicit entry opens it.
+ * This activity only renders [SessionSnapshot] outputs and forwards actions.
  */
 class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private val isDebuggable: Boolean
@@ -69,6 +72,8 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var stage: FrameLayout
     private lateinit var surfaceView: SurfaceView
     private lateinit var cursorView: ImageView
+    private lateinit var controlButton: ProjectionControlButton
+    private lateinit var phoneControls: ProjectionControlsLayer
     private var endConnectionDialog: AlertDialog? = null
     private lateinit var controlPanelRoot: FrameLayout
     private lateinit var controlPanelScrim: View
@@ -121,6 +126,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var debugOverlay: DebugOverlayView
     private val debugOverlayHandler = Handler(Looper.getMainLooper())
     private val debugOverlayRunnable = Runnable { updateDebugOverlayPeriodic() }
+    private val pictureLayoutRunnable = Runnable { layoutPicture() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -163,10 +169,31 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             layoutParams = FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START)
         }
         stage.addView(cursorView)
-        stage.setOnClickListener {
-            applySession(SessionHost.toggleControlPanel(this@PictureActivity))
+        stage.isClickable = true
+
+        phoneControls = ProjectionControlsLayer(this)
+        stage.addView(phoneControls, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+
+        controlButton = ProjectionControlButton(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                MiraxUi.dp(this@PictureActivity, 48),
+                MiraxUi.dp(this@PictureActivity, 56),
+                Gravity.TOP or Gravity.START,
+            ).apply {
+                topMargin = MiraxUi.dp(this@PictureActivity, 72)
+            }
+            setOnClickListener {
+                if (MiraxApp.instance.session.snapshot().controlPanelEntry == ControlPanelEntry.FLOATING_BUTTON) {
+                    openControlPanel()
+                }
+            }
+            onPositionChanged = { endCoveredContacts() }
         }
-        stage.setOnLongClickListener { true }
+        phoneControls.addView(controlButton)
+        phoneControls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> controlButton.constrainToParent() }
 
         buildControlPanel()
         stage.addView(
@@ -189,13 +216,17 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
             visibility = View.GONE
         }
-        stage.addView(debugOverlay)
+        phoneControls.addView(debugOverlay)
         debugOverlay.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> endCoveredContacts() }
         debugOverlay.onPositionChanged = { endCoveredContacts() }
+        phoneControls.bringChildToFront(controlButton)
         stage.bringChildToFront(controlPanelRoot)
 
         surfaceView.holder.addCallback(this)
-        stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutPicture() }
+        stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            layoutPicture()
+            updateGestureExclusion()
+        }
         ViewCompat.setOnApplyWindowInsetsListener(stage) { view, insets ->
             applyProjectionCutoutInsets(view, insets)
             insets
@@ -219,7 +250,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             }
         }
 
-        installImmersiveBackBridge()
         onBackPressedDispatcher.addCallback(
             this,
             object : OnBackPressedCallback(true) {
@@ -251,6 +281,77 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (hasFocus) {
             hideSystemBars()
         }
+        updateGestureExclusion()
+    }
+
+    /** Open the panel once; key repeats must not toggle it closed again. */
+    private fun openControlPanel() {
+        val snapshot = MiraxApp.instance.session.snapshot()
+        if (snapshot.showPicture && !snapshot.controlPanelExpanded) {
+            applySession(SessionHost.toggleControlPanel(this))
+        }
+    }
+
+    /** @return whether this key belongs to the foreground projection's panel shortcut */
+    private fun isProjectionVolumeKey(keyCode: Int): Boolean =
+        (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            MiraxApp.instance.session.snapshot().let {
+                it.showPicture && it.controlPanelEntry == ControlPanelEntry.VOLUME_KEYS
+            }
+
+    /**
+     * Defer volume adjustment until release so a long press changes no volume.
+     *
+     * @param keyCode Android key code
+     * @param event key event used by Android's long-press tracking
+     * @return true for a projection volume key, otherwise the platform result
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (!isProjectionVolumeKey(keyCode)) return super.onKeyDown(keyCode, event)
+        if (event.repeatCount == 0) event.startTracking()
+        return true
+    }
+
+    /**
+     * Use Android's tracked long press rather than a second gesture timer.
+     *
+     * @param keyCode Android key code
+     * @param event tracked long-press event
+     * @return true when the panel shortcut consumes this press
+     */
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (!isProjectionVolumeKey(keyCode)) return super.onKeyLongPress(keyCode, event)
+        openControlPanel()
+        return true
+    }
+
+    /**
+     * Preserve one ordinary volume step for a short, uncanceled key press.
+     *
+     * @param keyCode Android key code
+     * @param event release marked canceled by Android after a handled long press
+     * @return true for a projection volume key, otherwise the platform result
+     */
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (!isProjectionVolumeKey(keyCode)) return super.onKeyUp(keyCode, event)
+        if (event.isTracking && !event.isCanceled) {
+            val audio = getSystemService(AudioManager::class.java)
+            if (audio == null) {
+                Log.w("PictureActivity", "Audio service unavailable for volume adjustment")
+            } else {
+                val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+                    AudioManager.ADJUST_RAISE
+                } else {
+                    AudioManager.ADJUST_LOWER
+                }
+                try {
+                    audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+                } catch (error: SecurityException) {
+                    Log.w("PictureActivity", "System policy rejected volume adjustment", error)
+                }
+            }
+        }
+        return true
     }
 
     override fun onResume() {
@@ -278,8 +379,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onStop() {
+        stage.removeCallbacks(pictureLayoutRunnable)
         endPictureContacts()
         pictureContacts.cancelAll()
+        stage.systemGestureExclusionRects = emptyList()
         super.onStop()
         stopDebugOverlayUpdates()
         if (isChangingConfigurations || isFinishing) {
@@ -304,7 +407,6 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         MiraxApp.instance.session.report(
             PictureRotationReport(SessionHost.pictureRotationDegrees(this, displayId = null)),
         )
-        layoutPicture()
         stage.removeView(controlPanelRoot)
         buildControlPanel()
         stage.addView(
@@ -319,8 +421,10 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onDestroy() {
+        stage.removeCallbacks(pictureLayoutRunnable)
         endPictureContacts()
         debugOverlay.onPositionChanged = null
+        controlButton.onPositionChanged = null
         stopDebugOverlayUpdates()
         endConnectionDialog?.dismiss()
         endConnectionDialog = null
@@ -945,9 +1049,19 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     /** Render control visibility and switch values from [snapshot]. */
     private fun renderControlPanel(snapshot: SessionSnapshot) {
         applyOrientationLock(snapshot.orientationLockEnabled)
+        controlButton.visibility = if (snapshot.controlPanelExpanded || snapshot.controlPanelEntry != ControlPanelEntry.FLOATING_BUTTON) {
+            View.GONE
+        } else {
+            View.VISIBLE
+        }
+        phoneControls.visibility = if (!snapshot.controlPanelExpanded &&
+            (snapshot.controlPanelEntry == ControlPanelEntry.FLOATING_BUTTON || snapshot.showDebugOverlay)
+        ) View.VISIBLE else View.GONE
         if (!snapshot.controlPanelExpanded) {
             showSettingsPage(false)
             controlPanelRoot.visibility = View.GONE
+            endCoveredContacts()
+            updateGestureExclusion()
             return
         }
         if (controlPanelRoot.visibility != View.VISIBLE) {
@@ -1003,6 +1117,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             controlPanelCameraCutoutSwitch.isChecked = snapshot.cameraCutoutAffectsLayout
         }
         controlPanelRoot.visibility = if (snapshot.controlPanelExpanded) View.VISIBLE else View.GONE
+        updateGestureExclusion()
     }
 
     /** Switch the right-hand pane in landscape, or the whole body in portrait. */
@@ -1014,6 +1129,12 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun layoutPicture() {
+        if (stage.isInLayout) {
+            // Apply child parameters after the parent traversal so measured bounds can catch up.
+            stage.removeCallbacks(pictureLayoutRunnable)
+            stage.post(pictureLayoutRunnable)
+            return
+        }
         if (stage.width <= 0 || stage.height <= 0) {
             endPictureContacts()
             lastPictureFrame = null
@@ -1123,20 +1244,30 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         snapshot.touchEnabled && snapshot.showPicture && snapshot.selectedMode != null &&
             UibcTouchChannel.canForwardInput()
 
-    /** @return movable phone control bounds in picture-view coordinates, if visible. */
-    private fun debugControlBounds(): RectF? {
-        if (!::debugOverlay.isInitialized || !debugOverlay.isShown || debugOverlay.width <= 0) {
-            return null
+    /** @return all visible phone control bounds in picture-view coordinates */
+    private fun phoneControlBounds(): List<RectF> {
+        val location = IntArray(2)
+        surfaceView.getLocationInWindow(location)
+        val surfaceX = location[0]
+        val surfaceY = location[1]
+        fun bounds(view: View): RectF? {
+            if (!view.isShown || view.width <= 0) return null
+            view.getLocationInWindow(location)
+            val left = (location[0] - surfaceX).toFloat()
+            val top = (location[1] - surfaceY).toFloat()
+            return RectF(left, top, left + view.width, top + view.height)
         }
-        val left = debugOverlay.x - surfaceView.x
-        val top = debugOverlay.y - surfaceView.y
-        return RectF(left, top, left + debugOverlay.width, top + debugOverlay.height)
+        return listOfNotNull(
+            if (::debugOverlay.isInitialized) bounds(debugOverlay) else null,
+            if (::controlButton.isInitialized) bounds(controlButton) else null,
+        )
     }
 
     /** Only contacts underneath the moved phone control lose Windows ownership. */
     private fun endCoveredContacts() {
-        val bounds = debugControlBounds() ?: return
-        val ended = pictureContacts.endCovered { x, y -> bounds.contains(x, y) }
+        val bounds = phoneControlBounds()
+        if (bounds.isEmpty()) return
+        val ended = pictureContacts.endCovered { x, y -> bounds.any { it.contains(x, y) } }
         if (ended.touchSlots.isNotEmpty() || ended.pen) {
             UibcTouchChannel.releaseCovered(ended.touchSlots, ended.pen)
         }
@@ -1158,7 +1289,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         ) {
             return false
         }
-        return debugControlBounds()?.contains(x, y) != true
+        return phoneControlBounds().none { it.contains(x, y) }
     }
 
     private fun applyCursorBitmap(bitmap: Bitmap?, hotspotX: Int, hotspotY: Int) {
@@ -1481,15 +1612,16 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         return tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER
     }
 
-    private fun installImmersiveBackBridge() {
-        ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { _, insets ->
-            val barsVisible = insets.isVisible(
-                WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars(),
-            )
-            if (barsVisible) {
-                window.decorView.post { hideSystemBars() }
-            }
-            insets
+    /** Request Back-gesture ownership only while the picture, not the panel, is active. */
+    private fun updateGestureExclusion() {
+        if (!::stage.isInitialized || !::controlPanelRoot.isInitialized) return
+        val pictureActive = hasWindowFocus() && MiraxApp.instance.session.snapshot().showPicture &&
+            controlPanelRoot.visibility != View.VISIBLE
+        // Sticky immersive hides navigation; mandatory Home/Recents gestures remain system-owned.
+        stage.systemGestureExclusionRects = if (pictureActive && stage.width > 0 && stage.height > 0) {
+            listOf(Rect(0, 0, stage.width, stage.height))
+        } else {
+            emptyList()
         }
     }
 

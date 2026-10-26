@@ -56,7 +56,6 @@ var uibcPort: Int = -1
     var rtcpServerPort: Int = -1
         private set
 
-    private var customSelected: Boolean = false
     private var activeRtpPort: Int = rtpPort
 
     fun rtpPort(): Int = activeRtpPort
@@ -346,6 +345,8 @@ fun handle(message: String?): List<String> {
 
     private fun applyParameters(body: String): String {
         var trigger = ""
+        var customSelected = false
+        var microsoftSelected = false
         for (raw in body.split("\n")) {
             val line = raw.trim()
             if (line.isEmpty()) {
@@ -363,8 +364,19 @@ fun handle(message: String?): List<String> {
                         customSelected = true
                     }
                 }
+                "microsoft_video_formats" -> {
+                    val mode = capabilities.microsoftModeFor(value)
+                    if (mode == null) {
+                        Log.w(TAG, "Ignoring invalid or unoffered microsoft_video_formats: $value")
+                    } else if (!customSelected) {
+                        selectedMode = mode
+                        formatChosen = true
+                        microsoftSelected = true
+                        Log.i(TAG, "microsoft_video_formats selected ${mode.format()}")
+                    }
+                }
                 "wfd_video_formats", "wfd2_video_formats", "wfdx_video_formats" -> {
-                    if (!customSelected) {
+                    if (!customSelected && !microsoftSelected) {
                         val mode = WfdVideoFormatCodec.fromBitmapValue(value)
                         if (mode != null) {
                             selectedMode = mode

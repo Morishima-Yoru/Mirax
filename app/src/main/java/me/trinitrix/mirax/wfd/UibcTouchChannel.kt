@@ -1,6 +1,7 @@
 package me.trinitrix.mirax.wfd
 
 import android.util.Log
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -52,6 +53,9 @@ object UibcTouchChannel {
      */
     internal var writeRunner: (Runnable) -> Unit = { runnable -> writer.execute(runnable) }
 
+    /** Bind the real socket before dialing; localhost wire tests supply an explicit route. */
+    internal var bindSocket: (android.content.Context?, Socket) -> Boolean = P2pNetworkBinder::bind
+
     var context: android.content.Context? = null
 
     /** Optional English status line, for the connection log. */
@@ -66,8 +70,9 @@ object UibcTouchChannel {
         Thread({
             val socket = Socket()
             try {
-                socket.bind(null)
-                P2pNetworkBinder.bind(context, socket)
+                if (!bindSocket(context, socket)) {
+                    throw IOException("P2P route unavailable")
+                }
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(host, port), 3_000)
                 synchronized(next) {

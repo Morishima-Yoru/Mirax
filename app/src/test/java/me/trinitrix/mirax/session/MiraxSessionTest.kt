@@ -10,7 +10,7 @@ import org.junit.Test
  * actions, picture rotation, and connection events; assert phase, WFD owner,
  * tile/widget state, next advertisement set, preferred mode (including
  * visible-picture axes), selected mode, picture scale, the WFD advertise
- * command, Back confirm, and bottom-handle outputs. RTSP encode/decode stays
+ * command, Back panel dismissal, and bottom-handle outputs. RTSP encode/decode stays
  * behind this seam and is not asserted here. The picture activity is not a
  * second seam. Placement rectangles are covered by [PicturePlacementTest].
  */
@@ -590,6 +590,188 @@ class MiraxSessionTest {
             1920 to 1200,
             1600 to 1200,
         )
+    }
+
+    /** Verifies opt-in Microsoft selections survive settings export and restoration. */
+    @Test
+    fun microsoftModesAreOptInAndRetainedAcrossSettingsRestore() {
+        val session = freshSession()
+        val mode = VideoMode(2160, 1440, 60)
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(mode)
+
+        session.handle(SessionAction.SetStandardModeChecked(mode, checked = true))
+
+        assertThat(session.snapshot().nextAdvertisementModes).contains(mode)
+        val saved = session.exportSettings()
+        assertThat(saved.checkedStandardModes).contains(mode)
+        val restored = MiraxSession(saved, TestConnectionHistory())
+        assertThat(restored.snapshot().nextAdvertisementModes).contains(mode)
+
+        restored.handle(SessionAction.SetStandardModeChecked(mode, checked = false))
+        assertThat(restored.snapshot().nextAdvertisementModes).doesNotContain(mode)
+        assertThat(restored.exportSettings().checkedStandardModes).doesNotContain(mode)
+    }
+
+    /** Verifies first-time provisioning cannot opt into a Microsoft mode in either orientation. */
+    @Test
+    fun automaticProvisioningDoesNotEnableUncheckedMicrosoftModes() {
+        for (rotation in listOf(0, 90)) {
+            val session = freshSession()
+            session.report(PrivilegeReport(helperRunning = true))
+            session.report(PictureRotationReport(degrees = rotation))
+            val reading = if (rotation == 0) {
+                WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)
+            } else {
+                WmSizeReading(physicalWidth = 1440, physicalHeight = 2160)
+            }
+
+            session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+
+            assertThat(session.snapshot().preferredMode).isNull()
+            assertThat(session.snapshot().microsoftModes.any { it.checked }).isFalse()
+            assertThat(session.snapshot().nextAdvertisementModes)
+                .containsExactlyElementsIn(StandardVideoModes.DEFAULT_CHECKED)
+            assertThat(session.exportSettings().provisioningConsumed).isTrue()
+            assertThat(session.exportSettings().preferredMode).isNull()
+            session.report(PrivilegeReport())
+            session.report(PrivilegeReport(helperRunning = true))
+            assertThat(session.snapshot().effects)
+                .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
+        }
+    }
+
+    /** Verifies provisioning can prefer a Microsoft mode already explicitly enabled. */
+    @Test
+    fun automaticProvisioningRetainsExplicitMicrosoftOptIn() {
+        val mode = VideoMode(2160, 1440, 60)
+        val session = freshSession()
+        session.handle(SessionAction.SetStandardModeChecked(mode, checked = true))
+        session.report(PrivilegeReport(helperRunning = true))
+
+        session.handle(
+            SessionAction.ApplyProvisioningWmSize(WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)),
+        )
+
+        assertThat(session.snapshot().preferredMode).isEqualTo(mode)
+        assertThat(session.snapshot().nextAdvertisementModes).contains(mode)
+        assertThat(session.exportSettings().checkedStandardModes).contains(mode)
+    }
+
+    /** Verifies provisioning does not enable a sibling refresh of an opted-in Microsoft mode. */
+    @Test
+    fun automaticProvisioningDoesNotPromoteAnUncheckedMicrosoftSibling() {
+        val selected = VideoMode(2160, 1440, 30)
+        val session = freshSession()
+        session.handle(SessionAction.SetStandardModeChecked(selected, checked = true))
+        session.report(PrivilegeReport(helperRunning = true))
+
+        session.handle(
+            SessionAction.ApplyProvisioningWmSize(WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)),
+        )
+
+        assertThat(session.snapshot().preferredMode).isNull()
+        assertThat(session.snapshot().nextAdvertisementModes).contains(selected)
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(VideoMode(2160, 1440, 60))
+        assertThat(session.exportSettings().checkedStandardModes).contains(selected)
+    }
+
+    /** Verifies the picker exposes supported modes and applies bulk selection changes. */
+    @Test
+    fun microsoftPickerShowsOnlySupportedModesAndBulkSelectionUpdatesRows() {
+        val session = freshSession()
+        val expected = listOf(
+            VideoMode(1920, 1280, 30), VideoMode(1920, 1280, 60), VideoMode(1920, 1280, 24),
+            VideoMode(2160, 1440, 30), VideoMode(2160, 1440, 60), VideoMode(2160, 1440, 24),
+            VideoMode(2256, 1504, 30), VideoMode(2256, 1504, 60), VideoMode(2256, 1504, 24),
+            VideoMode(2736, 1824, 30), VideoMode(2736, 1824, 24),
+            VideoMode(3000, 2000, 30), VideoMode(3000, 2000, 24),
+            VideoMode(3240, 2160, 30), VideoMode(3240, 2160, 24),
+        )
+        assertThat(session.snapshot().microsoftModes.map { it.mode }).containsExactlyElementsIn(expected)
+        assertThat(session.snapshot().microsoftModes.any { it.checked }).isFalse()
+        assertThat(session.snapshot().standardModes.map { it.mode }).containsNoneIn(expected)
+
+        val unsupported = VideoMode(2736, 1824, 60)
+        session.handle(SessionAction.SetStandardModesChecked(expected + unsupported, checked = true))
+        assertThat(session.snapshot().microsoftModes.all { it.checked }).isTrue()
+        assertThat(session.snapshot().nextAdvertisementModes).containsAtLeastElementsIn(expected)
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(unsupported)
+
+        session.handle(SessionAction.SetStandardModesChecked(expected, checked = false))
+        assertThat(session.snapshot().microsoftModes.any { it.checked }).isFalse()
+        assertThat(session.snapshot().nextAdvertisementModes).containsNoneIn(expected)
+    }
+
+    /** Verifies restored custom settings cannot advertise unsupported Microsoft modes. */
+    @Test
+    fun restoredOversizedMicrosoftModesCannotBypassOfferLimitsThroughCustomSettings() {
+        val safe = VideoMode(2160, 1440, 60)
+        val oversized = listOf(VideoMode(3000, 2000, 60), VideoMode(4500, 3000, 24))
+        val session = MiraxSession(
+            SessionSettings(
+                checkedStandardModes = setOf(safe) + oversized,
+                customModes = oversized,
+                preferredMode = oversized.first(),
+            ),
+            TestConnectionHistory(),
+        )
+        assertThat(session.snapshot().nextAdvertisementModes).containsExactly(safe)
+        // Loading on this receiver filters the offer without destroying saved choices.
+        assertThat(session.exportSettings().customModes).containsExactlyElementsIn(oversized)
+    }
+
+    /** Verifies automatic screen sizing never enables an unchecked Microsoft refresh. */
+    @Test
+    fun automaticScreenSizeDoesNotInjectAnUncheckedMicrosoftSiblingRefresh() {
+        val selected = VideoMode(2160, 1440, 60)
+        val sibling = VideoMode(2160, 1440, 30)
+        val session = sessionWithBroadcast(
+            SessionSettings(advertisingEnabled = true, checkedStandardModes = setOf(selected)),
+        )
+        val reading = WmSizeReading(physicalWidth = 2160, physicalHeight = 1440)
+
+        session.handle(SessionAction.FreezeConnectionOffer(reading))
+
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(selected)
+        assertThat(session.snapshot().connectionPreferredMode).isNull()
+
+        session.handle(SessionAction.ConnectionEnded)
+        session.handle(SessionAction.SetStandardModeChecked(sibling, checked = true))
+        session.handle(SessionAction.SetAdvertising(true))
+        session.handle(SessionAction.BeaconListening)
+        session.handle(SessionAction.FreezeConnectionOffer(reading))
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(selected, sibling)
+        assertThat(session.snapshot().connectionPreferredMode).isEqualTo(sibling)
+    }
+
+    /** Verifies setting changes preserve the frozen offer and active source selection. */
+    @Test
+    fun microsoftSettingEditsDoNotMutateFrozenOfferOrSelectedResolution() {
+        val mode = VideoMode(2160, 1440, 60)
+        val oldSibling = VideoMode(2160, 1440, 24)
+        val newSibling = VideoMode(2160, 1440, 30)
+        val session = sessionWithBroadcast(
+            SessionSettings(
+                advertisingEnabled = true,
+                checkedStandardModes = setOf(mode, oldSibling),
+                autoAddWmSizeOnConnect = false,
+                touchEnabled = false,
+            ),
+        )
+        session.handle(SessionAction.FreezeConnectionOffer(null))
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode, oldSibling)
+
+        session.handle(SessionAction.SetStandardModeChecked(mode, checked = false))
+        session.handle(SessionAction.SetStandardModeChecked(oldSibling, checked = false))
+        session.handle(SessionAction.SetStandardModeChecked(newSibling, checked = true))
+        assertThat(session.snapshot().nextAdvertisementModes).doesNotContain(mode)
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode, oldSibling)
+
+        session.handle(SessionAction.SourceSelectedMode(mode))
+        session.handle(SessionAction.EnteredPlay)
+        assertThat(session.snapshot().connectionOfferModes).containsExactly(mode, oldSibling)
+        assertThat(session.snapshot().selectedMode).isEqualTo(mode)
+        assertThat(session.snapshot().currentResolutionText).isEqualTo("2160×1440@60")
     }
 
     @Test
@@ -1173,95 +1355,39 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun connected_firstSystemBack_opensControlPanel_keepsConnection() {
+    fun connected_systemBackOnlyClosesPanel_neverRequestsDisconnect() {
         val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
+        repeat(3) { session.handle(SessionAction.SystemBack) }
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.ConfirmEndConnection)
 
-        val snap = session.snapshot()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
-        assertThat(snap.advertisingEnabled).isTrue()
-        assertThat(snap.showPicture).isTrue()
-        assertThat(snap.controlPanelExpanded).isTrue()
-        assertThat(snap.effects).doesNotContain(SessionEffect.ConfirmEndConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun connected_secondSystemBack_armsForEnd_noConfirmYet() {
-        val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-
-        val snap = session.snapshot()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
-        assertThat(snap.effects).doesNotContain(SessionEffect.ConfirmEndConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun connected_thirdSystemBack_requestsEndConfirm_keepsConnectionUntilConfirmed() {
-        val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-
-        val snap = session.snapshot()
-        assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
-        assertThat(snap.effects).contains(SessionEffect.ConfirmEndConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
-
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.EndConnection)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
-        assertThat(session.snapshot().effects).contains(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun backConfirmPromise_survivesOtherActions_untilNextBackOrConnectionEnd() {
-        val session = MiraxSession(
-            SessionSettings(advertisingEnabled = true),
-            TestConnectionHistory(),
-        )
-        session.report(PrivilegeReport(helperRunning = true))
-        session.handle(SessionAction.BeaconListening)
-        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
-        session.handle(SessionAction.EnteredPlay)
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-
-        // Other actions must not cancel the armed second Back.
-        session.handle(SessionAction.SetLanguagePreference(LanguagePreference.ENGLISH))
-        session.handle(SessionAction.AcknowledgeEffects)
-
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.SystemBack)
-        assertThat(session.snapshot().effects).contains(SessionEffect.ConfirmEndConnection)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.EndConnection)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
-        assertThat(session.snapshot().advertisingEnabled).isTrue()
-        assertThat(session.snapshot().effects).contains(SessionEffect.DropActiveConnection)
-    }
-
-    @Test
-    fun connectionEnded_clearsBackConfirm_soNextBackOpensPanelAgain() {
-        val session = connectedSession()
-        session.handle(SessionAction.SystemBack)
-        session.handle(SessionAction.AcknowledgeEffects)
-        session.handle(SessionAction.ConnectionEnded)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
-
-        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
-        session.handle(SessionAction.EnteredPlay)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
-
-        session.handle(SessionAction.SystemBack)
-        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        session.handle(SessionAction.ToggleControlPanel)
         assertThat(session.snapshot().controlPanelExpanded).isTrue()
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+        repeat(3) { session.handle(SessionAction.SystemBack) }
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.ConfirmEndConnection)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.DropActiveConnection)
+
+        session.handle(SessionAction.RequestEndConnection)
+        assertThat(session.snapshot().effects).contains(SessionEffect.ConfirmEndConnection)
+    }
+
+    @Test
+    fun connectionEnded_resetsControlPanel_andBackCannotOpenItOnNextConnection() {
+        val session = connectedSession()
+        session.handle(SessionAction.ToggleControlPanel)
+        assertThat(session.snapshot().controlPanelExpanded).isTrue()
+        session.handle(SessionAction.ConnectionEnded)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
+
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        session.handle(SessionAction.SystemBack)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().controlPanelExpanded).isFalse()
         assertThat(session.snapshot().effects).doesNotContain(SessionEffect.ConfirmEndConnection)
     }
 
@@ -1294,6 +1420,30 @@ class MiraxSessionTest {
 
         session.handle(SessionAction.SetFloatingBallEnabled(true))
         assertThat(session.exportSettings().floatingBallEnabled).isTrue()
+    }
+
+    @Test
+    fun controlPanelEntry_defaultsChangesExportsAndReloads_independentlyOfFloatingBall() {
+        val session = freshSession()
+        assertThat(session.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.FLOATING_BUTTON)
+        assertThat(session.exportSettings().controlPanelEntry).isEqualTo(ControlPanelEntry.FLOATING_BUTTON)
+
+        session.handle(SessionAction.SetFloatingBallEnabled(false))
+        session.handle(SessionAction.SetControlPanelEntry(ControlPanelEntry.VOLUME_KEYS))
+        assertThat(session.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        assertThat(session.snapshot().floatingBallEnabled).isFalse()
+        val exported = session.exportSettings()
+        assertThat(exported.controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        assertThat(exported.floatingBallEnabled).isFalse()
+
+        val reloaded = MiraxSession(exported, TestConnectionHistory())
+        assertThat(reloaded.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        assertThat(reloaded.snapshot().floatingBallEnabled).isFalse()
+        reloaded.handle(SessionAction.SetFloatingBallEnabled(true))
+        assertThat(reloaded.snapshot().controlPanelEntry).isEqualTo(ControlPanelEntry.VOLUME_KEYS)
+        reloaded.handle(SessionAction.SetControlPanelEntry(ControlPanelEntry.FLOATING_BUTTON))
+        assertThat(reloaded.snapshot().floatingBallEnabled).isTrue()
+        assertThat(reloaded.exportSettings().controlPanelEntry).isEqualTo(ControlPanelEntry.FLOATING_BUTTON)
     }
 
     @Test
@@ -1358,7 +1508,6 @@ class MiraxSessionTest {
         assertThat(snap.advertisingEnabled).isTrue()
         assertThat(snap.showFloatingBall).isFalse()
         assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.ShowPressBackAgainToEndToast)
     }
 
     @Test
@@ -1380,7 +1529,6 @@ class MiraxSessionTest {
         assertThat(snap.advertisingEnabled).isTrue()
         assertThat(snap.showFloatingBall).isFalse()
         assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
-        assertThat(snap.effects).doesNotContain(SessionEffect.ShowPressBackAgainToEndToast)
     }
 
     @Test
@@ -1732,16 +1880,16 @@ class MiraxSessionTest {
     }
 
     @Test
-    fun systemBackAndToggleControlPanel_shareExpandedState() {
+    fun systemBackClosesPanelOpenedByToggle_withoutPreventingReopening() {
         val session = connectedSession()
 
-        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.ToggleControlPanel)
         assertThat(session.snapshot().controlPanelExpanded).isTrue()
 
-        session.handle(SessionAction.ToggleControlPanel)
+        session.handle(SessionAction.SystemBack)
         assertThat(session.snapshot().controlPanelExpanded).isFalse()
 
-        session.handle(SessionAction.SystemBack)
+        session.handle(SessionAction.ToggleControlPanel)
         assertThat(session.snapshot().controlPanelExpanded).isTrue()
     }
 
@@ -1806,15 +1954,51 @@ class MiraxSessionTest {
     }
 
     @Test
+    fun beginConnectionRun_setsNativeSourceNameSynchronously() {
+        val session = freshSession()
+
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "Alice's Surface"))
+
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Alice's Surface")
+    }
+
+    @Test
+    fun beginConnectionRun_replacesPreviousSourceName() {
+        val session = freshSession()
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.1", "Previous source"))
+
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "Current source"))
+
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Current source")
+    }
+
+    @Test
+    fun beginConnectionRun_blankSourceNameRemainsUnknown() {
+        val session = freshSession()
+
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "  \t  "))
+
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+    }
+
+    @Test
+    fun prePlayGroupDropped_clearsNativeSourceName() {
+        val session = freshSession()
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.1", "Previous source"))
+
+        session.handle(SessionAction.PrePlayGroupDropped)
+
+        assertThat(session.snapshot().sourceDeviceName).isNull()
+    }
+
+    @Test
     fun beginConnectionRun_clearsPreviousSourceName() {
         val session = freshSession()
-        session.handle(SessionAction.SetSourceDeviceName("Previous source"))
-        val previousGeneration = session.sourceNameGeneration
+        session.handle(SessionAction.BeginConnectionRun("192.0.2.1", "Previous source"))
 
         session.handle(SessionAction.BeginConnectionRun("192.0.2.2"))
 
         assertThat(session.snapshot().sourceDeviceName).isNull()
-        assertThat(session.sourceNameGeneration).isGreaterThan(previousGeneration)
     }
 
     private fun connectedSession(): MiraxSession {

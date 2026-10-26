@@ -30,6 +30,7 @@ class LpcmAudioPlayerTest {
         scheduler.runCurrent()
     }
 
+    /** Keeps a silent connection prepared without starting playback. */
     @Test
     fun connectionWithoutPcmDoesNotStartPlayback() {
         player.start()
@@ -41,6 +42,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isEmpty()
     }
 
+    /** Opens playback at the PCM frame threshold regardless of submission count. */
     @Test
     fun prefillCountsStereoFramesRatherThanInputItems() {
         player.start()
@@ -54,6 +56,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isNotEmpty()
     }
 
+    /** Coalesces producer notifications while the initial frame threshold remains unmet. */
     @Test
     fun insufficientPrefillDoesNotWakeTheAudioWorkerForEveryInputBlock() {
         player.start()
@@ -71,6 +74,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.startCount).isEqualTo(1)
     }
 
+    /** Avoids per-input worker wakeups while recovery is still waiting for sufficient PCM. */
     @Test
     fun recoveryPrefillCoalescesInputUntilEnoughAudioCanActuallyResume() {
         output.consumeImmediately = true
@@ -90,6 +94,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.startCount).isEqualTo(2)
     }
 
+    /** Releases sparse PCM at the connection deadline rather than restarting its timer. */
     @Test
     fun sparseAudioStartsAtTheOriginalConnectionDeadline() {
         player.start()
@@ -105,6 +110,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isNotEmpty()
     }
 
+    /** Plays the first late-arriving PCM without imposing another preparation interval. */
     @Test
     fun firstAudioAfterExpiredDeadlineDoesNotWaitAgain() {
         player.start()
@@ -117,6 +123,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isNotEmpty()
     }
 
+    /** Keeps the startup envelope continuous across chunks and preserves later samples. */
     @Test
     fun startupFadeSpansChunksAndThenLeavesBothChannelsUnchanged() {
         val original = pcm(7_200, left = -32_768, right = 16_384)
@@ -138,6 +145,7 @@ class LpcmAudioPlayerTest {
         assertThat(sample(original, 0, 0)).isEqualTo(-32_768)
     }
 
+    /** Preserves the requested startup envelope when native writes accept only a prefix. */
     @Test
     fun shortWritesDoNotApplyTheStartupGainTwice() {
         output.maxWriteBytes = 28
@@ -204,6 +212,7 @@ class LpcmAudioPlayerTest {
         assertThat(actual).isEqualTo(expected.array())
     }
 
+    /** Rejects malformed frame input without advancing the preparation threshold. */
     @Test
     fun emptyOrMisalignedInputDoesNotSatisfyPrefill() {
         player.start()
@@ -216,6 +225,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isEmpty()
     }
 
+    /** Retains playback while native output still has queued audio. */
     @Test
     fun temporarilyEmptyQueueDoesNotRebufferWhileDeviceHasAudio() {
         player.start()
@@ -229,6 +239,130 @@ class LpcmAudioPlayerTest {
         assertThat(sample(output.bytes(), 7_200, 0)).isEqualTo(10_000)
     }
 
+    /** Fades resumed queued PCM after the device drains while its worker cannot run. */
+    @Test
+    fun drainedDeviceWithQueuedPcmRestartsTheRecoveryFade() {
+        var resumedAtFrame = 0
+        output.afterWrite = {
+            if (output.bytes().size / 4 >= 2_880) {
+                output.afterWrite = null
+                resumedAtFrame = output.bytes().size / 4
+                scheduler.advanceBy(200)
+                output.underruns++
+            }
+        }
+        player.start()
+        player.submit(pcm(7_200))
+        scheduler.runCurrent()
+
+        val actual = output.bytes()
+        assertThat(resumedAtFrame).isAtLeast(2_880)
+        assertThat(sample(actual, resumedAtFrame, 0)).isEqualTo(0)
+        assertThat(sample(actual, resumedAtFrame, 1)).isEqualTo(0)
+        assertThat(sample(actual, resumedAtFrame + 1_200, 0)).isIn(5_000..5_010)
+        assertThat(sample(actual, resumedAtFrame + 2_399, 0)).isEqualTo(10_000)
+        assertThat(sample(actual, resumedAtFrame + 2_399, 1)).isEqualTo(-10_000)
+    }
+
+    /** Old producer callbacks must not fill a replacement connection's prebuffer. */
+    @Test
+    fun staleProducerCannotSubmitIntoAReplacementConnection() {
+        val staleInput = player.startInput()
+        scheduler.runCurrent()
+        player.stop()
+        val currentInput = player.startInput()
+        currentInput(pcm(7_199))
+        staleInput(pcm(1, left = -30_000, right = 30_000))
+        scheduler.runCurrent()
+
+        assertThat(output.startCount).isEqualTo(0)
+        currentInput(pcm(1))
+        scheduler.runCurrent()
+        assertThat(output.startCount).isEqualTo(1)
+        assertThat(sample(output.bytes(), 2_400, 0)).isEqualTo(10_000)
+    }
+
+    /** A failed connection's input stays inert after a later worker starts successfully. */
+    @Test
+    fun failedStartInputCannotBecomeTheNextConnectionsInput() {
+        var failWorker = true
+        val controlled = LpcmAudioPlayer(
+            nowMillis = { scheduler.nowMillis },
+            createDispatcher = {
+                if (failWorker) throw IllegalStateException("Worker unavailable")
+                scheduler
+            },
+            createOutput = { output },
+        )
+        try {
+            val failedInput = controlled.startInput()
+            failWorker = false
+            val currentInput = controlled.startInput()
+            currentInput(pcm(7_199))
+            failedInput(pcm(1))
+            scheduler.runCurrent()
+
+            assertThat(output.startCount).isEqualTo(0)
+            assertThat(output.bytes()).isEmpty()
+        } finally {
+            controlled.stop()
+            scheduler.runCurrent()
+        }
+    }
+
+    /** Native counter query failure closes the output without starting or accepting later input. */
+    @Test
+    fun underrunQueryFailureReleasesTheOutputAndRejectsLaterInput() {
+        output.underrunFailure = IllegalStateException("Counter unavailable")
+        player.start()
+        player.submit(pcm(7_200))
+        scheduler.runCurrent()
+        player.submit(pcm(7_200))
+        scheduler.runCurrent()
+
+        assertThat(output.closeCount).isEqualTo(1)
+        assertThat(output.startCount).isEqualTo(0)
+        assertThat(output.bytes()).isEmpty()
+    }
+
+    /** A reported underrun during a short write must reshape raw, not previously faded, PCM. */
+    @Test
+    fun underrunDuringShortWriteRestartsFadeFromTheUnprocessedSuffix() {
+        output.maxWriteBytes = 4
+        output.afterWrite = {
+            if (output.bytes().size == 1_200 * 4) {
+                output.afterWrite = null
+                output.underruns++
+            }
+        }
+        player.start()
+        player.submit(pcm(7_200))
+        scheduler.runCurrent()
+
+        val actual = output.bytes()
+        assertThat(sample(actual, 1_200, 0)).isEqualTo(0)
+        assertThat(sample(actual, 1_200, 1)).isEqualTo(0)
+        assertThat(sample(actual, 2_400, 0)).isIn(5_000..5_010)
+        assertThat(sample(actual, 3_599, 0)).isEqualTo(10_000)
+        assertThat(sample(actual, 3_599, 1)).isEqualTo(-10_000)
+    }
+
+    /** Immediate head progress without a new underrun is not a reason to restart the gain. */
+    @Test
+    fun immediatePlaybackHeadProgressDoesNotInventUnderruns() {
+        output.consumeImmediately = true
+        output.underruns = 7
+        player.start()
+        player.submit(pcm(7_200))
+        scheduler.runCurrent()
+
+        val actual = output.bytes()
+        assertThat(sample(actual, 1_200, 0)).isIn(5_000..5_010)
+        assertThat(sample(actual, 2_400, 0)).isEqualTo(10_000)
+        assertThat(sample(actual, 6_000, 1)).isEqualTo(-10_000)
+    }
+
+    /** Smooths the retained output splice rather than samples that were discarded. */
     @Test
     fun overflowFadesTheRetainedAudibleTailAndTheNewHead() {
         var framesBeforeBurst = 0
@@ -251,6 +385,7 @@ class LpcmAudioPlayerTest {
         assertThat(actual.size / 4).isAtMost(12_000 + 480)
     }
 
+    /** Fades the controllable tail and requires preparation before a faded recovery. */
     @Test
     fun supplyInterruptionFadesOutAndRecoveryPrefillsThenFadesIn() {
         player.start()
@@ -275,6 +410,7 @@ class LpcmAudioPlayerTest {
         assertThat(sample(recovered, interrupted.size / 4 + 2_399, 0)).isEqualTo(10_000)
     }
 
+    /** Bounds quiet-point search so loud input still catches up and delivers recent PCM. */
     @Test
     fun loudAudioCatchUpDoesNotWaitForAQuietPointOrLoseTheLatestPcm() {
         output.consumeImmediately = true
@@ -292,6 +428,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.writeSizes.all { it <= 1_920 && it % 4 == 0 }).isTrue()
     }
 
+    /** Chooses a quiet splice only when both stereo channel amplitudes permit it. */
     @Test
     fun catchUpPrefersAQuietPointOnlyWhenBothChannelsAreQuiet() {
         val source = ByteBuffer.allocate(12_000 * 4).order(ByteOrder.LITTLE_ENDIAN)
@@ -310,6 +447,7 @@ class LpcmAudioPlayerTest {
         assertThat(sample(actual, 2_399, 1)).isEqualTo(-1_300 - 2_399 - 1_000)
     }
 
+    /** Bounds pending playback across repeated bursts while retaining the newest audio. */
     @Test
     fun repeatedBurstsKeepTheLatestAudioWithinThePendingFrameBudget() {
         output.afterWrite = {
@@ -328,6 +466,7 @@ class LpcmAudioPlayerTest {
         assertThat(sample(actual, actual.size / 4 - 100, 1)).isEqualTo(-21_000)
     }
 
+    /** Measures the recovery deadline from starvation instead of the next producer write. */
     @Test
     fun recoveryDeadlineStartsAtStarvationNotAtTheNextSubmission() {
         output.consumeImmediately = true
@@ -344,6 +483,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.startCount).isEqualTo(2)
     }
 
+    /** Handles a single-frame tail without dividing a fade ramp by zero. */
     @Test
     fun oneFrameAfterTimeoutIsSafelyFadedWithoutAnInvalidRampDenominator() {
         player.start()
@@ -357,6 +497,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isEqualTo(ByteArray(4))
     }
 
+    /** Releases an idle prepared output when the connection is cancelled. */
     @Test
     fun stopReleasesPreparedOutputWithoutStartingIt() {
         player.start()
@@ -369,6 +510,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.closeCount).isEqualTo(1)
     }
 
+    /** Closes failed output and rejects further PCM for that connection. */
     @Test
     fun outputFailureStopsAcceptingThisConnectionsPcm() {
         output.writeResult = -6
@@ -383,6 +525,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isEmpty()
     }
 
+    /** Cancels queued startup before the worker can create native output. */
     @Test
     fun cancellationBeforeDispatchDoesNotOpenAnOutput() {
         player.start()
@@ -393,6 +536,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.closeCount).isEqualTo(0)
     }
 
+    /** Closes output even when device preparation does not succeed. */
     @Test
     fun failedPreparationStillReleasesItsOutput() {
         output.prepareResult = false
@@ -403,6 +547,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.startCount).isEqualTo(0)
     }
 
+    /** Contains worker creation failure at the connection boundary. */
     @Test
     fun dispatcherCreationFailureDoesNotEscapeToTheConnectionCaller() {
         var attempts = 0
@@ -424,6 +569,7 @@ class LpcmAudioPlayerTest {
         }
     }
 
+    /** Closes output when the platform cannot start playback. */
     @Test
     fun failedStartReleasesItsOutput() {
         output.startResult = false
@@ -435,6 +581,7 @@ class LpcmAudioPlayerTest {
         assertThat(output.bytes()).isEmpty()
     }
 
+    /** Rejects invalid native write counts without retry loops or duplicate release. */
     @Test
     fun invalidWriteResultsAbortWithoutSpinningOrReleasingTwice() {
         for ((index, result) in listOf(0, -6, 1, 20_000).withIndex()) {
@@ -463,6 +610,8 @@ class LpcmAudioPlayerTest {
         var prepareResult = true
         var startResult = true
         var consumeImmediately = false
+        var underruns = 0
+        var underrunFailure: RuntimeException? = null
         var afterWrite: (() -> Unit)? = null
         var requestedBlockFrames = 0
             private set
@@ -498,6 +647,11 @@ class LpcmAudioPlayerTest {
             updateProgress()
             if (consumeImmediately) played = recorded.size() / 4L
             return played
+        }
+
+        override fun underrunCount(): Int {
+            underrunFailure?.let { throw it }
+            return underruns
         }
 
         override fun interrupt() {

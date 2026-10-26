@@ -3,17 +3,64 @@ package me.trinitrix.mirax.wfd
 import com.google.common.truth.Truth.assertThat
 import me.trinitrix.mirax.session.PictureContactState
 import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import java.io.DataInputStream
+import java.io.IOException
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 class UibcTouchChannelTest {
     private var previousRunner: ((Runnable) -> Unit)? = null
+    private lateinit var previousSocketBinder: (android.content.Context?, Socket) -> Boolean
+
+    /** Keep host TCP tests independent of Android P2P interface discovery. */
+    @Before
+    fun isolateAndroidNetworkBinding() {
+        // Localhost tests emulate a route; they cannot prove real-device P2P binding.
+        previousSocketBinder = UibcTouchChannel.bindSocket
+        UibcTouchChannel.bindSocket = { _, socket ->
+            assertThat(socket.isBound).isFalse()
+            true
+        }
+    }
+
+    @Test
+    fun unavailableP2pRouteKeepsTouchDisplayOnlyWithoutDialingDefaultNetwork() {
+        UibcTouchChannel.bindSocket = { _, socket ->
+            assertThat(socket.isBound).isFalse()
+            false
+        }
+        val failure = CountDownLatch(1)
+        val status = AtomicReference<String>()
+        UibcTouchChannel.context = null
+        UibcTouchChannel.onStatus = { line ->
+            status.set(line)
+            failure.countDown()
+        }
+        try {
+            ServerSocket(0).use { listening ->
+                listening.soTimeout = 300
+                UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+                assertThat(failure.await(2, TimeUnit.SECONDS)).isTrue()
+                assertThat(status.get()).contains("failed")
+                assertThat(UibcTouchChannel.canForwardInput()).isFalse()
+                try {
+                    listening.accept().use { }
+                    throw AssertionError("UIBC dialed without a P2P route")
+                } catch (_: SocketTimeoutException) {
+                    // The source must not receive a connection over the default network.
+                }
+            }
+        } finally {
+            UibcTouchChannel.onStatus = null
+        }
+    }
 
     /** Verifies all-slot wire shape and disable releases; Windows delivery is tested separately. */
     @Test
@@ -237,6 +284,25 @@ class UibcTouchChannelTest {
     }
 
     @Test
+    fun networkBindingFailureIsReportedBeforeTcpConnection() {
+        val failed = CountDownLatch(1)
+        UibcTouchChannel.bindSocket = { _, _ -> throw IOException("injected P2P binding failure") }
+        UibcTouchChannel.onStatus = { line ->
+            if (line.endsWith("failed: injected P2P binding failure")) failed.countDown()
+        }
+        try {
+            ServerSocket(0).use { listening ->
+                UibcTouchChannel.open("127.0.0.1", listening.localPort, UibcPackets.HID_SINGLE_TOUCH)
+
+                assertThat(failed.await(2, TimeUnit.SECONDS)).isTrue()
+                assertThat(UibcTouchChannel.canForwardInput()).isFalse()
+            }
+        } finally {
+            UibcTouchChannel.onStatus = null
+        }
+    }
+
+    @Test
     fun rejectedDialReportsFailureAndNextSessionCanOpenOneNewSocket() {
         val port = ServerSocket(0).use { it.localPort }
         val failed = CountDownLatch(1)
@@ -316,6 +382,7 @@ class UibcTouchChannelTest {
     fun restoreWriter() {
         previousRunner?.let { UibcTouchChannel.writeRunner = it }
         UibcTouchChannel.close()
+        UibcTouchChannel.bindSocket = previousSocketBinder
     }
 
     @Test

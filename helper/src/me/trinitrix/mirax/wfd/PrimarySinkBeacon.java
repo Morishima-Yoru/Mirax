@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wfd;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.net.MacAddress;
 import android.net.wifi.WifiManager;
@@ -15,6 +16,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+import me.trinitrix.mirax.shell.ShellContext;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.lang.reflect.Field;
@@ -37,6 +39,10 @@ import java.util.Set;
  * reinvocation works without re-pairing. Must run as shell (UID 2000) or root
  * — never from the Mirax app process. Does not touch Samsung SmartMirroring
  * or SecondScreenPlayer.
+ *
+ * Method-level permission suppressions cover shared code scanned against the
+ * app manifest: these calls run in the privileged helper, not the app process.
+ * Runtime failures are still handled because OEM shell grants can differ.
  */
 public final class PrimarySinkBeacon {
     private static final String TAG = "MiraxWfdBeacon";
@@ -46,6 +52,8 @@ public final class PrimarySinkBeacon {
     private static final long POLL_INTERVAL_MS = 1000;
     /** Android shuts an idle P2P interface down after 150 s; re-arm well before that. */
     private static final long RELISTEN_INTERVAL_MS = 30_000;
+    /** Upper bound to wait for requestGroupInfo before publishing UP nameless. */
+    private static final long NAME_REQUEST_TIMEOUT_MS = 2_000;
     /** WPS pairing timeout. */
     private static final long WPS_TIMEOUT_MS = 120_000;
 
@@ -70,9 +78,17 @@ public final class PrimarySinkBeacon {
     private WifiP2pManager.Channel channel;
     private volatile boolean wanted;
     private volatile boolean advertising;
+    private long advertisingGeneration;
     private volatile String groupState = GROUP_DOWN;
     private volatile String lastName = "";
     private boolean groupFormed;
+    /** Handler-confined lifecycle generation rejecting callbacks from a stopped or replaced group. */
+    private int nameGeneration;
+    /** Generation whose requestGroupInfo is already in flight or answered. */
+    private int nameRequestedGeneration = -1;
+    /** Request-time fallback used only for a matching current group peer. */
+    private String requestedPeerMac = "";
+    private String requestedPeerName = "";
     private boolean forgetSavedGroups;
     private long lastArmedAt;
     private volatile PairingState pairingState = PairingState.UNPAIRED;
@@ -117,6 +133,49 @@ public final class PrimarySinkBeacon {
         void onFailed(String detail);
     }
 
+    /**
+     * Wire encoding of the group-state line consumed by the app-process owner
+     * bridge. Format: {@code UP <source> [OWNER]} with an optional tab and name.
+     * A nameless group keeps the legacy header so older owners still parse it.
+     * A name that is empty after sanitising falls back to the nameless form.
+     *
+     * @param sourceAddress IPv4 of the Miracast peer (Windows source)
+     * @param phoneIsOwner  true when this phone is the P2P group owner (DHCP)
+     * @param name          peer name from Wi-Fi Direct; may be null or empty
+     * @return wire string for the group-state publish
+     */
+    public static String formatGroupState(String sourceAddress, boolean phoneIsOwner, String name) {
+        if (sourceAddress == null || sourceAddress.isEmpty()) {
+            return GROUP_DOWN;
+        }
+        StringBuilder sb = new StringBuilder(GROUP_UP_PREFIX);
+        sb.append(sourceAddress);
+        if (phoneIsOwner) {
+            sb.append(" OWNER");
+        }
+        String sanitized = sanitizeName(name);
+        if (sanitized != null) {
+            sb.append('\t').append(sanitized);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Sanitise a peer name for the wire format. Tab, CR and LF are protocol
+     * delimiters and become a space; surrounding whitespace is trimmed.
+     * Unicode and inner spaces are kept as is.
+     *
+     * @param name raw Wi-Fi Direct device name, may be null
+     * @return wire-safe name, or null when nothing printable remains
+     */
+    private static String sanitizeName(String name) {
+        if (name == null) {
+            return null;
+        }
+        String clean = name.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ').trim();
+        return clean.isEmpty() ? null : clean;
+    }
+
     private volatile ArmCallback armCallback;
 
     /**
@@ -131,15 +190,13 @@ public final class PrimarySinkBeacon {
     /**
      * Initialise Wi-Fi P2P.
      *
-     * @param appContext when non-null, use this application context. When null,
+     * @param suppliedContext when non-null, retain this context and its attribution. When null,
      *     build a shell attribution context for adb/Shizuku.
      * @return true when the P2P channel is ready
      */
-    public boolean initialize(Context appContext) {
+    public boolean initialize(Context suppliedContext) {
         try {
-            context = appContext != null
-                    ? appContext.getApplicationContext()
-                    : systemContext();
+            context = suppliedContext != null ? suppliedContext : ShellContext.create();
             manager = (WifiP2pManager) context.getSystemService(Context.WIFI_P2P_SERVICE);
             if (manager == null) {
                 Log.e(TAG, "WifiP2pManager is null");
@@ -164,6 +221,7 @@ public final class PrimarySinkBeacon {
      */
     public void startAdvertising(final String broadcastName) {
         handler.post(() -> {
+            advertisingGeneration++;
             String nextName = broadcastName == null ? "" : broadcastName;
             boolean rename = wanted && !nextName.equals(lastName);
             lastName = nextName;
@@ -183,6 +241,7 @@ public final class PrimarySinkBeacon {
                 wanted = true;
                 groupFormed = false;
                 groupState = GROUP_DOWN;
+                resetNameState();
                 removeGroupQuietly("removeGroup");
             }
             // Clear any leftover approvers from previous runs
@@ -197,31 +256,51 @@ public final class PrimarySinkBeacon {
 
     /** Stop listening, drop any group, and clear the WFD IE so the phone is not a connectable sink. */
     public void stopAdvertising() {
+        stopAdvertising(null);
+    }
+
+    /**
+     * Stop advertising and acknowledge after stop operations have been issued on the owner looper.
+     *
+     * @param onStopped optional acknowledgment used before handing WFD to another owner
+     */
+    public void stopAdvertising(Runnable onStopped) {
         handler.post(() -> {
-            wanted = false;
-            advertising = false;
-            groupFormed = false;
-            groupState = GROUP_DOWN;
-            clientConnectAttempted.clear();
-            handler.removeCallbacks(poll);
-            if (manager == null || channel == null) {
-                return;
-            }
             try {
-                manager.stopListening(channel, logged("stopListening"));
-                removeGroupQuietly("removeGroup");
-                clearWfdInfo();
-                removeApprovers();
-            } catch (Throwable err) {
-                Log.w(TAG, "stopAdvertising failed", err);
+                advertisingGeneration++;
+                wanted = false;
+                advertising = false;
+                groupFormed = false;
+                groupState = GROUP_DOWN;
+                resetNameState();
+                clientConnectAttempted.clear();
+                handler.removeCallbacks(poll);
+                if (manager == null || channel == null) {
+                    return;
+                }
+                try {
+                    manager.stopListening(channel, logged("stopListening"));
+                    removeGroupQuietly("removeGroup");
+                    clearWfdInfo();
+                    removeApprovers();
+                } catch (Throwable err) {
+                    Log.w(TAG, "stopAdvertising failed", err);
+                }
+                Log.i(TAG, "broadcast off");
+            } finally {
+                if (onStopped != null) onStopped.run();
             }
-            Log.i(TAG, "broadcast off");
         });
     }
 
     /** End the current connection's P2P group; advertising resumes once the group is down. */
     public void endSession() {
-        handler.post(() -> removeGroupQuietly("endSession"));
+        handler.post(() -> {
+            resetNameState();
+            removeGroupQuietly("endSession");
+            // Keep requests enabled even when teardown produces no group-down event.
+            armBroadcastApprover();
+        });
     }
 
     /**
@@ -257,7 +336,7 @@ public final class PrimarySinkBeacon {
     }
 
     /**
-     * @return {@link #GROUP_DOWN}, {@link #GROUP_PENDING}, or {@code UP <source address>}
+     * @return {@link #GROUP_DOWN}, {@link #GROUP_PENDING}, or {@code UP <source> [OWNER]} with an optional tab and name
      */
     public String groupState() {
         return groupState;
@@ -290,20 +369,28 @@ public final class PrimarySinkBeacon {
         return null;
     }
 
+    @SuppressLint("MissingPermission")
     private void pollOnce() {
         if (manager == null || channel == null) {
             return;
         }
         try {
-            manager.requestConnectionInfo(channel, this::onConnectionInfo);
+            final int generation = nameGeneration;
+            manager.requestConnectionInfo(channel, info -> {
+                if (generation == nameGeneration) {
+                    onConnectionInfo(info);
+                }
+            });
             manager.requestPeers(channel, peers -> {
-                if (peers == null) {
+                if (generation != nameGeneration || !wanted || peers == null) {
                     return;
                 }
                 for (WifiP2pDevice device : peers.getDeviceList()) {
                     watchPeer(device);
                 }
             });
+        } catch (SecurityException err) {
+            Log.w(TAG, "poll permission denied", err);
         } catch (Throwable err) {
             Log.w(TAG, "poll failed", err);
         }
@@ -322,6 +409,7 @@ public final class PrimarySinkBeacon {
                 Log.i(TAG, "P2P group down");
                 groupFormed = false;
                 groupState = GROUP_DOWN;
+                resetNameState();
                 clientConnectAttempted.clear();
                 // Do NOT forget saved groups here - preserve persistent group for reinvocation
                 // forgetSavedGroups is only set to true when user explicitly calls forgetAllPairings()
@@ -348,17 +436,110 @@ public final class PrimarySinkBeacon {
         if (groupState.startsWith(GROUP_UP_PREFIX)) {
             return;
         }
-        String source = info.isGroupOwner ? p2pNeighbor() : hostOf(info.groupOwnerAddress);
-        if (source != null) {
-            // OWNER suffix tells the app-process sink to accept RTSP instead of
-            // dialing: when this phone is GO, Windows is the client.
-            groupState = GROUP_UP_PREFIX + source + (info.isGroupOwner ? " OWNER" : "");
-            Log.i(TAG, "source address " + source + " phoneIsOwner=" + info.isGroupOwner);
+        requestPeerName(info);
+    }
+
+    /**
+     * Invalidate in-flight requestGroupInfo callbacks and drop the cached
+     * request-time peer so the next group cannot inherit a previous name.
+     */
+    private void resetNameState() {
+        nameGeneration++;
+        nameRequestedGeneration = -1;
+        requestedPeerMac = "";
+        requestedPeerName = "";
+        removeApprovers();
+    }
+
+    /**
+     * Attempt to confirm the current peer name via requestGroupInfo after a
+     * group forms, then publish the first UP header. Phone client: the peer is
+     * the group owner. Phone GO: only a single uniquely-identifiable group
+     * client may name the peer. A request failure, or any peer that is not
+     * uniquely identifiable, falls back to a nameless (legacy) header. A timeout
+     * bounds the wait if the platform never invokes its callback.
+     *
+     * @param info connection info carrying the group role and source address
+     */
+    private void requestPeerName(final WifiP2pInfo info) {
+        final int generation = nameGeneration;
+        if (nameRequestedGeneration == generation) {
+            return;
+        }
+        final boolean owner = info.isGroupOwner;
+        final String source = owner ? p2pNeighbor() : hostOf(info.groupOwnerAddress);
+        if (source == null) {
+            return;
+        }
+        nameRequestedGeneration = generation;
+        try {
+            manager.requestGroupInfo(channel, group -> {
+                if (generation != nameGeneration || !groupFormed
+                        || groupState.startsWith(GROUP_UP_PREFIX)) {
+                    return;
+                }
+                publishUp(source, owner, group == null ? null : peerName(group, owner));
+            });
+            // A callback that never arrives must not block casting.
+            handler.postDelayed(() -> {
+                if (generation == nameGeneration && groupFormed
+                        && !groupState.startsWith(GROUP_UP_PREFIX)) {
+                    Log.w(TAG, "requestGroupInfo timed out; publishing nameless");
+                    publishUp(source, owner, null);
+                }
+            }, NAME_REQUEST_TIMEOUT_MS);
+        } catch (SecurityException err) {
+            Log.w(TAG, "requestGroupInfo permission denied; publishing nameless", err);
+            publishUp(source, owner, null);
+        } catch (Throwable err) {
+            Log.w(TAG, "requestGroupInfo failed; publishing nameless", err);
+            publishUp(source, owner, null);
         }
     }
 
+    /**
+     * Use the current group peer's name, with an identity-matched request-time fallback.
+     *
+     * @param group formed group from requestGroupInfo
+     * @param owner true when this phone is the group owner
+     * @return peer device name, or null when unavailable or ambiguous
+     */
+    private String peerName(WifiP2pGroup group, boolean owner) {
+        WifiP2pDevice peer;
+        if (owner) {
+            Collection<WifiP2pDevice> clients = group.getClientList();
+            peer = clients != null && clients.size() == 1 ? clients.iterator().next() : null;
+        } else {
+            peer = group.getOwner();
+        }
+        if (peer == null || peer.deviceAddress == null || peer.deviceAddress.isEmpty()) {
+            return null;
+        }
+        String name = sanitizeName(peer.deviceName);
+        if (name != null) {
+            return name;
+        }
+        return peer.deviceAddress.equalsIgnoreCase(requestedPeerMac)
+                ? sanitizeName(requestedPeerName) : null;
+    }
+
+    /**
+     * Publish the ready source using the shared wire encoder.
+     *
+     * @param source source IPv4 address
+     * @param owner true when this phone owns the P2P group
+     * @param name current peer name, or null when unavailable
+     */
+    private void publishUp(String source, boolean owner, String name) {
+        groupState = formatGroupState(source, owner, name);
+        Log.i(TAG, "source address " + source + " phoneIsOwner=" + owner
+                + " name=" + (name == null ? "(none)" : "\"" + name + "\""));
+    }
+
+    /** Issue WFD information for the current owner-looper advertisement lifecycle. */
+    @SuppressLint("MissingPermission")
     private void armSink() {
-        if (manager == null || channel == null) {
+        if (!wanted || manager == null || channel == null) {
             return;
         }
         lastArmedAt = SystemClock.elapsedRealtime();
@@ -379,25 +560,7 @@ public final class PrimarySinkBeacon {
             Log.i(TAG, "WFD info " + wfd + " name=\"" + lastName + "\" pairing=" + pairingState);
         }
         try {
-            manager.setWfdInfo(channel, wfd, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    if (announce) {
-                        Log.i(TAG, "setWfdInfo success");
-                    }
-                    // Driver hint: sink mode (2) shortens scan dwell so STA+P2P
-                    // concurrency hurts Miracast less. Hidden WifiManager API.
-                    setMiracastModeSink();
-                    admitThenListen(announce);
-                }
-
-                @Override
-                public void onFailure(int reason) {
-                    advertising = false;
-                    Log.e(TAG, "setWfdInfo FAILED reason=" + reason);
-                    notifyArmFailed("setWfdInfo failed reason=" + reason);
-                }
-            });
+            manager.setWfdInfo(channel, wfd, wfdInfoListener(announce, advertisingGeneration));
         } catch (SecurityException err) {
             // Some GSIs keep CONFIGURE_WIFI_DISPLAY as signature-only and
             // never grant it to shell UID 2000 (unlike OEM builds Mirax targets).
@@ -405,6 +568,43 @@ public final class PrimarySinkBeacon {
             Log.e(TAG, "setWfdInfo denied for this UID; Miracast sink cannot advertise", err);
             notifyArmFailed("setWfdInfo denied");
         }
+    }
+
+    /**
+     * Build the listener used by the actual WFD information request.
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this callback
+     * @return framework callback for this request
+     */
+    WifiP2pManager.ActionListener wfdInfoListener(boolean announce, long generation) {
+        return new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                if (!isCurrentAdvertisement(generation)) return;
+                if (announce) {
+                    Log.i(TAG, "setWfdInfo success");
+                }
+                // Driver hint: sink mode (2) shortens scan dwell so STA+P2P concurrency hurts less.
+                setMiracastModeSink();
+                admitThenListen(announce, generation);
+            }
+
+            @Override
+            public void onFailure(int reason) {
+                if (!isCurrentAdvertisement(generation)) return;
+                advertising = false;
+                Log.e(TAG, "setWfdInfo FAILED reason=" + reason);
+                notifyArmFailed("setWfdInfo failed reason=" + reason);
+            }
+        };
+    }
+
+    /**
+     * @param generation captured lifecycle
+     * @return whether this callback still owns advertising
+     */
+    private boolean isCurrentAdvertisement(long generation) {
+        return wanted && generation == advertisingGeneration;
     }
 
     /**
@@ -425,6 +625,7 @@ public final class PrimarySinkBeacon {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private void clearWfdInfo() {
         try {
             final WifiP2pWfdInfo wfd = new WifiP2pWfdInfo();
@@ -524,10 +725,12 @@ public final class PrimarySinkBeacon {
      * Arm the broadcast ExternalApprover (GO intent 0 + WPS on first pair), then
      * listen. Persistent-group reinvoke still keeps prior GO role until the user
      * forgets pairings — intent only applies on fresh negotiation.
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this request
      */
-    private void admitThenListen(boolean announce) {
+    private void admitThenListen(boolean announce, long generation) {
         armBroadcastApprover();
-        Runnable listen = () -> startListening(announce);
+        Runnable listen = () -> startListening(announce, generation);
         // Only delete persistent groups if explicitly requested (forgetAllPairings)
         if (forgetSavedGroups) {
             forgetSavedGroups = false;
@@ -539,13 +742,38 @@ public final class PrimarySinkBeacon {
         }
     }
 
-    private void startListening(boolean announce) {
-        if (!wanted || manager == null || channel == null) {
+    /**
+     * Start listening for the current lifecycle, handling permission denial on the helper looper.
+     *
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this request
+     */
+    private void startListening(boolean announce, long generation) {
+        if (!isCurrentAdvertisement(generation) || manager == null || channel == null) {
             return;
         }
-        manager.startListening(channel, new WifiP2pManager.ActionListener() {
+        try {
+            manager.startListening(channel, listeningListener(announce, generation));
+        } catch (SecurityException err) {
+            advertising = false;
+            Log.e(TAG, "startListening permission denied", err);
+            if (announce) {
+                notifyArmFailed("startListening denied");
+            }
+        }
+    }
+
+    /**
+     * Build the listener used by the actual listening request.
+     * @param announce whether this request should announce listening status
+     * @param generation advertisement lifecycle that owns this callback
+     * @return framework callback for this request
+     */
+    WifiP2pManager.ActionListener listeningListener(boolean announce, long generation) {
+        return new WifiP2pManager.ActionListener() {
             @Override
             public void onSuccess() {
+                if (!isCurrentAdvertisement(generation)) return;
                 if (!advertising) {
                     Log.i(TAG, "startListening success; Primary Sink on port "
                             + RTSP_CONTROL_PORT);
@@ -556,13 +784,14 @@ public final class PrimarySinkBeacon {
 
             @Override
             public void onFailure(int reason) {
+                if (!isCurrentAdvertisement(generation)) return;
                 if (announce) {
                     advertising = false;
                     Log.e(TAG, "startListening failed reason=" + reason);
                     notifyArmFailed("startListening failed reason=" + reason);
                 }
             }
-        });
+        };
     }
 
     private void notifyArmListening() {
@@ -592,6 +821,7 @@ public final class PrimarySinkBeacon {
         armBroadcastApprover();
     }
 
+    @SuppressLint("MissingPermission")
     private void armBroadcastApprover() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || manager == null || channel == null || !wanted) {
@@ -602,7 +832,7 @@ public final class PrimarySinkBeacon {
             return;
         }
         try {
-            manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, approver);
+            manager.addExternalApprover(channel, MacAddress.BROADCAST_ADDRESS, createApprover());
             Log.i(TAG, "addExternalApprover broadcast pairingState=" + pairingState);
         } catch (Throwable err) {
             approverMacs.remove(mac);
@@ -669,6 +899,13 @@ public final class PrimarySinkBeacon {
 
             startWps.invoke(manager, channel, wpsConfig, wpsListener);
             Log.i(TAG, "WPS PBC initiated for " + deviceAddress);
+        } catch (SecurityException err) {
+            Log.w(TAG, "startWps permission denied", err);
+            if (wpsTimeoutRunnable != null) {
+                handler.removeCallbacks(wpsTimeoutRunnable);
+            }
+            pairingState = PairingState.UNPAIRED;
+            pendingPairingMac = null;
         } catch (Throwable err) {
             Log.w(TAG, "startWps failed", err);
             if (wpsTimeoutRunnable != null) {
@@ -781,6 +1018,7 @@ public final class PrimarySinkBeacon {
         return null;
     }
 
+    @SuppressLint("MissingPermission")
     private void watchPeer(WifiP2pDevice device) {
         if (device == null || device.deviceAddress == null) {
             return;
@@ -801,7 +1039,7 @@ public final class PrimarySinkBeacon {
             return;
         }
         try {
-            manager.addExternalApprover(channel, MacAddress.fromString(device.deviceAddress), approver);
+            manager.addExternalApprover(channel, MacAddress.fromString(device.deviceAddress), createApprover());
         } catch (Throwable err) {
             approverMacs.remove(device.deviceAddress);
             Log.w(TAG, "addExternalApprover failed for " + device.deviceAddress, err);
@@ -812,6 +1050,7 @@ public final class PrimarySinkBeacon {
      * Drive GO negotiation ourselves with {@code groupOwnerIntent=0} so Windows
      * can become GO. Only Miracast sources (Win+K) are chased.
      */
+    @SuppressLint("MissingPermission")
     private void maybeConnectAsClient(WifiP2pDevice device) {
         if (!wanted || groupFormed || manager == null || channel == null) {
             return;
@@ -849,6 +1088,9 @@ public final class PrimarySinkBeacon {
                             + " peer=" + device.deviceAddress);
                 }
             });
+        } catch (SecurityException err) {
+            clientConnectAttempted.remove(device.deviceAddress);
+            Log.w(TAG, "connect as client permission denied", err);
         } catch (Throwable err) {
             clientConnectAttempted.remove(device.deviceAddress);
             Log.w(TAG, "connect as client failed", err);
@@ -867,6 +1109,7 @@ public final class PrimarySinkBeacon {
     /** Peers we already issued {@link #maybeConnectAsClient} for (API &lt; 33). */
     private final Set<String> clientConnectAttempted = new HashSet<>();
 
+    @SuppressLint("MissingPermission")
     private void removeApprovers() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return;
@@ -874,82 +1117,99 @@ public final class PrimarySinkBeacon {
         for (String mac : approverMacs) {
             try {
                 manager.removeExternalApprover(channel, MacAddress.fromString(mac), logged("removeExternalApprover"));
-            } catch (Throwable ignored) {
+            } catch (Throwable err) {
+                Log.w(TAG, "removeExternalApprover failed for " + mac, err);
             }
         }
         approverMacs.clear();
     }
 
-    private final WifiP2pManager.ExternalApproverRequestListener approver =
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ? null
-                    : new WifiP2pManager.ExternalApproverRequestListener() {
-                @Override
-                public void onAttached(MacAddress deviceAddress) {
-                    Log.d(TAG, "approver attached " + deviceAddress);
+    /**
+     * Bind request-name updates to the lifecycle that registered this approver.
+     *
+     * @return listener whose callbacks cannot write into a newer lifecycle
+     */
+    private WifiP2pManager.ExternalApproverRequestListener createApprover() {
+        final int generation = nameGeneration;
+        return new WifiP2pManager.ExternalApproverRequestListener() {
+            @Override
+            public void onAttached(MacAddress deviceAddress) {
+                Log.d(TAG, "approver attached " + deviceAddress);
+            }
+
+            @Override
+            public void onDetached(MacAddress deviceAddress, int reason) {
+                if (generation != nameGeneration) {
+                    return;
+                }
+                Log.i(TAG, "approver detached " + deviceAddress + " reason=" + reason);
+                // REPLACE means a second registration is already stored.
+                // REMOVE is how the framework drops the approver after ACCEPT.
+                if (reason == WifiP2pManager.ExternalApproverRequestListener
+                        .APPROVER_DETACH_REASON_REPLACE) {
+                    return;
+                }
+                if (deviceAddress != null) {
+                    approverMacs.remove(deviceAddress.toString());
+                }
+                if (wanted) {
+                    armApproverForPairedDevices();
+                }
+            }
+
+            @Override
+            public void onConnectionRequested(int requestType, WifiP2pConfig config, WifiP2pDevice device) {
+                if (generation != nameGeneration) {
+                    Log.d(TAG, "Ignoring connection request from a previous beacon lifecycle");
+                    return;
+                }
+                String address = device != null && device.deviceAddress != null
+                        ? device.deviceAddress
+                        : (config != null ? config.deviceAddress : null);
+                if (address == null) {
+                    return;
+                }
+                // Prefer client (Windows as GO). Phh/MTK often wins GO with
+                // AUTO intent; Fold stays client. AOSP WifiDisplay uses MIN.
+                if (config != null) {
+                    int before = config.groupOwnerIntent;
+                    config.groupOwnerIntent = 0;
+                    Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
+                            + (device != null ? " \"" + device.deviceName + "\"" : "")
+                            + " pairingState=" + pairingState
+                            + " goIntent " + before + "→0");
+                } else {
+                    Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
+                            + (device != null ? " \"" + device.deviceName + "\"" : "")
+                            + " pairingState=" + pairingState);
                 }
 
-                @Override
-                public void onDetached(MacAddress deviceAddress, int reason) {
-                    Log.i(TAG, "approver detached " + deviceAddress + " reason=" + reason);
-                    // REPLACE means a second registration is already stored.
-                    // REMOVE is how the framework drops the approver after ACCEPT.
-                    if (reason == WifiP2pManager.ExternalApproverRequestListener
-                            .APPROVER_DETACH_REASON_REPLACE) {
-                        return;
-                    }
-                    if (deviceAddress != null) {
-                        approverMacs.remove(deviceAddress.toString());
-                    }
-                    if (wanted) {
-                        armApproverForPairedDevices();
-                    }
+                if (!wanted) {
+                    setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_REJECT);
+                    return;
                 }
+                requestedPeerMac = address;
+                String requestedName = device == null ? null : sanitizeName(device.deviceName);
+                requestedPeerName = requestedName == null ? "" : requestedName;
 
-                @Override
-                public void onConnectionRequested(int requestType, WifiP2pConfig config, WifiP2pDevice device) {
-                    String address = device != null && device.deviceAddress != null
-                            ? device.deviceAddress
-                            : (config != null ? config.deviceAddress : null);
-                    if (address == null) {
-                        return;
-                    }
-                    // Prefer client (Windows as GO). Phh/MTK often wins GO with
-                    // AUTO intent; Fold stays client. AOSP WifiDisplay uses MIN.
-                    if (config != null) {
-                        int before = config.groupOwnerIntent;
-                        config.groupOwnerIntent = 0;
-                        Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
-                                + (device != null ? " \"" + device.deviceName + "\"" : "")
-                                + " pairingState=" + pairingState
-                                + " goIntent " + before + "→0");
-                    } else {
-                        Log.i(TAG, "P2P connection request type=" + requestType + " from " + address
-                                + (device != null ? " \"" + device.deviceName + "\"" : "")
-                                + " pairingState=" + pairingState);
-                    }
-
-                    if (!wanted) {
-                        setConnectionResult(address, WifiP2pManager.CONNECTION_REQUEST_REJECT);
-                        return;
-                    }
-
-                    // For first-time pairing (UNPAIRED state), accept connection AND start WPS PBC
-                    if (pairingState == PairingState.UNPAIRED) {
-                        Log.i(TAG, "First-time connection: accepting + starting WPS PBC for " + address);
-                        setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
-                        startWpsPbc(address);
-                    } else {
-                        // Already paired or reinvoking: accept directly
-                        Log.i(TAG, "Reinvoking or paired connection: accepting directly");
-                        setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
-                    }
+                // For first-time pairing (UNPAIRED state), accept connection AND start WPS PBC
+                if (pairingState == PairingState.UNPAIRED) {
+                    Log.i(TAG, "First-time connection: accepting + starting WPS PBC for " + address);
+                    setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
+                    startWpsPbc(address);
+                } else {
+                    // Already paired or reinvoking: accept directly
+                    Log.i(TAG, "Reinvoking or paired connection: accepting directly");
+                    setConnectionResult(address, config, WifiP2pManager.CONNECTION_REQUEST_ACCEPT);
                 }
+            }
 
-                @Override
-                public void onPinGenerated(MacAddress deviceAddress, String pin) {
-                    Log.i(TAG, "WPS PIN generated for " + deviceAddress);
-                }
-            };
+            @Override
+            public void onPinGenerated(MacAddress deviceAddress, String pin) {
+                Log.i(TAG, "WPS PIN generated for " + deviceAddress);
+            }
+        };
+    }
 
     private void setConnectionResult(String address, int result) {
         setConnectionResult(address, null, result);
@@ -959,6 +1219,7 @@ public final class PrimarySinkBeacon {
      * Accept/reject a peer request. Prefer the overload that keeps our mutated
      * {@link WifiP2pConfig} (groupOwnerIntent=0) so Phh does not always become GO.
      */
+    @SuppressLint("MissingPermission")
     private void setConnectionResult(String address, WifiP2pConfig config, int result) {
         try {
             MacAddress peer = MacAddress.fromString(address);
@@ -1030,43 +1291,6 @@ public final class PrimarySinkBeacon {
             Log.w(TAG, "ip neigh failed", err);
             return null;
         }
-    }
-
-    private static Context systemContext() throws Exception {
-        Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-        Object activityThread = activityThreadClass.getMethod("systemMain").invoke(null);
-        Context ctx = (Context) activityThreadClass.getMethod("getSystemContext").invoke(activityThread);
-        // AttributionSource arrived in API 31; on Android 11 only the package
-        // name fields exist and must be enough for shell-UID WifiP2pManager.
-        if (Build.VERSION.SDK_INT >= 31) {
-            Class<?> builderClass = Class.forName("android.content.AttributionSource$Builder");
-            Object builder = builderClass.getConstructor(int.class).newInstance(2000);
-            builderClass.getMethod("setPackageName", String.class)
-                    .invoke(builder, "com.android.shell");
-            Object shellSource = builderClass.getMethod("build").invoke(builder);
-            setField(ctx, "mAttributionSource", shellSource);
-        }
-        setField(ctx, "mOpPackageName", "com.android.shell");
-        setField(ctx, "mBasePackageName", "com.android.shell");
-        return ctx;
-    }
-
-    private static void setField(Object target, String name, Object value) throws Exception {
-        Field field = findField(target.getClass(), name);
-        field.setAccessible(true);
-        field.set(target, value);
-    }
-
-    private static Field findField(Class<?> type, String name) throws NoSuchFieldException {
-        Class<?> current = type;
-        while (current != null) {
-            try {
-                return current.getDeclaredField(name);
-            } catch (NoSuchFieldException ignored) {
-                current = current.getSuperclass();
-            }
-        }
-        throw new NoSuchFieldException(name);
     }
 
     private static WifiP2pManager.ActionListener logged(final String label) {

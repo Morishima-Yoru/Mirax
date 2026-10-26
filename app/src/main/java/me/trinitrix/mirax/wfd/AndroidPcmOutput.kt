@@ -131,6 +131,9 @@ internal class AndroidPcmOutput : PcmOutput {
         }
     }
 
+    /** @return native application write-buffer underruns, without inferring them from the playback head. */
+    override fun underrunCount(): Int = track?.underrunCount ?: 0
+
     /** Pauses to interrupt a blocked write; a late preparation result is rejected as well. */
     override fun interrupt() {
         val current = synchronized(this) {

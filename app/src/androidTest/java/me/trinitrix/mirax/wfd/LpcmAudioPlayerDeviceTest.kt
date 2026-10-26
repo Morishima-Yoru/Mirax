@@ -13,6 +13,7 @@ import org.junit.runner.RunWith
 /** Checks real output configuration and progress; silence does not establish audible UX quality. */
 @RunWith(AndroidJUnit4::class)
 class LpcmAudioPlayerDeviceTest {
+    /** Checks real preparation remains silent and sparse PCM advances without filling capacity. */
     @Test
     fun preparedOutputDoesNotPlayAndSparsePcmCanAdvanceBeforeCapacityIsFilled() {
         val output = AndroidPcmOutput()
@@ -34,6 +35,7 @@ class LpcmAudioPlayerDeviceTest {
         assertThat(output.isPlaying).isFalse()
     }
 
+    /** Checks the audio worker priority and observes native output release after stop. */
     @Test
     fun playerUsesDedicatedWorkerAndStopReleasesItsOutput() {
         val output = AndroidPcmOutput()
@@ -70,6 +72,7 @@ class LpcmAudioPlayerDeviceTest {
         assertThat(output.isPlaying).isFalse()
     }
 
+    /** Rejects native preparation after an earlier interruption request. */
     @Test
     fun interruptionBeforePreparationDoesNotOpenAnAudioTrack() {
         val output = AndroidPcmOutput()

@@ -35,6 +35,7 @@
     <string name="use_this_screen">使用此螢幕</string>
     <string name="standard_modes_label">標準模式</string>
     <string name="modes_all_refresh_rates">全部更新率</string>
+    <string name="microsoft_modes_hint">微軟 3:2 相容備援模式；自訂模式仍優先。變更於下次連線生效。</string>
     <string name="settings_language_title">語言</string>
     <string name="language_follow_system">跟隨系統</string>
     <string name="language_traditional_chinese">繁體中文</string>
@@ -79,7 +80,6 @@
 
     <string name="picture_title">Mirax 顯示</string>
     <string name="picture_connected">已連線</string>
-    <string name="picture_press_back_again">再按一次返回即可結束這次連線</string>
     <string name="end_connection_confirm_message">要結束這次 Miracast 連線嗎？</string>
     <string name="end_connection_confirm_action">結束連線</string>
     <string name="control_panel_casting_status">投放中</string>
@@ -100,6 +100,12 @@
     <string name="control_panel_touch_input">觸控輸入</string>
     <string name="control_panel_avoid_cutout">避開螢幕開孔</string>
     <string name="control_panel_close">關閉投放控制面板</string>
+    <string name="control_panel_open">開啟投放控制面板</string>
+    <string name="control_panel_entry_hint">拖曳可移動，放開後吸附邊緣</string>
+    <string name="control_panel_entry_title">投放面板入口</string>
+    <string name="control_panel_entry_button">半透明邊緣把手</string>
+    <string name="control_panel_entry_volume">長按音量鍵</string>
+    <string name="control_panel_entry_setting_hint">選擇一種入口。使用音量鍵時短按調整媒體音量，長按開啟面板；離開投放後的懸浮球是獨立設定。</string>
     <string name="control_panel_rotate">切換螢幕方向</string>
     <string name="control_panel_other_settings">其他設定</string>
     <string name="press_back_again_to_leave">再按一次返回即可離開</string>

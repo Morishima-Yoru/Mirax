@@ -11,7 +11,6 @@ import me.trinitrix.mirax.SessionHost
 import me.trinitrix.mirax.wm.WmSize
 import me.trinitrix.mirax.session.ConnectionRunFact
 import me.trinitrix.mirax.session.SessionAction
-import me.trinitrix.mirax.session.PreferredModeCorrection
 import me.trinitrix.mirax.session.StandardVideoModes
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
@@ -61,7 +60,6 @@ object SinkConnectionController {
     private const val INTERACTIVE_BITRATE_FLOOR_BPS = 12_000_000L
     private const val INTERACTIVE_BITRATE_CAP_BPS = 20_000_000L
     /** Interactive refresh ceiling — resolution stays Settings/wm-owned. */
-    private const val INTERACTIVE_MAX_FPS = 30
     /**
      * Gap since the previous UIBC input before a touch may request one IDR.
      * Idle-only: mid-gesture IDR was ~500ms Windows RTT and caused cursor drift
@@ -94,6 +92,11 @@ object SinkConnectionController {
     private var serveSelected: VideoMode? = null
     private var rtpSocket: DatagramSocket? = null
     private val audioPlayer = LpcmAudioPlayer()
+    private val rtpSessionOwner = RtpSessionOwner {
+        closeQuietly(rtpSocket)
+        rtpSocket = null
+        audioPlayer.stop()
+    }
     private val rtcpChannel = RtcpChannel()
     private var appContext: Context? = null
 
@@ -207,7 +210,7 @@ object SinkConnectionController {
                             finishConnectionRun(succeeded = false, selected = null)
                             continue
                         }
-                        beginConnectionRun(state.sourceAddress)
+                        postBeginConnectionRun(state, gen)
                         note(
                             if (state.phoneIsOwner) {
                                 "P2P group up (phone is GO); dialing Windows RTSP"
@@ -332,21 +335,6 @@ object SinkConnectionController {
         var lastSelected: VideoMode? = null
         var lastLatencyMode = ""
         val offer = connectionOffer(command)
-        // Settings own resolution. Interactive only remaps refresh >30 → 30 so
-        // Win11 cannot pick *@60 (that path pinned ~550 ms bursts + sub‑Mbps ABR
-        // on HA1CSQTM). Do not inject or lock width/height.
-        val advertiseModes = offer.modes
-            .plus(if (offer.touchEnabled) {
-                remappedInteractiveRefresh(offer.modes)
-            } else {
-                emptySet()
-            })
-            .toSet()
-        val advertisePreferred = if (offer.touchEnabled) {
-            offer.preferred?.let { remappedInteractiveRefresh(it) } ?: offer.preferred
-        } else {
-            offer.preferred
-        }
         val advertiseBitrate = if (offer.touchEnabled) {
             maxOf(offer.maxVideoBitrateBps, INTERACTIVE_BITRATE_FLOOR_BPS)
                 .coerceAtMost(INTERACTIVE_BITRATE_CAP_BPS)
@@ -357,13 +345,13 @@ object SinkConnectionController {
             note(
                 "interactive offer bitrate=${advertiseBitrate / 1_000}kbps " +
                     "microsoft_max_bitrate=$advertiseBitrate " +
-                    "preferred=${advertisePreferred?.format() ?: "none"} modes=${advertiseModes.size}",
+                    "preferred=${offer.preferred?.format() ?: "none"} modes=${offer.modes.size}",
             )
         }
         val session = RtspSinkSession(
             WfdCapabilityTable(
-                advertiseModes,
-                advertisePreferred,
+                offer.modes,
+                offer.preferred,
                 offer.broadcastName,
                 offer.touchEnabled,
                 advertiseBitrate,
@@ -479,7 +467,7 @@ object SinkConnectionController {
                         val mode = session.selectedMode ?: VideoMode(1920, 1080, 60)
                         decoder.setFormat(mode.width, mode.height, mode.refreshHz)
                         startRtcp(session)
-                        startRtp(session.rtpPort(), demux, gen)
+                        startRtp(socket, session.rtpPort(), demux, gen)
                         startHardwareCursor()
                         postAction(SessionAction.EnteredPlay)
                     }
@@ -501,7 +489,7 @@ object SinkConnectionController {
             playOutput.set(null)
             UibcTouchChannel.close()
             stopHardwareCursor()
-            stopRtp()
+            stopRtp(expectedOwner = socket)
             stopRtcp()
             decoder.reset()
             activeClient.compareAndSet(socket, null)
@@ -552,80 +540,93 @@ object SinkConnectionController {
         rtcpChannel.stop()
     }
 
-    private fun startRtp(port: Int, demux: MpegTsDepacketizer, gen: Int) {
-        stopRtp()
-        try {
-            val socket = DatagramSocket(null).apply {
-                reuseAddress = true
-                // Win11 bursts ~1s of AUs; undersized rcvbuf → drops → RTCP
-                // loss → ABR stuck near 2–3 Mbps (Fold/Samsung does not show this).
-                receiveBufferSize = 1024 * 1024
-                bind(InetSocketAddress(port))
-            }
-            P2pNetworkBinder.bind(appContext, socket)
-            rtpSocket = socket
-            audioPlayer.start()
-            note("RTP listening on $port")
-            Thread({
-                val buf = ByteArray(64 * 1024)
-                var packets = 0L
-                var lastRtpElapsed = 0L
-                var lastRtpGapLogMs = 0L
-                var auSinceGap = 0
-                while (alive(gen) && !socket.isClosed) {
-                    try {
-                        val packet = DatagramPacket(buf, buf.size)
-                        socket.receive(packet)
-                        val now = SystemClock.elapsedRealtime()
-                        if (++packets == 1L) {
-                            note("first RTP packet from ${packet.address}")
-                        } else {
-                            val gap = now - lastRtpElapsed
-                            if (gap >= 80L) {
-                                val up = SystemClock.uptimeMillis()
-                                if (up - lastRtpGapLogMs >= 200L) {
-                                    lastRtpGapLogMs = up
-                                    Log.w(
-                                        TAG,
-                                        "RTP gap_ms=$gap au_since=${auSinceGap} from=${packet.address}",
-                                    )
-                                    auSinceGap = 0
+    /**
+     * Starts RTP reception through the shared receiver ownership boundary.
+     *
+     * @param owner RTSP socket identifying the requesting session.
+     * @param port local RTP port.
+     * @param demux transport stream depacketizer for this session.
+     * @param gen connection generation for receiver cancellation.
+     */
+    private fun startRtp(owner: Socket, port: Int, demux: MpegTsDepacketizer, gen: Int) {
+        rtpSessionOwner.start(owner, isCurrent = { alive(gen) }) {
+            try {
+                val socket = DatagramSocket(null)
+                rtpSocket = socket
+                socket.apply {
+                    reuseAddress = true
+                    // Win11 bursts ~1s of AUs; undersized rcvbuf → drops → RTCP
+                    // loss → ABR stuck near 2–3 Mbps (Fold/Samsung does not show this).
+                    receiveBufferSize = 1024 * 1024
+                    bind(InetSocketAddress(port))
+                }
+                P2pNetworkBinder.bind(appContext, socket)
+                val submitAudio = audioPlayer.startInput()
+                note("RTP listening on $port")
+                Thread({
+                    val buf = ByteArray(64 * 1024)
+                    var packets = 0L
+                    var lastRtpElapsed = 0L
+                    var lastRtpGapLogMs = 0L
+                    var auSinceGap = 0
+                    while (alive(gen) && !socket.isClosed) {
+                        try {
+                            val packet = DatagramPacket(buf, buf.size)
+                            socket.receive(packet)
+                            val now = SystemClock.elapsedRealtime()
+                            if (++packets == 1L) {
+                                note("first RTP packet from ${packet.address}")
+                            } else {
+                                val gap = now - lastRtpElapsed
+                                if (gap >= 80L) {
+                                    val up = SystemClock.uptimeMillis()
+                                    if (up - lastRtpGapLogMs >= 200L) {
+                                        lastRtpGapLogMs = up
+                                        Log.w(
+                                            TAG,
+                                            "RTP gap_ms=$gap au_since=${auSinceGap} from=${packet.address}",
+                                        )
+                                        auSinceGap = 0
+                                    }
                                 }
                             }
+                            lastRtpElapsed = now
+                            rtcpChannel.onRtp(packet.data, packet.length, packet.address)
+                            demux.pushRtp(packet.data, packet.length)
+                            while (true) {
+                                val au = demux.poll() ?: break
+                                auSinceGap++
+                                decoder.submitAccessUnit(au)
+                            }
+                            while (true) {
+                                val pcm = demux.pollAudio() ?: break
+                                submitAudio(pcm)
+                            }
+                        } catch (err: Exception) {
+                            if (socket.isClosed) {
+                                break
+                            }
+                            noteWarn("RTP receive failed", err)
                         }
-                        lastRtpElapsed = now
-                        rtcpChannel.onRtp(packet.data, packet.length, packet.address)
-                        demux.pushRtp(packet.data, packet.length)
-                        while (true) {
-                            val au = demux.poll() ?: break
-                            auSinceGap++
-                            decoder.submitAccessUnit(au)
-                        }
-                        while (true) {
-                            val pcm = demux.pollAudio() ?: break
-                            audioPlayer.submit(pcm)
-                        }
-                    } catch (err: Exception) {
-                        if (socket.isClosed) {
-                            break
-                        }
-                        noteWarn("RTP receive failed", err)
                     }
+                }, "mirax-rtp").also {
+                    it.isDaemon = true
+                    it.start()
                 }
-            }, "mirax-rtp").also {
-                it.isDaemon = true
-                it.start()
+            } catch (err: Exception) {
+                noteWarn("RTP bind failed on $port", err)
+                stopRtp(expectedOwner = owner)
             }
-        } catch (err: Exception) {
-            noteWarn("RTP bind failed on $port", err)
-            stopRtp()
         }
     }
 
-    private fun stopRtp() {
-        closeQuietly(rtpSocket)
-        rtpSocket = null
-        audioPlayer.stop()
+    /**
+     * Stops RTP reception through the same boundary used to start it.
+     *
+     * @param expectedOwner RTSP socket whose cleanup requested the stop, or null for explicit shutdown.
+     */
+    private fun stopRtp(expectedOwner: Socket? = null) {
+        rtpSessionOwner.stop(expectedOwner)
     }
 
     private fun startHardwareCursor() {
@@ -672,6 +673,22 @@ object SinkConnectionController {
         }
     }
 
+    /**
+     * Dispatch a ready source only if its controller is still current when the main queue runs.
+     *
+     * @param group source captured by the controller worker
+     * @param gen controller generation that observed the source
+     */
+    private fun postBeginConnectionRun(group: P2pGroupState.Up, gen: Int) {
+        val ctx = appContext ?: return
+        mainHandler.post {
+            val action = beginConnectionRunAction(group, gen, generation.get()) ?: return@post
+            if (running.get() && !endedByUser.get()) {
+                SessionHost.dispatchConnectionEvent(ctx, action)
+            }
+        }
+    }
+
     private fun postAction(action: SessionAction) {
         val ctx = appContext ?: return
         mainHandler.post {
@@ -686,27 +703,6 @@ object SinkConnectionController {
         val touchEnabled: Boolean,
         val maxVideoBitrateBps: Long,
     )
-
-    /**
-     * Keep width/height; cap refresh at [INTERACTIVE_MAX_FPS] for touch sessions.
-     */
-    private fun remappedInteractiveRefresh(mode: VideoMode): VideoMode {
-        val remapped = if (mode.refreshHz <= INTERACTIVE_MAX_FPS) {
-            mode
-        } else {
-            VideoMode(mode.width, mode.height, INTERACTIVE_MAX_FPS)
-        }
-        val level51Compliant = PreferredModeCorrection.correct(
-            remapped.width, remapped.height, remapped.refreshHz
-        )
-        return level51Compliant ?: run {
-            Log.w(TAG, "interactive remap ${mode.format()} exceeds Level 5.1, keeping original")
-            mode
-        }
-    }
-
-    private fun remappedInteractiveRefresh(modes: Set<VideoMode>): Set<VideoMode> =
-        modes.map(::remappedInteractiveRefresh).toSet()
 
     /**
      * Read wm size and freeze the M3 offer on the main thread before RTSP.
@@ -738,7 +734,7 @@ object SinkConnectionController {
             }
         }
         if (!latch.await(2, TimeUnit.SECONDS) || box.get() == null) {
-            val preferred = fallback.modes.firstOrNull { !WfdVideoFormatCodec.isStandardMode(it) }
+            val preferred = fallback.modes.firstOrNull { WfdVideoFormatCodec.isCustomMode(it) }
             return ConnectionOffer(
                 modes = fallback.modes,
                 preferred = preferred,
@@ -748,10 +744,6 @@ object SinkConnectionController {
             )
         }
         return box.get()
-    }
-
-    private fun beginConnectionRun(host: String) {
-        postAction(SessionAction.BeginConnectionRun(host))
     }
 
     private fun finishConnectionRun(succeeded: Boolean, selected: VideoMode?) {
@@ -833,3 +825,22 @@ object SinkConnectionController {
     private val MICROSOFT_MAX_BITRATE_LINE =
         Regex("microsoft_max_bitrate:\\s*(\\d+)", RegexOption.IGNORE_CASE)
 }
+
+/**
+ * Translate a ready group into the connection event dispatched by the sink.
+ *
+ * @param group current source reported by the privileged owner
+ * @param expectedGeneration controller generation that observed the source
+ * @param currentGeneration controller generation when its queued event is consumed
+ * @return the connection run action, or null when its controller was stopped or replaced
+ */
+internal fun beginConnectionRunAction(
+    group: P2pGroupState.Up,
+    expectedGeneration: Int,
+    currentGeneration: Int,
+): SessionAction.BeginConnectionRun? =
+    if (expectedGeneration == currentGeneration) {
+        SessionAction.BeginConnectionRun(group.sourceAddress, group.sourceDeviceName)
+    } else {
+        null
+    }

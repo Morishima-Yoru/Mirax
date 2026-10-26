@@ -1,5 +1,8 @@
 package me.trinitrix.mirax.wfd.rtsp
 
+import android.util.Log
+import me.trinitrix.mirax.session.MicrosoftVideoModes
+import me.trinitrix.mirax.session.PreferredModeCorrection
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
 
@@ -8,14 +11,42 @@ import me.trinitrix.mirax.wfd.MicrosoftCursorChannel
  * for that connection — never latches extra 720p/1080p after a pre-PLAY drop.
  *
  * Advertises UIBC HIDC only when [touchEnabled] is true. Does not open the UIBC socket.
+ * Interactive refresh alternatives are prepared here so all wire answers use the same offer.
  */
 class WfdCapabilityTable(
-    private val modes: Set<VideoMode>,
-    private val preferred: VideoMode?,
+    modes: Set<VideoMode>,
+    preferred: VideoMode?,
     private val friendlyName: String,
     private val touchEnabled: Boolean = false,
     private val maxBitrateBps: Long = 40_000_000L,
 ) {
+    private val modes = (modes + if (touchEnabled) modes.map(::remappedInteractiveRefresh) else emptyList())
+        .filter { !MicrosoftVideoModes.contains(it) || it in MicrosoftVideoModes.catalog() }
+        .toSet()
+    private val preferred = if (touchEnabled) preferred?.let(::remappedInteractiveRefresh) else preferred
+
+    /**
+     * Preserves size while preparing the existing low-latency refresh alternative.
+     *
+     * @param mode settings-owned mode to prepare
+     * @return the original mode or a Level 5.1 compliant interactive alternative
+     */
+    private fun remappedInteractiveRefresh(mode: VideoMode): VideoMode {
+        val remapped = if (mode.refreshHz <= INTERACTIVE_MAX_FPS) {
+            mode
+        } else {
+            VideoMode(mode.width, mode.height, INTERACTIVE_MAX_FPS)
+        }
+        // Fixed Microsoft bits must never add an unchecked sibling refresh.
+        if (MicrosoftVideoModes.contains(mode) || MicrosoftVideoModes.contains(remapped)) return mode
+        // Do not turn a standard fallback into an unrequested custom/EDID preference.
+        if (WfdVideoFormatCodec.isStandardMode(mode) && !WfdVideoFormatCodec.isStandardMode(remapped)) return mode
+        return PreferredModeCorrection.correct(remapped.width, remapped.height, remapped.refreshHz) ?: run {
+            Log.w("WfdCapabilityTable", "interactive remap ${mode.format()} exceeds Level 5.1, keeping original")
+            mode
+        }
+    }
+
     /**
      * Interactive (UIBC) sessions: M3 should prefer low-latency encode and always
      * surface [microsoft_max_bitrate], even when Windows omitted those names.
@@ -23,18 +54,27 @@ class WfdCapabilityTable(
     val interactiveHints: Boolean
         get() = touchEnabled
 
+    /**
+     * Validates a Microsoft selection against this connection's offer.
+     *
+     * @param value M4 bitmap value
+     * @return the supported offered mode, or null when the source did not select one
+     */
+    fun microsoftModeFor(value: String): VideoMode? =
+        MicrosoftVideoModes.decodeSelection(value)?.takeIf { it in modes }
+
     fun valueFor(name: String): String {
         return when (name) {
             "wfd_video_formats" -> WfdVideoFormatCodec.wfdVideoFormats(modes, preferred)
             "wfdx_video_formats", "wfd2_video_formats" ->
                 WfdVideoFormatCodec.wfdxVideoFormats(modes, preferred)
             "microsoft_custom_video_formats" -> WfdVideoFormatCodec.encodeCustomFormats(modes)
-            "microsoft_video_formats" -> "000000000000"
+            "microsoft_video_formats" -> MicrosoftVideoModes.encode(modes)
             "wfd_audio_codecs", "wfd2_audio_codecs" -> WfdVideoFormatCodec.audioCodecs()
             "wfd_client_rtp_ports" -> WfdVideoFormatCodec.clientRtpPorts()
             "wfd_display_edid" -> {
                 val edidMode = preferred?.takeIf { it in modes }
-                    ?: modes.firstOrNull { !WfdVideoFormatCodec.isStandardMode(it) }
+                    ?: modes.firstOrNull { WfdVideoFormatCodec.isCustomMode(it) }
                     ?: modes.maxByOrNull { it.width.toLong() * it.height }
                     ?: VideoMode(1920, 1080, 60)
                 WfdEdid.parameterValue(edidMode, friendlyName.take(13).ifEmpty { "Mirax" })
@@ -80,6 +120,8 @@ class WfdCapabilityTable(
     }
 
     companion object {
+        private const val INTERACTIVE_MAX_FPS = 30
+
         /**
          * When true, advertise [MS-WDHCE] hardware cursor so Windows stops burning
          * the pointer into the H.264 stream (the main mouse-lag feel on local echo).

@@ -20,6 +20,247 @@ class WfdProtocolTest {
         foldPreferred,
     )
 
+    /** Verifies M3 advertises only enabled Microsoft modes within the static limits. */
+    @Test
+    fun m3MicrosoftFormatsAdvertiseOnlyEnabledModesWithinLevel51() {
+        val modes = defaults + setOf(
+            VideoMode(1920, 1280, 30),
+            VideoMode(2160, 1440, 60),
+            VideoMode(3240, 2160, 24),
+            VideoMode(3000, 2000, 60),
+            VideoMode(4500, 3000, 24),
+        )
+        val session = RtspSinkSession(WfdCapabilityTable(modes, foldPreferred, "Mirax"))
+
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\n" +
+                "CSeq: 2\r\nContent-Type: text/parameters\r\n\r\n" +
+                "microsoft_video_formats\r\n",
+        ).single()
+
+        // MS-WFDPE table bits 0, 4, and 17; oversized and unselected modes stay clear.
+        assertThat(response).contains("microsoft_video_formats: 000000020011\r\n")
+    }
+
+    /** Verifies interactive standard fallbacks cannot displace the Microsoft EDID timing. */
+    @Test
+    fun interactiveStandardFallbackDoesNotInventCustomModesAheadOfMicrosoftEdid() {
+        val microsoft = VideoMode(2160, 1440, 30)
+        for (baseline in listOf(VideoMode(640, 480, 60), VideoMode(720, 576, 50))) {
+            val session = RtspSinkSession(
+                WfdCapabilityTable(setOf(baseline, microsoft), null, "Mirax", touchEnabled = true),
+            )
+            val response = session.handle(
+                "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                    "wfd_video_formats\r\nmicrosoft_video_formats\r\n" +
+                    "microsoft_custom_video_formats\r\nwfd_display_edid\r\n",
+            ).single()
+
+            assertThat(response).contains("microsoft_custom_video_formats: none\r\n")
+            assertThat(response).contains("microsoft_video_formats: 000000000008\r\n")
+            val edid = response.lineSequence().first { it.startsWith("wfd_display_edid:") }
+                .substringAfter("0001 ").trim().chunked(2).map { it.toInt(16) }
+            assertThat(edid[56] or ((edid[58] shr 4) shl 8)).isEqualTo(2160)
+            assertThat(edid[59] or ((edid[61] shr 4) shl 8)).isEqualTo(1440)
+        }
+    }
+
+    /** Verifies an explicit custom VGA refresh keeps its custom-format priority. */
+    @Test
+    fun interactiveExplicitCustomVgaStillTakesPriority() {
+        val custom = VideoMode(640, 480, 30)
+        val session = RtspSinkSession(
+            WfdCapabilityTable(setOf(custom, VideoMode(2160, 1440, 30)), custom, "Mirax", touchEnabled = true),
+        )
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "microsoft_custom_video_formats\r\nmicrosoft_video_formats\r\n",
+        ).single()
+
+        assertThat(response).contains("microsoft_custom_video_formats: 0280 01E0 001E\r\n")
+        assertThat(response).contains("microsoft_video_formats: 000000000008\r\n")
+    }
+
+    /** Verifies the Fold custom offer retains its calibrated low-latency alternative. */
+    @Test
+    fun interactiveFoldOfferRetainsItsLowLatencyCustomRefresh() {
+        val session = RtspSinkSession(
+            WfdCapabilityTable(setOf(foldPreferred), foldPreferred, "Mirax", touchEnabled = true),
+        )
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "microsoft_custom_video_formats\r\nwfd_display_edid\r\n",
+        ).single()
+
+        assertThat(response).contains("0880 0714 003C")
+        assertThat(response).contains("0880 0714 001E")
+        val edid = response.lineSequence().first { it.startsWith("wfd_display_edid:") }
+            .substringAfter("0001 ").trim().chunked(2).map { it.toInt(16) }
+        assertThat(edid[54] or (edid[55] shl 8)).isEqualTo(13063)
+    }
+
+    /** Verifies a valid Microsoft M4 selection outranks standard formats in either order. */
+    @Test
+    fun m4MicrosoftSelectionWinsOverStandardRegardlessOfParameterOrder() {
+        val microsoft = "microsoft_video_formats: 000000000010\r\n"
+        val standard = "wfd_video_formats: 00 00 02 40 00000100 00000000 00000000 00 0000 0000 00 none none\r\n"
+        val mode = VideoMode(2160, 1440, 60)
+        for (body in listOf(microsoft + standard, standard + microsoft, microsoft)) {
+            val session = RtspSinkSession(WfdCapabilityTable(defaults + mode, foldPreferred, "Mirax"))
+
+            session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 3\r\n\r\n$body")
+
+            assertThat(session.selectedMode).isEqualTo(mode)
+            assertThat(session.formatChosen).isTrue()
+            assertThat(session.state).isEqualTo("CONFIGURED")
+        }
+    }
+
+    /** Verifies Microsoft modes leave literal custom formats and their EDID timing intact. */
+    @Test
+    fun m3MicrosoftModesDoNotDisplaceLiteralCustomModesOrNativeEdid() {
+        val modes = linkedSetOf(
+            VideoMode(2160, 1440, 60),
+            VideoMode(3000, 2000, 60),
+            VideoMode(4500, 3000, 24),
+            foldPreferred,
+        )
+        val session = RtspSinkSession(WfdCapabilityTable(modes, null, "Mirax"))
+
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "wfd_video_formats\r\nmicrosoft_video_formats\r\n" +
+                "microsoft_custom_video_formats\r\nwfd_display_edid\r\n",
+        ).single()
+
+        assertThat(response).contains("microsoft_custom_video_formats: 0880 0714 003C\r\n")
+        assertThat(response).contains("microsoft_video_formats: 000000000010\r\n")
+        val hex = response.lineSequence().first { it.startsWith("wfd_display_edid:") }
+            .substringAfter("0001 ").trim()
+        val edid = hex.chunked(2).map { it.toInt(16) }
+        assertThat(edid).hasSize(128)
+        assertThat(edid[56] or ((edid[58] shr 4) shl 8)).isEqualTo(2176)
+        assertThat(edid[59] or ((edid[61] shr 4) shl 8)).isEqualTo(1812)
+        assertThat(edid.sum() and 0xFF).isEqualTo(0)
+    }
+
+    /** Verifies a preferred 24 Hz Microsoft mode fits the EDID timing and range descriptor. */
+    @Test
+    fun m3PreferredMicrosoft24HzModeHasMatchingEdidAndInclusiveTimingRange() {
+        val mode = VideoMode(2160, 1440, 24)
+        val session = RtspSinkSession(WfdCapabilityTable(defaults + mode, mode, "Mirax"))
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "wfd_display_edid\r\n",
+        ).single()
+        val hex = response.lineSequence().first { it.startsWith("wfd_display_edid:") }
+            .substringAfter("0001 ").trim()
+        val edid = hex.chunked(2).map { it.toInt(16) }
+
+        assertThat(edid).hasSize(128)
+        assertThat(edid[56] or ((edid[58] shr 4) shl 8)).isEqualTo(2160)
+        assertThat(edid[59] or ((edid[61] shr 4) shl 8)).isEqualTo(1440)
+        assertThat(edid[54] or (edid[55] shl 8)).isEqualTo(8307)
+        assertThat(edid[95]).isAtMost(24)
+        assertThat(edid[97]).isAtMost(35)
+        assertThat(edid.sum() and 0xFF).isEqualTo(0)
+    }
+
+    /** Verifies every supported Microsoft bit round-trips without setting reserved bits. */
+    @Test
+    fun microsoftTableBitsRoundTripAtRtspBoundaryWithReservedBitsClear() {
+        // Independent MS-WFDPE 2.7.1.2.1 wire fixtures; Level 5.1 excludes six entries.
+        val cases = listOf(
+            "000000000001" to VideoMode(1920, 1280, 30),
+            "000000000002" to VideoMode(1920, 1280, 60),
+            "000000000004" to VideoMode(1920, 1280, 24),
+            "000000000008" to VideoMode(2160, 1440, 30),
+            "000000000010" to VideoMode(2160, 1440, 60),
+            "000000000020" to VideoMode(2160, 1440, 24),
+            "000000000040" to VideoMode(2256, 1504, 30),
+            "000000000080" to VideoMode(2256, 1504, 60),
+            "000000000100" to VideoMode(2256, 1504, 24),
+            "000000000200" to VideoMode(2736, 1824, 30),
+            "000000000800" to VideoMode(2736, 1824, 24),
+            "000000001000" to VideoMode(3000, 2000, 30),
+            "000000004000" to VideoMode(3000, 2000, 24),
+            "000000008000" to VideoMode(3240, 2160, 30),
+            "000000020000" to VideoMode(3240, 2160, 24),
+        )
+        for ((hex, mode) in cases) {
+            val session = RtspSinkSession(WfdCapabilityTable(setOf(mode), null, "Mirax"))
+            val response = session.handle(
+                "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                    "microsoft_video_formats\r\n",
+            ).single()
+            assertThat(response).contains("microsoft_video_formats: $hex\r\n")
+            session.handle(
+                "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 3\r\n\r\n" +
+                    "microsoft_video_formats: ${hex.lowercase()}\r\n",
+            )
+            assertThat(session.selectedMode).isEqualTo(mode)
+        }
+    }
+
+    /** Verifies a connection without Microsoft opt-in retains the all-zero bitmap. */
+    @Test
+    fun m3WithoutEnabledMicrosoftModesKeepsTheZeroBitmap() {
+        val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax"))
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "microsoft_video_formats\r\n",
+        ).single()
+        assertThat(response).contains("microsoft_video_formats: 000000000000\r\n")
+    }
+
+    /** Verifies invalid Microsoft selections cannot override a valid standard fallback. */
+    @Test
+    fun m4MalformedReservedOversizedOrUnofferedMicrosoftSelectionsFallBackToStandard() {
+        val rejected = listOf(
+            "", "none", "00000000000G", "00000000001", "0000000000001",
+            "000000000000", "000000000018", "FFFFFFFFFFFF", "800000000000", "000000200000",
+            "000000000400", "000000002000", "000000010000",
+            "000000040000", "000000080000", "000000100000",
+            "000000000001", // Valid table entry, but not offered for this connection.
+        )
+        for (value in rejected) {
+            val session = RtspSinkSession(
+                WfdCapabilityTable(defaults + VideoMode(2160, 1440, 60), foldPreferred, "Mirax"),
+            )
+            session.handle(
+                "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 3\r\n\r\n" +
+                    "microsoft_video_formats: $value\r\n",
+            )
+            assertThat(session.selectedMode).isNull()
+            assertThat(session.formatChosen).isFalse()
+            session.handle(
+                "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n" +
+                    "microsoft_video_formats: $value\r\n" +
+                    "wfd_video_formats: 00 00 02 40 00000100 00000000 00000000 00 0000 0000 00 none none\r\n",
+            )
+            assertThat(session.selectedMode).isEqualTo(VideoMode(1920, 1080, 60))
+        }
+    }
+
+    /** Verifies custom priority is order-independent and does not lock later requests. */
+    @Test
+    fun m4CustomSelectionWinsInEitherOrderButDoesNotLatchAcrossRequests() {
+        val microsoft = "microsoft_video_formats: 000000000010\r\n"
+        val custom = "microsoft_custom_video_formats: 0880 0714 003C\r\n"
+        val standard = "wfd_video_formats: 00 00 02 40 00000100 00000000 00000000 00 0000 0000 00 none none\r\n"
+        for (body in listOf(custom + microsoft + standard, microsoft + standard + custom, standard + custom + microsoft)) {
+            val mode = VideoMode(2160, 1440, 60)
+            val session = RtspSinkSession(WfdCapabilityTable(defaults + mode, foldPreferred, "Mirax"))
+            session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 3\r\n\r\n$body")
+            assertThat(session.selectedMode).isEqualTo(foldPreferred)
+
+            session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 4\r\n\r\n$microsoft")
+            assertThat(session.selectedMode).isEqualTo(mode)
+            session.handle("SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 5\r\n\r\n$standard")
+            assertThat(session.selectedMode).isEqualTo(VideoMode(1920, 1080, 60))
+        }
+    }
+
     @Test
     fun m3OffersOnly48kStereoLpcmThatTheSinkCanPlay() {
         val session = RtspSinkSession(WfdCapabilityTable(defaults, foldPreferred, "Mirax"))
@@ -96,8 +337,10 @@ class WfdProtocolTest {
             "OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nRequire: org.wfa.wfd1.0\r\n\r\n",
         )
         assertThat(m1).hasSize(2)
+        assertThat(m1[0]).contains("RTSP/1.0 200 OK")
         assertThat(m1[0]).contains("Public: org.wfa.wfd1.0")
         assertThat(m1[1]).startsWith("OPTIONS * RTSP/1.0\r\n")
+        assertThat(session.state).isEqualTo("WAIT_M2")
 
         session.handle(
             "RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: org.wfa.wfd1.0, SETUP, TEARDOWN, PLAY, PAUSE, GET_PARAMETER, SET_PARAMETER\r\n\r\n",

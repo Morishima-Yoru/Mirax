@@ -65,7 +65,7 @@ object WfdEdid {
         }
         putTiming(e, 54, mode)
         putDescriptor(e, 72, 0xFC.toByte(), monitorName.take(13))
-        putRange(e, 90)
+        putRange(e, 90, mode)
         putDescriptorHeader(e, 108, 0x10.toByte())
         var sum = 0
         for (idx in 0 until 127) {
@@ -133,13 +133,21 @@ object WfdEdid {
         }
     }
 
-    private fun putRange(e: ByteArray, o: Int) {
+    /**
+     * Includes the preferred timing in the EDID monitor range limits.
+     *
+     * @param e EDID block to update
+     * @param o range descriptor offset
+     * @param mode preferred timing that the range must include
+     */
+    private fun putRange(e: ByteArray, o: Int, mode: VideoMode) {
+        val horizontalHz = (mode.height + V_BLANK).toLong() * mode.refreshHz
         putDescriptorHeader(e, o, 0xFD.toByte())
-        e[o + 5] = 30
-        e[o + 6] = 75
-        e[o + 7] = 50
-        e[o + 8] = 120
-        e[o + 9] = 27
+        e[o + 5] = minOf(30, mode.refreshHz).toByte()
+        e[o + 6] = maxOf(75, mode.refreshHz).toByte()
+        e[o + 7] = minOf(50L, horizontalHz / 1_000L).toByte()
+        e[o + 8] = maxOf(120L, (horizontalHz + 999L) / 1_000L).toByte()
+        e[o + 9] = maxOf(27, (pixelClock10kHz(mode) + 999) / 1_000).toByte()
         e[o + 11] = 0x0A
         for (i in 12 until 18) {
             e[o + i] = 0x20

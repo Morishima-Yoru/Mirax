@@ -154,3 +154,12 @@
 - 待播硬上限、軟性追趕與裝置緩衝是固定的內部保護預算，不是完整的網路 jitter／A/V 自適應控制器。
 - 所有預載、增益、期限與輸出進度都屬於本次活動連線，結束後歸零。這些規則不新增活動連線階段。
 - 規格完成不等於音訊改善已被驗證；發布至 issue tracker 時使用 ready-for-agent，表示可開始實作，不表示裝置驗收已通過。
+
+## Integration checkpoint (2026-10-26)
+
+- 本地整合基準為 `origin/dev` 的 `c025a10665a1139f2576734d6ed0a6980a508ff6`，不是落後的本地 `dev`。完整功能的 Standards／Spec 獨立總審另找出兩個 P2：裝置已 underrun、App 仍有 PCM 時漏恢復淡入，以及重連後舊 producer／cleanup 跨代影響新音訊。兩項均先取得確定性失敗回歸，再修正並重審，無剩餘可處理的程式發現。
+- 恢復路徑改以原生 underrun counter 判斷新事件；短寫從原始 PCM 重算未接受部分，增益僅按已接受 frames 推進。RTP 輸入綁定當代 Playback，receiver／audio 的替換與清理以 RTSP owner 共用鎖保護。counter 查詢與 native write 並非原子操作，不保證任意排程停頓都能預先消除接點聲。
+- 整合後本機證據：27 個 JVM suites／392 tests，failures、errors、skips 均為零，包含原有逐 byte 波形、短寫、取消／重連斷言及新增回歸；Debug Lint 為零 errors、108 warnings，沒有 warning location 落在本功能修改路徑。Debug、Release、普通 Android test APK 與獨立 helper javac／d8 均建置成功。APK 建置不表示已在設備執行；Release 仍使用專案既有的 debug signing 設定。
+- 歷史 `4d16452` 的受控原生聆聽為啟動、斷料恢復、積壓各一對非盲比較，同情境 offered PCM 相同；使用者回報候選無破音、舊版有破音，隨後確認「我也已經親自在app上使用確定OK」。這是已接受的主觀改善，不是盲測、錄音波形或整合後新 APK 的實機驗證。
+- 歷史 `4d16452` 的 process CPU 成對中位數為 steady `−1.1400000pp`、interrupted `+0.8950846pp`，符合原中位數門檻；其中一組 interrupted 為 `+1.0033333pp`，樣本數、噪音與裕度仍限制 robustness。沒有挑樣、丟棄樣本或放寬門檻，也未證明完整 Miracast／audioserver／HAL 成本。
+- 本輪未操作設備。新增 JNI 查詢與 buffer copy 後的 CPU、整合版聲學、客觀波形、校準後 source-to-speaker 延遲及五分鐘共同時基 A/V 仍未驗；舊候選的聽感／CPU 結果不轉算為新版本通過。本地整合就緒與完整實機／發版驗收分開，不推送、不發布 PR、不直接合併遠端。
