@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Mirax · Big Standby｜離線互動原型</title>
+  <link rel="icon" href="data:,">
   <style>
     :root {
       font: 15px/1.6 "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
@@ -18,10 +19,10 @@
     }
     * { box-sizing: border-box; }
     body { margin: 0; }
-    button, input { font: inherit; }
+    button, input, select { font: inherit; }
     button { color: inherit; cursor: pointer; }
-    button, a, input, summary { -webkit-tap-highlight-color: transparent; }
-    button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+    button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
       outline: 3px solid #fff;
       outline-offset: 5px;
     }
@@ -105,6 +106,10 @@
     .hardline-caption { position: absolute; bottom: 164px; left: 5.2%; font-size: clamp(28px, 3.8vw, 55px); line-height: 1; font-weight: 400; letter-spacing: .04em; }
     .hardline-caption small { font-size: 9px; font-weight: 500; display: block; letter-spacing: .23em; margin-top: 15px; }
     .x-plane { opacity: .95; }
+    .scene .d-motion-layer { display: none; }
+    .v-D[data-d-motion="signal"] .d-signal-layer, .v-D[data-d-motion="scan"] .d-scan-layer { display: inline; }
+    .v-D[data-d-motion="quiet"] .d-quiet-layer { display: block; }
+    .d-quiet-layer { position: absolute; inset: 0; pointer-events: none; }
     .motion-stopped .ambient { animation-play-state: paused !important; }
     .page-hidden .custom-media { display: none; }
     .prototype-note { position: fixed; z-index: 25; left: 20px; top: 17px; color: #efefea; font-size: 10px; line-height: 1.7; letter-spacing: .04em; padding: 7px 11px; background: #101210ee; border-left: 2px solid #c9ccc3; }
@@ -119,6 +124,8 @@
     [aria-checked="true"] .switch-track::after { left: 15px; background: #151914; }
     .reveal-hint { position: absolute; bottom: 105px; left: 50%; transform: translateX(-50%); width: 90%; text-align: center; font-size: 10px; color: #c8cdc6; letter-spacing: .08em; }
     /* Floating controls are prototype chrome, visually separate from the receiving display. */
+    .d-motion-picker { position: fixed; z-index: 26; left: 20px; bottom: 26px; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid #aeb5a74d; border-radius: 7px; background: #151814f5; color: #deded7; font-size: 10px; }
+    .d-motion-picker select { min-height: 32px; padding: 4px 7px; border: 1px solid #ffffff45; border-radius: 3px; background: #242724; color: var(--ink); font-size: 12px; }
     .variant-switcher { position: fixed; z-index: 26; bottom: 26px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; background: #151814f5; border: 1px solid #aeb5a74d; border-radius: 10px; padding: 5px; gap: 5px; }
     .variant-switcher button { width: 42px; height: 43px; padding: 0; border: 0; background: transparent; font-size: 22px; border-radius: 5px; }
     .variant-label { min-width: 212px; text-align: center; line-height: 1.45; padding: 2px 11px; }
@@ -192,6 +199,7 @@
       .v-D .connection-hint { width: 350px; font-size: 11px; }
       .inspector { bottom: 17px; right: 17px; }
       .variant-switcher { bottom: 57px; }
+      .d-motion-picker { left: 17px; bottom: 17px; }
       .reveal-hint { bottom: 133px; }
       .field-caption { bottom: 195px; }
     }
@@ -234,6 +242,8 @@
       .hardline-caption { left: 7%; bottom: 245px; font-size: 32px; }
       .hardline-caption small { font-size: 7px; margin-top: 9px; }
       .variant-switcher { bottom: 56px; padding: 4px; gap: 0; }
+      .d-motion-picker { left: 14px; bottom: 14px; padding: 2px 6px; gap: 6px; }
+      .d-motion-picker select { min-height: 30px; }
       .variant-label { min-width: 198px; padding: 2px 5px; }
       .variant-label strong { font-size: 11px; }
       .variant-switcher button { width: 36px; }
@@ -286,6 +296,8 @@
       .stage.v-D .connection-hint { padding: 4px 10px; }
       .reveal-hint { top: 12px; bottom: auto; left: auto; right: 16px; transform: none; width: 42%; margin: 0; padding: 4px 8px; background: #101310e6; font-size: 9px; text-align: right; }
       .variant-switcher { bottom: 12px; left: 16px; transform: none; padding: 4px; gap: 0; }
+      .d-motion-picker { left: 355px; bottom: 12px; height: 46px; padding: 4px 6px; gap: 6px; font-size: 9px; }
+      .d-motion-picker select { min-height: 32px; font-size: 11px; }
       .variant-switcher button { width: 36px; height: 36px; }
       .variant-label { min-width: 190px; padding: 2px 5px; }
       .variant-label strong { font-size: 11px; }
@@ -322,7 +334,7 @@
     </defs>
   </svg>
 
-  <main id="stage" class="stage v-A" data-home="big" data-variant="A" data-broadcast="false" data-phase="off" aria-label="Mirax 接收畫面原型">
+  <main id="stage" class="stage v-A" data-home="big" data-variant="A" data-d-motion="signal" data-broadcast="false" data-phase="off" aria-label="Mirax 接收畫面原型">
     <div class="generated-background" aria-hidden="true">
       <div id="landscape" class="scene">
         <!-- Layered contours and drifting mist establish depth without photography or external assets. -->
@@ -384,31 +396,36 @@
       </div>
       <div id="hardline-scene" class="scene">
         <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <clipPath id="d-scan-window" clipPathUnits="userSpaceOnUse">
+              <rect id="d-scan-aperture" x="-1.1" y="-7" width="2.2" height="14" transform="translate(25 36) rotate(-28)"/>
+            </clipPath>
+          </defs>
           <rect width="1600" height="1000" fill="#090909"/>
           <g class="ambient x-plane">
-            <!-- Short edge fragments drift left and fade independently; the main outline never pulses. -->
-            <g class="x-trail-layer" transform="translate(510 -335) scale(12.685185)" fill="none" stroke="#c2c7c5" stroke-width=".10" stroke-linecap="square">
-              <path class="x-trail" d="M36.8 27.9l5.2 5.2"/>
-              <path class="x-trail" d="M44.5 35.6l5.8 5.8" stroke-dasharray=".8 .4"/>
-              <path class="x-trail" d="M31.5 38.3l6.5 6.6"/>
-              <path class="x-trail" d="M41 47.9l2.9 2.9"/>
-              <path class="x-trail" d="M79.5 35.2l-5.2 5.2"/>
-              <path class="x-trail" d="M70.8 43.9l-5.3 5.3" stroke-dasharray="1.2 .5"/>
-              <path class="x-trail" d="M61 38.4l5.8-5.8"/>
-              <path class="x-trail" d="M26.1 75v6.5h4.5"/>
-              <path class="x-trail" d="M33.5 81.8l6.5-6.5" stroke-dasharray=".6 .4"/>
-              <path class="x-trail" d="M44 71.3l5.2-5.2"/>
-              <path class="x-trail" d="M66.5 73.7l7.2 7.2"/>
-              <path class="x-trail" d="M82 75.4v6.5h-4" stroke-dasharray="1 .4"/>
-            </g>
             <use class="x-core" href="#mirax-mark" x="510" y="-335" width="1370" height="1370" fill="none" stroke="#d8d8d0" stroke-width=".16"/>
             <use class="x-core-line" href="#mirax-mark" x="526" y="-323" width="1370" height="1370" fill="none" stroke="#ffffff3d" stroke-width=".08"/>
+            <!-- Local overlays touch short edges only; both base outlines stay unchanged. -->
+            <!-- A moving notch stays legible on bright edges without adding a luminous wash. -->
+            <g class="d-motion-layer d-signal-layer" transform="translate(510 -335) scale(12.685185)" fill="none" stroke="#dcdcd4" stroke-width=".10" opacity=".9">
+              <path id="d-signal-gap" d="M26.1 32.8L43.9 50.8 51.8 42.9" pathLength="100" stroke="#090909" stroke-width=".44" stroke-dasharray="12 200" stroke-dashoffset="10"/>
+              <path id="d-signal-path" d="M26.1 32.8L43.9 50.8 51.8 42.9" pathLength="100" stroke-dasharray="8 200" stroke-dashoffset="8"/>
+            </g>
+            <g class="d-motion-layer d-scan-layer" transform="translate(510 -335) scale(12.685185)" opacity="0">
+              <use href="#mirax-mark" width="108" height="108" fill="none" stroke="#090909" stroke-width=".44" clip-path="url(#d-scan-window)"/>
+              <use href="#mirax-mark" width="108" height="108" fill="none" stroke="#dcdcd4" stroke-width=".10" clip-path="url(#d-scan-window)"/>
+            </g>
           </g>
           <path d="M0 810 430 380M0 849 468 381" stroke="#777771" stroke-width="1"/>
           <path d="M58 0V1000M1542 0V1000" stroke="#ffffff21"/>
           <path d="M0 68H1600" stroke="#eeeee6" stroke-width="1"/>
           <path d="M1390 0H1444V65H1390Z" fill="none" stroke="#eeeee6" stroke-width="1"/>
           <path d="M340 720 372 752 340 784 308 752Z" fill="none" stroke="#e8e8e0" stroke-width="1"/>
+        </svg>
+        <svg class="d-motion-layer d-quiet-layer" viewBox="0 0 100 100" preserveAspectRatio="none" fill="none" stroke="#bdbdb5" stroke-width=".8">
+          <path class="d-quiet-segment" d="M96 32v3" vector-effect="non-scaling-stroke" opacity="0"/>
+          <path class="d-quiet-segment" d="M4 64v3" vector-effect="non-scaling-stroke" opacity="0"/>
+          <path class="d-quiet-segment" d="M94 86h3" vector-effect="non-scaling-stroke" opacity="0"/>
         </svg>
         <div class="hardline-caption">BIG<br>STANDBY<span aria-hidden="true">.</span><small>X / MIRAX ORIGINAL GEOMETRY</small></div>
       </div>
@@ -473,6 +490,16 @@
     <button id="next-variant" type="button" aria-label="下一款概念，右方向鍵">›</button>
   </nav>
 
+  <label id="d-motion-picker" class="d-motion-picker" hidden>
+    <span>D 動態原型</span>
+    <select id="d-motion" aria-label="D 動態原型比較">
+      <option value="signal">訊號</option>
+      <option value="scan">掃描</option>
+      <option value="quiet">待命</option>
+      <option value="off">基準</option>
+    </select>
+  </label>
+
   <details id="inspector" class="inspector">
     <summary>狀態檢視</summary>
     <pre id="state-json" aria-label="目前完整原型狀態"></pre>
@@ -506,7 +533,7 @@
       <fieldset>
         <legend>環境動態</legend>
         <div class="setting-row"><span id="motion-description">緩慢背景與微幅文字漂移</span><button id="settings-motion-toggle" type="button" aria-pressed="false">暫停動態</button></div>
-        <p id="motion-help" class="help">暫停會停止生成背景、文字與影片；GIF 除外。遵循系統「減少動態」。分頁隱藏時暫停影片與背景繪製。</p>
+        <p id="motion-help" class="help">暫停會凍結生成背景、所選 D 裝飾、像素位移與影片；GIF 除外。基準不含裝飾。此動態比較不因系統「減少動態」停用；分頁隱藏時暫停。</p>
       </fieldset>
       <fieldset>
         <legend>連線模擬</legend>
@@ -529,6 +556,7 @@
     'use strict';
     const $ = (id) => document.getElementById(id);
     const variants = ['A', 'B', 'C', 'D'];
+    const dMotions = ['signal', 'scan', 'quiet', 'off'];
     const concepts = {
       A: { label: 'A / 山霧 · 流動地景', index: 'LANDSCAPE / 01', title: '山間，留白。' },
       B: { label: 'B / 琥珀 · 光的建築', index: 'ARCHITECTURE / 02', title: '一道光，一個空間。' },
@@ -547,11 +575,15 @@
       const requested = new URL(location.href).searchParams.get('variant');
       return variants.includes(requested) ? requested : 'A';
     }
+    function readDMotion() {
+      const requested = new URL(location.href).searchParams.get('motion');
+      return dMotions.includes(requested) ? requested : 'signal';
+    }
     const state = {
       home: 'big', variant: readVariant(), broadcast: false, phase: 'off',
       controlsOpen: false, settingsOpen: false, inspectorOpen: false,
       media: { kind: 'none', name: null, status: 'none', error: null, playbackBlocked: false },
-      motion: { paused: false, reduced: reducedMotion.matches, hidden: document.hidden },
+      motion: { dMode: readDMotion(), paused: false, reduced: reducedMotion.matches, hidden: document.hidden },
       lastAction: 'initial-preview'
     };
     let objectUrl = null;
@@ -612,6 +644,7 @@
       $('state-json').textContent = JSON.stringify(snapshot, null, 2);
       stage.dataset.home = state.home;
       stage.dataset.variant = state.variant;
+      stage.dataset.dMotion = state.motion.dMode;
       stage.dataset.broadcast = String(state.broadcast);
       stage.dataset.phase = state.phase;
       stage.dataset.media = state.media.kind;
@@ -640,6 +673,8 @@
       $('theme-index').textContent = concept.index;
       $('theme-title').textContent = concept.title;
       $('variant-label').textContent = concept.label;
+      $('d-motion-picker').hidden = state.variant !== 'D';
+      $('d-motion').value = state.motion.dMode;
       $('variant-counter').textContent = `${variants.indexOf(state.variant) + 1} / 4`;
       $('variant-dots').innerHTML = variants.map((variant) => `<i${variant === state.variant ? ' class="current"' : ''}></i>`).join('');
       $('broadcast-toggle').setAttribute('aria-checked', String(state.broadcast));
@@ -662,7 +697,7 @@
         $(id).setAttribute('aria-pressed', String(state.motion.paused));
         $(id).disabled = false;
       }
-      $('motion-description').textContent = '背景動態與線條殘影；文字及主體僅微幅像素位移';
+      $('motion-description').textContent = state.variant === 'D' ? 'D 動態比較；文字與主體僅微幅像素位移' : '背景動態；文字與主體僅微幅像素位移';
       $('gif-warning').hidden = state.media.kind !== 'gif';
       $('clear-media').disabled = state.media.kind === 'none' && !state.media.error;
       $('retry-video').hidden = !state.media.playbackBlocked || state.media.kind !== 'video';
@@ -675,6 +710,7 @@
         const suffix = state.media.kind === 'video' ? (state.media.playbackBlocked ? ' · 瀏覽器未自動播放，請重試。' : ' · 靜音循環；動態暫停時停格。') : (state.media.kind === 'gif' ? ' · GIF 動畫不受暫停控制。' : '');
         mediaFeedback.textContent = `本機預覽：${state.media.name}${suffix}${state.home === 'simple' ? ' · 切換 Big Standby 才會顯示。' : ''}`;
       } else mediaFeedback.textContent = '目前使用生成式概念背景。';
+      applyAmbientTransforms();
       syncMotion();
       updateInspector();
     }
@@ -857,13 +893,18 @@
     const mistLayer = document.querySelector('.mist');
     const lightPlane = document.querySelector('.light-plane');
     const xPlane = document.querySelector('.x-plane');
-    const xTrails = document.querySelectorAll('.x-trail');
+    const signalPath = $('d-signal-path');
+    const signalGap = $('d-signal-gap');
+    const scanLayer = document.querySelector('.d-scan-layer');
+    const scanAperture = $('d-scan-aperture');
+    const quietSegments = document.querySelectorAll('.d-quiet-segment');
     const hardlineCaption = document.querySelector('.hardline-caption');
     const fieldCaption = document.querySelector('.field-caption');
     let canvasWidth = 0;
     let canvasHeight = 0;
     let animationFrame = null;
     let particleTime = 0;
+    let dMotionStartedAt = 0;
     let previousFrameTime = null;
     let seed = 74321;
     function random() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
@@ -882,16 +923,30 @@
       scenePans.forEach((node) => { node.setAttribute('transform', `translate(${px.toFixed(1)} ${py.toFixed(1)}) scale(1.06)`); });
       if (mistLayer) mistLayer.setAttribute('transform', `translate(${(Math.sin(t * .55) * 120).toFixed(1)} ${(Math.cos(t * .34) * 12).toFixed(1)})`);
       if (lightPlane) lightPlane.setAttribute('transform', `translate(${(Math.sin(t * .65) * 44).toFixed(1)} ${(Math.cos(t * .41) * 14).toFixed(1)})`);
-      // Keep the X outline steady; emit short trails leftward with a one-way fade instead of breathing.
       if (xPlane) xPlane.setAttribute('transform', `translate(${(burnX * 1.4).toFixed(2)} ${(burnY * 1.4).toFixed(2)})`);
-      xTrails.forEach((trail, index) => {
-        const duration = 4.8 + (index % 3) * .5;
-        const progress = (t / duration + index / xTrails.length) % 1;
-        const distance = progress * (8 + (index % 3) * 1.5);
-        trail.setAttribute('transform', `translate(${(-distance).toFixed(3)} ${(-distance * .15).toFixed(3)})`);
-        const fadeIn = Math.min(progress / .08, 1);
-        trail.style.opacity = (fadeIn * Math.pow(1 - progress, 1.7) * .7).toFixed(3);
-      });
+      // Start each comparison promptly without resetting the shared OLED movement clock.
+      const dTime = Math.max(0, t - dMotionStartedAt);
+      let progress = 0;
+      if (state.variant === 'D' && state.motion.dMode === 'signal') {
+        progress = (dTime % 12) / 12;
+        const offset = 8 - progress * 116;
+        signalPath.setAttribute('stroke-dashoffset', offset.toFixed(3));
+        signalGap.setAttribute('stroke-dashoffset', (offset + 2).toFixed(3));
+      } else if (state.variant === 'D' && state.motion.dMode === 'scan') {
+        progress = (dTime % 18) / 18;
+        const pass = (dTime % 18) / 4.5;
+        scanAperture.setAttribute('transform', `translate(${(25 + Math.min(pass, 1) * 24).toFixed(3)} 36) rotate(-28)`);
+        scanLayer.style.opacity = (pass < 1 ? Math.sin(pass * Math.PI) * .6 : 0).toFixed(3);
+      } else if (state.variant === 'D' && state.motion.dMode === 'quiet') {
+        progress = (dTime % 24) / 24;
+        const slot = Math.floor(dTime / 8) % quietSegments.length;
+        const pass = (dTime % 8) / 1.8;
+        quietSegments.forEach((segment, index) => {
+          segment.style.opacity = (index === slot && pass < 1 ? Math.sin(pass * Math.PI) * .45 : 0).toFixed(3);
+        });
+      }
+      stage.dataset.dMotionTime = dTime.toFixed(3);
+      stage.dataset.dMotionProgress = progress.toFixed(4);
     }
     function drawParticles() {
       if (!context) return;
@@ -951,6 +1006,18 @@
 
     $('previous-variant').addEventListener('click', () => setVariant(-1));
     $('next-variant').addEventListener('click', () => setVariant(1));
+    $('d-motion').addEventListener('change', (event) => {
+      const mode = event.target.value;
+      if (!dMotions.includes(mode)) return;
+      const url = new URL(location.href);
+      url.searchParams.set('motion', mode);
+      history.pushState({ variant: state.variant, motion: mode }, '', url);
+      act('change-d-motion', () => {
+        state.motion.dMode = mode;
+        dMotionStartedAt = particleTime * .001;
+        applyAmbientTransforms();
+      }, `D 動態原型：${event.target.selectedOptions[0].textContent}。`);
+    });
     $('broadcast-toggle').addEventListener('click', toggleBroadcast);
     $('settings-broadcast-toggle').addEventListener('click', toggleBroadcast);
     $('motion-toggle').addEventListener('click', toggleMotion);
@@ -1012,13 +1079,19 @@
         $('broadcast-toggle').focus({ preventScroll: true });
       }
     });
-    window.addEventListener('popstate', () => act('history-variant', () => { state.variant = readVariant(); }));
+    window.addEventListener('popstate', () => act('history-navigation', () => {
+      state.variant = readVariant();
+      state.motion.dMode = readDMotion();
+      dMotionStartedAt = particleTime * .001;
+      applyAmbientTransforms();
+    }));
     window.addEventListener('resize', resizeCanvas);
     document.addEventListener('visibilitychange', () => act('visibility-change', () => { state.motion.hidden = document.hidden; }));
     reducedMotion.addEventListener('change', (event) => act('reduced-motion-change', () => { state.motion.reduced = event.matches; }));
     window.addEventListener('beforeunload', releaseMedia);
     // Small invariant checks are in-memory only; there are no persistent test artifacts.
     console.assert(variants.length === 4 && variants.every((key) => Boolean(concepts[key])), 'Every variant must have a concept.');
+    console.assert(dMotions.length === 4 && dMotions.includes(state.motion.dMode), 'D motion must resolve to one supported comparison mode.');
     console.assert(state.home === 'big' && state.broadcast === false && state.phase === 'off', 'Preview must start Big Standby with broadcast off.');
     resizeCanvas();
     render();
