@@ -67,19 +67,10 @@
     .device-name { font-size: 18px; font-weight: 400; letter-spacing: .15em; white-space: nowrap; }
     .connection-hint { position: absolute; top: calc(49% + 126px); left: 50%; transform: translateX(-50%); text-align: center; width: min(90%, 580px); color: #e0e4df; font-size: 12px; letter-spacing: .08em; }
     kbd { font: inherit; font-weight: 600; border-bottom: 1px solid #ffffff70; padding: 0 3px 3px; margin: 0 3px; }
-    /* Shift the entire standby layer and background so no UI pixel stays fixed; this is still not a burn-in guarantee. */
-    #standby-view { position: absolute; inset: 0; }
-    .oled-shift { animation: pixel-shift 48s linear infinite; }
-    .scene-pan { animation: scene-pan 24s ease-in-out infinite alternate; transform-origin: center; }
-    .mist { animation: mist-drift 24s ease-in-out infinite alternate; transform-origin: center; }
-    @keyframes pixel-shift {
-      0%,100% { transform: translate(-10px,-6px); }
-      25% { transform: translate(10px,-3px); }
-      50% { transform: translate(7px,7px); }
-      75% { transform: translate(-8px,5px); }
-    }
-    @keyframes scene-pan { from { transform: scale(1.08) translate(-1.5%,-.7%); } to { transform: scale(1.08) translate(1.5%,.7%); } }
-    @keyframes mist-drift { from { transform: translateX(-80px); opacity: .65; } to { transform: translateX(80px); opacity: .9; } }
+    /* Shift the entire standby layer and drive every backdrop via JS rAF so motion is clearly visible and unaffected by OS reduced-motion. */
+    #standby-view { position: absolute; inset: 0; will-change: transform; }
+    .oled-shift { will-change: transform; }
+    .scene-pan, .mist, .light-plane, .x-plane { transform-origin: center; }
     /* B uses perspective and negative space, not a recolored landscape. */
     .v-B { background: #100e0a; --accent: #ffe1a6; }
     .v-B .center { top: 48%; }
@@ -89,8 +80,7 @@
     .v-B .device { left: 5.2%; top: auto; bottom: 174px; transform: none; text-align: left; padding-left: 18px; border-left: 2px solid #edbc70; }
     .v-B .device-name { font-size: 23px; }
     .v-B .connection-hint { left: auto; right: 5.2%; top: auto; bottom: 176px; transform: none; text-align: right; width: 430px; }
-    .light-plane { animation: light-breathe 18s ease-in-out infinite alternate; }
-    @keyframes light-breathe { from { transform: translateX(-18px); opacity: .60; } to { transform: translateX(18px); opacity: 1; } }
+    .light-plane { opacity: .88; }
     /* C's particle annulus leaves a quiet center; it is not a data visualization. */
     .v-C { background: #080808; }
     #particle-scene { background: #080808; }
@@ -104,7 +94,7 @@
     .v-D { background: #090909; color: #f1f1ec; --accent: #fff; }
     .v-D .brand { top: 99px; padding: 11px 17px 13px 0; border-top: 1px solid #eeeeea; }
     .v-D .brand-name { font-weight: 500; letter-spacing: .16em; }
-    .v-D .center { width: 100%; top: 48%; padding: 26px 5%; background: #090909; border-top: 1px solid #eeeeea; border-bottom: 1px solid #eeeeea; }
+    .v-D .center { width: min(88%, 1240px); top: 48%; padding: 26px 5%; background: #090909; border-top: 1px solid #eeeeea; border-bottom: 1px solid #eeeeea; }
     .v-D h1 { font-size: clamp(39px, 5.8vw, 86px); font-weight: 400; letter-spacing: .12em; text-indent: 0; line-height: 1.1; }
     .v-D .status-indicator { margin-bottom: 17px; letter-spacing: .12em; font-weight: 450; }
     .v-D .status-detail { margin-top: 18px; letter-spacing: .06em; }
@@ -114,10 +104,8 @@
     .v-D .connection-hint { top: auto; bottom: 181px; left: auto; right: 5.2%; transform: none; text-align: right; width: 430px; background: #090909; padding: 12px; border-right: 1px solid #eee; }
     .hardline-caption { position: absolute; bottom: 164px; left: 5.2%; font-size: clamp(28px, 3.8vw, 55px); line-height: 1; font-weight: 400; letter-spacing: .04em; }
     .hardline-caption small { font-size: 9px; font-weight: 500; display: block; letter-spacing: .23em; margin-top: 15px; }
-    .x-plane { animation: x-shift 24s ease-in-out infinite alternate; }
-    @keyframes x-shift { from { transform: translate(-32px,16px); } to { transform: translate(32px,-16px); } }
+    .x-plane { opacity: .95; }
     .motion-stopped .ambient { animation-play-state: paused !important; }
-    .motion-reduced .ambient:not(.oled-shift) { animation-play-state: paused !important; }
     .page-hidden .custom-media { display: none; }
     .prototype-note { position: fixed; z-index: 25; left: 20px; top: 17px; color: #efefea; font-size: 10px; line-height: 1.7; letter-spacing: .04em; padding: 7px 11px; background: #101210ee; border-left: 2px solid #c9ccc3; }
     .prototype-note strong { font-size: 10px; font-weight: 650; letter-spacing: .14em; }
@@ -294,7 +282,7 @@
       .stage h1 { font-size: 32px; line-height: 1.15; }
       .stage .status-indicator { font-size: 8px; margin-bottom: 6px; letter-spacing: .12em; }
       .stage .status-detail { font-size: 11px; line-height: 1.5; margin: 6px auto 0; max-width: 90%; }
-      .stage .connection-hint { top: auto; bottom: 66px; left: 50%; right: auto; transform: translateX(-50%); width: min(92%, 600px); padding: 0; margin: 0; border: 0; font-size: 11px; line-height: 1.6; text-align: center; }
+      .stage .connection-hint { top: auto; bottom: 72px; left: 50%; right: auto; transform: translateX(-50%); width: min(92%, 600px); padding: 0; margin: 0; border: 0; font-size: 11px; line-height: 1.6; text-align: center; }
       .stage.v-D .connection-hint { padding: 4px 10px; }
       .reveal-hint { top: 12px; bottom: auto; left: auto; right: 16px; transform: none; width: 42%; margin: 0; padding: 4px 8px; background: #101310e6; font-size: 9px; text-align: right; }
       .variant-switcher { bottom: 12px; left: 16px; transform: none; padding: 4px; gap: 0; }
@@ -318,11 +306,7 @@
       .projection button { font-size: 11px; padding: 6px 12px; margin-top: 8px; }
       .toast { top: 116px; }
     }
-    /* Reduced motion pauses ambient backdrop animation while keeping a slower positional shift. */
-    @media (prefers-reduced-motion: reduce) {
-      .ambient:not(.oled-shift) { animation-play-state: paused !important; }
-      .oled-shift { animation-duration: 120s; }
-    }
+    /* Standby motion stays active unless the user explicitly pauses it. */
   </style>
 </head>
 <body>
@@ -330,6 +314,10 @@
     <defs>
       <symbol id="mirax-mark" viewBox="0 0 108 108">
         <path d="M26.1 23H31.9L51.8 42.9 43.9 50.8 26.1 32.8ZM76 23.1H81.9V32.8L64.2 50.5 56.3 43ZM26.1 73.6 44 55.7 51.7 63.5 32 83.3H26.1ZM64 55.7 82 73.6V83.4H76.1L56.2 63.4ZM54 47.5 60.2 53.4 54 59.4 47.8 53.4Z"/>
+      </symbol>
+      <symbol id="mirax-slender-x" viewBox="0 0 108 108">
+        <path d="M29.4 26.8 31.1 26.8 48.2 43.9 46.5 45.6ZM78.6 26.8 78.6 28.5 61.5 45.6 59.8 43.9ZM29.4 80.0 46.5 62.9 48.2 64.6 31.1 80.0ZM61.5 62.9 78.6 80.0 76.9 80.0 59.8 64.6Z"/>
+        <path d="M54 50.6 56.8 53.4 54 56.2 51.2 53.4Z"/>
       </symbol>
       <symbol id="settings-icon" viewBox="0 0 24 24">
         <path d="M9 3h6l.7 2.4 2 .9 2.3-.5 3 5.2-1.7 1.9v2.2l1.7 1.9-3 5.2-2.3-.5-2 .9L15 25H9l-.7-2.4-2-.9-2.3.5-3-5.2L2.7 15v-2.2L1 10.9l3-5.2 2.3.5 2-.9L9 3Z" transform="translate(1 -1) scale(.9)"/>
@@ -402,8 +390,8 @@
         <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
           <rect width="1600" height="1000" fill="#090909"/>
           <g class="ambient x-plane">
-            <use href="#mirax-mark" x="510" y="-335" width="1370" height="1370" fill="none" stroke="#d8d8d0" stroke-width=".16"/>
-            <use href="#mirax-mark" x="526" y="-323" width="1370" height="1370" fill="none" stroke="#ffffff3d" stroke-width=".08"/>
+            <use href="#mirax-slender-x" x="720" y="-40" width="840" height="840" fill="none" stroke="#d8d8d0" stroke-width=".18"/>
+            <use href="#mirax-slender-x" x="734" y="-30" width="840" height="840" fill="none" stroke="#ffffff38" stroke-width=".09"/>
           </g>
           <path d="M0 810 430 380M0 849 468 381" stroke="#777771" stroke-width="1"/>
           <path d="M58 0V1000M1542 0V1000" stroke="#ffffff21"/>
@@ -570,7 +558,7 @@
       return !state.motion.paused && !state.motion.hidden && state.home === 'big' && state.phase !== 'projecting';
     }
     function effectiveMotion() {
-      return !state.motion.paused && !state.motion.reduced && !state.motion.hidden;
+      return oledShiftActive();
     }
     function mediaIsVisible() {
       return state.home === 'big' && state.phase !== 'projecting' && state.media.status === 'ready';
@@ -663,7 +651,7 @@
         $(id).setAttribute('aria-pressed', String(state.motion.paused));
         $(id).disabled = false;
       }
-      $('motion-description').textContent = state.motion.reduced ? '系統「減少動態」開啟：保留緩慢像素位移；背景與影片已暫停。' : '背景緩動與全畫面像素位移（減緩 OLED 定點老化）';
+      $('motion-description').textContent = '整體畫面與四款背景持續緩動（減緩 OLED 定點老化；按暫停才會停下）';
       $('gif-warning').hidden = state.media.kind !== 'gif';
       $('clear-media').disabled = state.media.kind === 'none' && !state.media.error;
       $('retry-video').hidden = !state.media.playbackBlocked || state.media.kind !== 'video';
@@ -853,6 +841,13 @@
 
     const canvas = $('particle-canvas');
     const context = canvas.getContext('2d');
+    const standbyView = $('standby-view');
+    const scenePans = document.querySelectorAll('.scene-pan');
+    const mistLayer = document.querySelector('.mist');
+    const lightPlane = document.querySelector('.light-plane');
+    const xPlane = document.querySelector('.x-plane');
+    const hardlineCaption = document.querySelector('.hardline-caption');
+    const fieldCaption = document.querySelector('.field-caption');
     let canvasWidth = 0;
     let canvasHeight = 0;
     let animationFrame = null;
@@ -861,33 +856,52 @@
     let seed = 74321;
     function random() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
     const particles = Array.from({ length: 1000 }, () => ({ angle: random() * Math.PI * 2, tube: random() * Math.PI * 2, radius: .21 + random() * .17, size: .45 + random() * 1.0, alpha: .25 + random() * .65 }));
+    function applyAmbientTransforms() {
+      const t = particleTime * .001;
+      const compact = canvasHeight > 0 && canvasHeight <= 520;
+      const sx = (Math.sin(t * .75) * 20 + Math.cos(t * .31) * 7) * (compact ? .48 : 1);
+      const sy = (Math.cos(t * .58) * 13 + Math.sin(t * .27) * 5) * (compact ? .36 : 1);
+      standbyView.style.transform = `translate3d(${sx.toFixed(2)}px, ${sy.toFixed(2)}px, 0)`;
+      const px = Math.sin(t * .48) * 56;
+      const py = Math.cos(t * .39) * 28;
+      scenePans.forEach((node) => { node.setAttribute('transform', `translate(${px.toFixed(1)} ${py.toFixed(1)}) scale(1.08)`); });
+      if (mistLayer) mistLayer.setAttribute('transform', `translate(${(Math.sin(t * .68) * 150).toFixed(1)} ${(Math.cos(t * .44) * 18).toFixed(1)})`);
+      if (lightPlane) lightPlane.setAttribute('transform', `translate(${(Math.sin(t * .82) * 58).toFixed(1)} ${(Math.cos(t * .51) * 20).toFixed(1)})`);
+      if (xPlane) xPlane.setAttribute('transform', `translate(${(Math.sin(t * .64) * 72).toFixed(1)} ${(Math.cos(t * .49) * -38).toFixed(1)})`);
+      if (hardlineCaption) hardlineCaption.style.transform = `translate3d(${(sx * .75).toFixed(2)}px, ${(sy * .75).toFixed(2)}px, 0)`;
+      if (fieldCaption) fieldCaption.style.transform = `translate3d(${(sx * .75).toFixed(2)}px, ${(sy * .75).toFixed(2)}px, 0)`;
+    }
     function drawParticles() {
       if (!context) return;
       context.clearRect(0, 0, canvasWidth, canvasHeight);
       const scale = Math.max(260, Math.min(canvasWidth * .47, canvasHeight * .64));
-      const rotation = particleTime * .000045;
+      const rotation = particleTime * .00022;
+      const driftX = Math.sin(particleTime * .00055) * 26;
+      const driftY = Math.cos(particleTime * .00043) * 16;
       for (const point of particles) {
         const angle = point.angle + rotation;
-        const radius = 1 + Math.cos(point.tube) * point.radius;
+        const tube = point.tube + particleTime * .00018;
+        const radius = 1 + Math.cos(tube) * point.radius;
         const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius * .45 + Math.sin(point.tube) * point.radius * .68;
-        const depth = Math.sin(angle) * .45 + Math.cos(point.tube) * .25;
+        const y = Math.sin(angle) * radius * .45 + Math.sin(tube) * point.radius * .68;
+        const depth = Math.sin(angle) * .45 + Math.cos(tube) * .25;
         const perspective = 1 + depth * .12;
-        const screenX = canvasWidth * .50 + (x * .93 + y * .27) * scale * perspective;
-        const screenY = canvasHeight * .51 + (y * .84 - x * .27) * scale * perspective;
+        const screenX = canvasWidth * .50 + driftX + (x * .93 + y * .27) * scale * perspective;
+        const screenY = canvasHeight * .51 + driftY + (y * .84 - x * .27) * scale * perspective;
         context.beginPath();
         context.arc(screenX, screenY, Math.max(.3, point.size * (1 + depth * .3)), 0, Math.PI * 2);
         context.fillStyle = `rgba(231,231,224,${point.alpha * (.60 + depth * .3)})`;
         context.fill();
       }
     }
-    function animateParticles(time) {
+    function animateStandby(time) {
       animationFrame = null;
-      if (!shouldAnimateParticles()) { previousFrameTime = null; return; }
+      if (!oledShiftActive()) { previousFrameTime = null; return; }
       if (previousFrameTime !== null) particleTime += Math.min(time - previousFrameTime, 80);
       previousFrameTime = time;
-      drawParticles();
-      animationFrame = requestAnimationFrame(animateParticles);
+      applyAmbientTransforms();
+      if (shouldAnimateParticles()) drawParticles();
+      animationFrame = requestAnimationFrame(animateStandby);
     }
     function resizeCanvas() {
       canvasWidth = stage.clientWidth;
@@ -896,11 +910,12 @@
       canvas.width = Math.round(canvasWidth * ratio);
       canvas.height = Math.round(canvasHeight * ratio);
       if (context) context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      applyAmbientTransforms();
       drawParticles();
     }
     function syncMotion() {
-      if (shouldAnimateParticles()) {
-        if (animationFrame === null) animationFrame = requestAnimationFrame(animateParticles);
+      if (oledShiftActive()) {
+        if (animationFrame === null) animationFrame = requestAnimationFrame(animateStandby);
       } else if (animationFrame !== null) {
         cancelAnimationFrame(animationFrame);
         animationFrame = null;
