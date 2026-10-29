@@ -1,9 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 108 108" role="img" aria-labelledby="title description">
     <title id="title">Mirax</title>
-    <desc id="description">Opposing display edges frame a mirrored crossing.</desc>
+    <desc id="description">Opposing display edges frame the segmented C-theme X.</desc>
     <rect width="108" height="108" fill="#121418" />
     <path
-        d="M40,36 H30 V72 H40 M68,36 H78 V72 H68 M44,42 L64,66 M64,42 L44,66"
+        d="M40,36 H30 V72 H40 M68,36 H78 V72 H68"
         fill="none" stroke="#FFFFFF" stroke-width="5"
         stroke-linecap="round" stroke-linejoin="round" />
+    <g transform="translate(31.299 31.656) scale(.42)" fill="#FFFFFF">
+        <path d="M26.1 23H31.9L51.8 42.9 43.9 50.8 26.1 32.8Z M76 23.1H81.9V32.8L64.2 50.5 56.3 43Z M26.1 73.6 44 55.7 51.7 63.5 32 83.3H26.1Z M64 55.7 82 73.6V83.4H76.1L56.2 63.4Z M54 47.5 60.2 53.4 54 59.4 47.8 53.4Z" />
+    </g>
 </svg>

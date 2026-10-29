@@ -10,5 +10,14 @@
         android:strokeWidth="2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M7,5 H4 V19 H7 M17,5 H20 V19 H17 M9,8 L15,16 M15,8 L9,16" />
+        android:pathData="M7,5 H4 V19 H7 M17,5 H20 V19 H17" />
+    <group
+        android:scaleX=".14"
+        android:scaleY=".14"
+        android:translateX="4.433"
+        android:translateY="4.552">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M26.1 23H31.9L51.8 42.9 43.9 50.8 26.1 32.8Z M76 23.1H81.9V32.8L64.2 50.5 56.3 43Z M26.1 73.6 44 55.7 51.7 63.5 32 83.3H26.1Z M64 55.7 82 73.6V83.4H76.1L56.2 63.4Z M54 47.5 60.2 53.4 54 59.4 47.8 53.4Z" />
+    </group>
 </vector>
