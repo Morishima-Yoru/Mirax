@@ -25,7 +25,10 @@ public class HelperWmSizeTest {
         try {
             assertEquals("", Helper.readWmSize(stalled));
             assertFalse(stalled.isAlive());
-            assertEquals("size 2176x1812", Helper.readWmSize(startChild("reply")));
+            // Keep the reply ready so this assertion does not time a cold JVM startup.
+            Process ready = new HeldPipeProcess(new ByteArrayInputStream(
+                    "size 2176x1812\n".getBytes(StandardCharsets.UTF_8)));
+            assertEquals("size 2176x1812", Helper.readWmSize(ready));
         } finally {
             if (stalled.isAlive()) stalled.destroyForcibly();
         }
