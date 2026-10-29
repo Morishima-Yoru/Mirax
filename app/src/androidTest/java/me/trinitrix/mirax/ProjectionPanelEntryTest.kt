@@ -98,6 +98,64 @@ class ProjectionPanelEntryTest {
         }
     }
 
+    /** Debug content relayout must not reset a held contact when the viewport has not changed. */
+    @Test
+    fun debugOverlayRelayout_preservesActiveDrag_inUnchangedViewport() = withHiddenPanel { scenario ->
+        val app = ApplicationProvider.getApplicationContext<MiraxApp>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val originalDebug = app.session.snapshot().showDebugOverlay
+        val viewport = Rect()
+        var heldX = 0f
+        var heldY = 0f
+        var pointerX = 0f
+        var pointerY = 0f
+        try {
+            scenario.onActivity {
+                app.session.handle(SessionAction.SetShowDebugOverlay(true))
+                PictureActivity.refreshIfShowing()
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                val stage = activity.findViewById<FrameLayout>(android.R.id.content).getChildAt(0) as FrameLayout
+                val button = controlButton(stage)
+                val layer = button.parent as ProjectionControlsLayer
+                viewport.set(layer.left, layer.top, layer.right, layer.bottom)
+                sendMotion(stage, MotionEvent.ACTION_DOWN,
+                    button.x + button.width - MiraxUi.dp(activity, 4), button.y + button.height / 2)
+                pointerX = stage.width * 0.6f
+                pointerY = stage.height * 0.45f
+                sendMotion(stage, MotionEvent.ACTION_MOVE, pointerX, pointerY)
+                heldX = button.x
+                heldY = button.y
+                layer.children.filterIsInstance<DebugOverlayView>().single().updateFrameTree(
+                    listOf(DebugOverlayView.FrameNode("Decoder", 1280, 720)),
+                )
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                val stage = activity.findViewById<FrameLayout>(android.R.id.content).getChildAt(0) as FrameLayout
+                val button = controlButton(stage)
+                val layer = button.parent as ProjectionControlsLayer
+                assertThat(Rect(layer.left, layer.top, layer.right, layer.bottom)).isEqualTo(viewport)
+                assertThat(button.x).isWithin(1f).of(heldX)
+                assertThat(button.y).isWithin(1f).of(heldY)
+                val shift = MiraxUi.dp(activity, 20).toFloat()
+                sendMotion(stage, MotionEvent.ACTION_MOVE, pointerX + shift, pointerY + shift)
+                assertThat(button.x).isWithin(1f).of(heldX + shift)
+                assertThat(button.y).isWithin(1f).of(heldY + shift)
+                sendMotion(stage, MotionEvent.ACTION_UP, pointerX + shift, pointerY + shift)
+                assertThat(app.session.snapshot().controlPanelExpanded).isFalse()
+            }
+        } finally {
+            scenario.onActivity { activity ->
+                val stage = activity.findViewById<FrameLayout>(android.R.id.content).getChildAt(0) as FrameLayout
+                sendMotion(stage, MotionEvent.ACTION_CANCEL, pointerX, pointerY)
+                app.session.handle(SessionAction.SetShowDebugOverlay(originalDebug))
+                PictureActivity.refreshIfShowing()
+            }
+        }
+    }
+
     /** Reserve the whole movement plane before dragging, not a moving compositor crop. */
     @Test
     fun dragging_reservesStableViewport_andRendersBeforePointerUp() = withHiddenPanel { scenario ->

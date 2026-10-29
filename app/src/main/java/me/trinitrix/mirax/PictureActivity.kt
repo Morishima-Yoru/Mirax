@@ -193,7 +193,11 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
             onPositionChanged = { endCoveredContacts() }
         }
         phoneControls.addView(controlButton)
-        phoneControls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> controlButton.constrainToParent() }
+        phoneControls.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (left != oldLeft || top != oldTop || right != oldRight || bottom != oldBottom) {
+                controlButton.constrainToParent()
+            }
+        }
 
         buildControlPanel()
         stage.addView(
