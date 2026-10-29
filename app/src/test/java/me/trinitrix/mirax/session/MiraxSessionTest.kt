@@ -1531,6 +1531,7 @@ class MiraxSessionTest {
         assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
     }
 
+    /** Recover a connected picture when its initial launch was consumed without presentation. */
     @Test
     fun connected_openedDashboard_beforePicturePresented_retriesConsumedLaunch() {
         val session = connectedSession()
@@ -1542,6 +1543,7 @@ class MiraxSessionTest {
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
     }
 
+    /** Never launch a picture after its connection has ended. */
     @Test
     fun disconnected_openedDashboard_doesNotLaunchPicture() {
         val session = connectedSession()
@@ -1553,6 +1555,7 @@ class MiraxSessionTest {
         assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
     }
 
+    /** Keep repeated PLAY events from relaunching or ending an already-playing connection. */
     @Test
     fun connected_duplicatePlay_doesNotRelaunchPicture() {
         val session = connectedSession()
@@ -1564,6 +1567,7 @@ class MiraxSessionTest {
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
     }
 
+    /** Leave the dashboard visible after the connected picture has already been presented. */
     @Test
     fun connected_openedDashboard_afterPicturePresented_doesNotStealSettings() {
         val session = connectedSession()
@@ -1576,6 +1580,7 @@ class MiraxSessionTest {
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
     }
 
+    /** Hide the home-screen ball on presentation without requesting another launch. */
     @Test
     fun connected_projectionPresented_hidesBall_withoutLaunchingAgain() {
         val session = connectedSession()
@@ -1591,6 +1596,7 @@ class MiraxSessionTest {
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
     }
 
+    /** Retry a new connection even when the preceding picture was already presented. */
     @Test
     fun nextConnection_openedDashboard_retriesEvenWhenPreviousPictureWasPresented() {
         val session = connectedSession()

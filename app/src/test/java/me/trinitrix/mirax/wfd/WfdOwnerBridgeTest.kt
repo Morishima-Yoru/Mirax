@@ -369,6 +369,7 @@ class WfdOwnerBridgeTest {
         assertThat(ioTasks).isEmpty()
     }
 
+    /** Dispatch only the fixed helper launch command through the IO worker. */
     @Test
     fun projectionLaunch_isOffMain_andUsesOnlyFixedHelperCommand() {
         val ioTasks = ArrayDeque<Runnable>()
@@ -392,6 +393,7 @@ class WfdOwnerBridgeTest {
         assertThat(calls).containsExactly("SHOW_PROJECTION")
     }
 
+    /** Recheck connection validity when a queued launch reaches its worker. */
     @Test
     fun projectionLaunch_rechecksSessionGuard_onWorker() {
         val ioTasks = ArrayDeque<Runnable>()
@@ -408,6 +410,7 @@ class WfdOwnerBridgeTest {
         assertThat(calls).isEmpty()
     }
 
+    /** Drop a queued launch when another privileged owner has taken over. */
     @Test
     fun projectionLaunch_dropsRequest_whenCapturedOwnerIsNoLongerCurrent() {
         val context = ContextWrapper(null)
@@ -424,6 +427,7 @@ class WfdOwnerBridgeTest {
         assertThat(calls).isEmpty()
     }
 
+    /** Recheck the captured owner after evaluating the connection guard. */
     @Test
     fun projectionLaunch_checksOwner_afterEvaluatingSessionGuard() {
         val context = ContextWrapper(null)
@@ -442,6 +446,7 @@ class WfdOwnerBridgeTest {
         assertThat(calls).isEmpty()
     }
 
+    /** Keep later launches usable after helper rejection, a missing reply, or an exception. */
     @Test
     fun projectionLaunch_rejectionMissingReplyAndExceptions_doNotPreventNextRequest() {
         val ioTasks = ArrayDeque<Runnable>()
@@ -471,6 +476,7 @@ class WfdOwnerBridgeTest {
         )
     }
 
+    /** Never substitute the helper when the selected owner or Shizuku service is unavailable. */
     @Test
     fun projectionLaunch_withoutOwnerOrShizukuService_doesNotFallbackToHelper() {
         val ioTasks = ArrayDeque<Runnable>()
@@ -487,6 +493,7 @@ class WfdOwnerBridgeTest {
         assertThat(calls).isEmpty()
     }
 
+    /** Use only the selected Shizuku owner across launch failure or owner changes. */
     @Test
     fun projectionLaunch_usesShizuku_withoutFallbackAfterFailureOrOwnerChange() {
         val context = ContextWrapper(null)
