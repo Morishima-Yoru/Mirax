@@ -104,6 +104,89 @@ class WfdProtocolTest {
         }
     }
 
+    /** Verifies a 320 kHz portrait timing stays offered without an invalid EDID 1.3 range. */
+    @Test
+    fun m3Portrait240HzKeepsCustomOfferWithoutUnrepresentableEdid13() {
+        val mode = VideoMode(720, 1280, 240)
+        val session = RtspSinkSession(WfdCapabilityTable(setOf(mode), mode, "Mirax"))
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "microsoft_custom_video_formats\r\nwfd_display_edid\r\n",
+        ).single()
+        assertThat(response).contains("microsoft_custom_video_formats: 02D0 0500 00F0\r\n")
+        assertThat(response).contains("wfd_display_edid: none\r\n")
+
+        session.handle(
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 3\r\n\r\n" +
+                "microsoft_custom_video_formats: 02D0 0500 00F0\r\n",
+        )
+        assertThat(session.selectedMode).isEqualTo(mode)
+    }
+
+    /** Verifies unrepresentable dimensions, pixel clocks, and vertical limits never wrap. */
+    @Test
+    fun m3OmitsEdidForUnrepresentableDtdOrRangeFields() {
+        val modes = listOf(
+            VideoMode(4096, 256, 240),
+            VideoMode(65520, 1, 240),
+            VideoMode(1280, 720, 256),
+            VideoMode(4095, 2048, 120),
+            VideoMode(256, 4095, 240),
+            VideoMode(41, 1988, 125),
+            VideoMode(1280, 720, 255),
+        )
+        for (mode in modes) {
+            val session = RtspSinkSession(WfdCapabilityTable(setOf(mode), mode, "Mirax"))
+            val response = session.handle(
+                "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                    "wfd_display_edid\r\n",
+            ).single()
+            assertThat(response).contains("wfd_display_edid: none\r\n")
+        }
+    }
+
+    /** Verifies EDID 1.3 ranges include the encoded, 10 kHz-quantized DTD timing. */
+    @Test
+    fun m3RepresentableEdid13RangesIncludeQuantizedPreferredTiming() {
+        val cases = listOf(
+            VideoMode(4095, 256, 240) to 31453,
+            VideoMode(40, 1988, 125) to 5100,
+            VideoMode(1280, 720, 240) to 26680,
+            VideoMode(2160, 1440, 24) to 8307,
+            foldPreferred to 26126,
+            VideoMode(1, 1, 24) to 20,
+        )
+        for ((mode, expectedClock) in cases) {
+            val session = RtspSinkSession(WfdCapabilityTable(setOf(mode), mode, "Mirax"))
+            val response = session.handle(
+                "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                    "wfd_display_edid\r\n",
+            ).single()
+            assertThat(response).contains("wfd_display_edid: 0001 ")
+            val edid = response.lineSequence().first { it.startsWith("wfd_display_edid:") }
+                .substringAfter("0001 ").trim().chunked(2).map { it.toInt(16) }
+            assertThat(edid).hasSize(128)
+            assertThat(edid.subList(18, 20)).containsExactly(1, 3).inOrder()
+            val width = edid[56] or ((edid[58] shr 4) shl 8)
+            val height = edid[59] or ((edid[61] shr 4) shl 8)
+            assertThat(width).isEqualTo(mode.width)
+            assertThat(height).isEqualTo(mode.height)
+            val clock = edid[54] or (edid[55] shl 8)
+            assertThat(clock).isEqualTo(expectedClock)
+            val horizontalTotal = width + (edid[57] or ((edid[58] and 0x0F) shl 8))
+            val verticalTotal = height + (edid[60] or ((edid[61] and 0x0F) shl 8))
+            val frameTotal = horizontalTotal.toLong() * verticalTotal
+            val clockHz = clock * 10_000L
+            assertThat(edid[93]).isEqualTo(0xFD)
+            assertThat(clockHz).isAtLeast(edid[95] * frameTotal)
+            assertThat(clockHz).isAtMost(edid[96] * frameTotal)
+            assertThat(clockHz).isAtLeast(edid[97] * 1_000L * horizontalTotal)
+            assertThat(clockHz).isAtMost(edid[98] * 1_000L * horizontalTotal)
+            assertThat(clockHz).isAtMost(edid[99] * 10_000_000L)
+            assertThat(edid.sum() and 0xFF).isEqualTo(0)
+        }
+    }
+
     /** Verifies high custom Hz does not remove the existing interactive 30 Hz preference. */
     @Test
     fun interactiveHighRefreshOffer_retains30HzEdidPreference() {

@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wfd.rtsp
 
+import android.util.Log
 import me.trinitrix.mirax.session.VideoMode
 import java.nio.charset.StandardCharsets
 
@@ -24,7 +25,27 @@ object WfdEdid {
         return ((hz + 5000L) / 10000L).toInt()
     }
 
-    fun block(mode: VideoMode, monitorName: String = "Mirax"): ByteArray {
+    /**
+     * Builds one EDID 1.3 block for a representable timing.
+     *
+     * @param mode preferred timing to encode
+     * @param monitorName display name for the monitor descriptor
+     * @return the 128-byte EDID block
+     * @throws IllegalArgumentException when the timing cannot fit EDID 1.3
+     */
+    fun block(mode: VideoMode, monitorName: String = "Mirax"): ByteArray =
+        requireNotNull(encodeBlock(mode, monitorName)) { "Mode cannot be represented in EDID 1.3: ${mode.format()}" }
+
+    /**
+     * Builds the existing EDID revision only when all fields can represent the timing.
+     *
+     * @param mode preferred timing to encode
+     * @param monitorName display name for the monitor descriptor
+     * @return the EDID block, or null when the timing cannot be represented
+     */
+    private fun encodeBlock(mode: VideoMode, monitorName: String): ByteArray? {
+        if (mode.width !in 1..4095 || mode.height !in 1..4095 || mode.refreshHz !in 1..255) return null
+        if (pixelClock10kHz(mode) !in 1..0xFFFF) return null
         val e = ByteArray(128)
         e[0] = 0x00
         e[1] = 0xFF.toByte()
@@ -65,7 +86,7 @@ object WfdEdid {
         }
         putTiming(e, 54, mode)
         putDescriptor(e, 72, 0xFC.toByte(), monitorName.take(13))
-        putRange(e, 90, mode)
+        if (!putRange(e, 90, mode)) return null
         putDescriptorHeader(e, 108, 0x10.toByte())
         var sum = 0
         for (idx in 0 until 127) {
@@ -75,8 +96,18 @@ object WfdEdid {
         return e
     }
 
+    /**
+     * Encodes a wire parameter without advertising a contradictory EDID.
+     *
+     * @param mode preferred timing to encode
+     * @param monitorName display name for the monitor descriptor
+     * @return one EDID 1.3 block, or the WFD none value when it cannot be represented
+     */
     fun parameterValue(mode: VideoMode, monitorName: String = "Mirax"): String {
-        val block = block(mode, monitorName)
+        val block = encodeBlock(mode, monitorName) ?: run {
+            Log.w("WfdEdid", "Omitting unrepresentable EDID 1.3 timing ${mode.format()}")
+            return "none"
+        }
         val hex = StringBuilder(5 + block.size * 2)
         hex.append("0001 ")
         for (b in block) {
@@ -139,18 +170,32 @@ object WfdEdid {
      * @param e EDID block to update
      * @param o range descriptor offset
      * @param mode preferred timing that the range must include
+     * @return whether every range field fits EDID 1.3 without wrapping
      */
-    private fun putRange(e: ByteArray, o: Int, mode: VideoMode) {
-        val horizontalHz = (mode.height + V_BLANK).toLong() * mode.refreshHz
+    private fun putRange(e: ByteArray, o: Int, mode: VideoMode): Boolean {
+        val clock = pixelClock10kHz(mode).toLong()
+        val clockHz = clock * 10_000L
+        val horizontalTotal = (mode.width + H_BLANK).toLong()
+        val frameTotal = horizontalTotal * (mode.height + V_BLANK)
+        val horizontalKhzDivisor = horizontalTotal * 1_000L
+        // Round limits outward from the DTD's quantized pixel clock, not the requested Hz.
+        val limits = longArrayOf(
+            minOf(30L, clockHz / frameTotal),
+            maxOf(75L, (clockHz + frameTotal - 1) / frameTotal),
+            minOf(50L, clockHz / horizontalKhzDivisor),
+            maxOf(120L, (clockHz + horizontalKhzDivisor - 1) / horizontalKhzDivisor),
+            maxOf(27L, (clock + 999L) / 1_000L),
+        )
+        // EDID 1.3 requires this descriptor; 1.4 range offsets cannot be used here.
+        if (limits.any { it !in 1L..255L }) return false
         putDescriptorHeader(e, o, 0xFD.toByte())
-        e[o + 5] = minOf(30, mode.refreshHz).toByte()
-        e[o + 6] = maxOf(75, mode.refreshHz).toByte()
-        e[o + 7] = minOf(50L, horizontalHz / 1_000L).toByte()
-        e[o + 8] = maxOf(120L, (horizontalHz + 999L) / 1_000L).toByte()
-        e[o + 9] = maxOf(27, (pixelClock10kHz(mode) + 999) / 1_000).toByte()
+        for ((index, limit) in limits.withIndex()) {
+            e[o + 5 + index] = limit.toByte()
+        }
         e[o + 11] = 0x0A
         for (i in 12 until 18) {
             e[o + i] = 0x20
         }
+        return true
     }
 }
