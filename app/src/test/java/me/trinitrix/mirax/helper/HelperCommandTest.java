@@ -1,11 +1,13 @@
 package me.trinitrix.mirax.helper;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
@@ -97,6 +99,56 @@ public class HelperCommandTest {
     @Test
     public void completeCommand_isAccepted() throws Exception {
         assertEquals("UID", Helper.readCommand(bytes("UID\n")));
+    }
+
+    /** The exact no-argument command reaches only the fixed launcher. */
+    @Test
+    public void showProjection_withoutArgumentsLaunchesAndAcknowledges() throws Exception {
+        ByteArrayOutputStream response = new ByteArrayOutputStream();
+        AtomicInteger launches = new AtomicInteger();
+        Helper.handleCommand(Helper.readCommand(bytes("SHOW_PROJECTION\n")), response,
+                launches::incrementAndGet);
+        assertEquals(1, launches.get());
+        assertEquals("OK\n", response.toString(StandardCharsets.UTF_8));
+    }
+
+    /** Prefixes, whitespace, targets, flags, and shell syntax cannot broaden the command. */
+    @Test
+    public void showProjection_withArgumentsOrDifferentSpellingIsRejected() throws Exception {
+        AtomicInteger launches = new AtomicInteger();
+        for (String command : new String[] {
+                "show_projection", "SHOW_PROJECTION_EXTRA", " SHOW_PROJECTION",
+                "SHOW_PROJECTION ", "SHOW_PROJECTION\t",
+                "SHOW_PROJECTION me.trinitrix.mirax/.PictureActivity",
+                "SHOW_PROJECTION\tother.package/.Activity",
+                "SHOW_PROJECTION --user 0", "SHOW_PROJECTION -f 0",
+                "SHOW_PROJECTION; id",
+        }) {
+            ByteArrayOutputStream response = new ByteArrayOutputStream();
+            Helper.handleCommand(command, response, launches::incrementAndGet);
+            assertEquals(command, "ERR unknown\n", response.toString(StandardCharsets.UTF_8));
+        }
+        assertEquals(0, launches.get());
+    }
+
+    /** Failed launches must not send the success acknowledgement. */
+    @Test
+    public void showProjection_launchFailureDoesNotAcknowledge() {
+        ByteArrayOutputStream response = new ByteArrayOutputStream();
+        assertThrows(IllegalStateException.class, () -> Helper.handleCommand(
+                "SHOW_PROJECTION", response, () -> {
+                    throw new IllegalStateException("am start failed");
+                }));
+        assertEquals(0, response.size());
+    }
+
+    /** The command never routes to a private activity or accepts an arbitrary user or intent. */
+    @Test
+    public void projectionLaunchCommand_hasFixedTargetCurrentUserAndFlags() {
+        assertArrayEquals(new String[] {
+                "/system/bin/am", "start", "--user", "current",
+                "-n", "me.trinitrix.mirax/.MainActivity", "-f", "0x30020000",
+        }, Helper.projectionLaunchCommand());
     }
 
     /** A disconnected client must not execute its unfinished command. */

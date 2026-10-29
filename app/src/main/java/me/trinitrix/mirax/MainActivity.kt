@@ -263,6 +263,19 @@ class MainActivity : AppCompatActivity() {
         scheduleAutoWaitIfFrozen()
     }
 
+    /**
+     * Retry an unseen picture when the launcher reuses the already-started dashboard.
+     *
+     * @param intent latest launcher intent
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (showing) {
+            render(SessionHost.openedMiraxDashboard(this))
+        }
+    }
+
     override fun onStop() {
         handler.removeCallbacks(autoWaitRunnable)
         if (instance === this) {

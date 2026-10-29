@@ -58,6 +58,7 @@ object SessionHost {
     private val calibrationInFlightCount = AtomicInteger(0)
     private val provisioningReadInFlight = AtomicBoolean(false)
     private val useThisScreenGeneration = AtomicInteger(0)
+    private val projectionLaunchGeneration = AtomicInteger(0)
 
     internal var ioRunner: (Runnable) -> Unit = { task -> calibrationScope.launch { task.run() } }
     internal var mainPoster: (Runnable) -> Unit = { task -> mainHandler.post(task) }
@@ -68,6 +69,7 @@ object SessionHost {
      * Reset asynchronous calibration state and restore production seams for unit tests.
      */
     internal fun resetForTests() {
+        projectionLaunchGeneration.incrementAndGet()
         calibrationInFlightCount.set(0)
         provisioningReadInFlight.set(false)
         useThisScreenGeneration.incrementAndGet()
@@ -155,6 +157,9 @@ object SessionHost {
      */
     private fun commitInternal(appContext: Context, allowProvisioningRead: Boolean): SessionSnapshot {
         val session = MiraxApp.instance.session
+        if (!session.snapshot().showPicture) {
+            projectionLaunchGeneration.incrementAndGet()
+        }
         WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
         if (allowProvisioningRead) {
             maybeScheduleProvisioningWmSize(
@@ -177,6 +182,9 @@ object SessionHost {
             },
             applyEffects = { snapshot -> applyEffects(appContext, snapshot) },
             publish = { snapshot ->
+                if (!snapshot.showPicture) {
+                    projectionLaunchGeneration.incrementAndGet()
+                }
                 SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
                 SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
                 WifiRadio.sync(appContext, snapshot.advertisingEnabled)
@@ -351,6 +359,18 @@ object SessionHost {
     fun openedMiraxDashboard(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
         session.handle(SessionAction.OpenedMiraxDashboard)
+        return commit(context)
+    }
+
+    /**
+     * Confirm a resumed projection and cancel any queued background launch for it.
+     *
+     * @param context resumed projection activity
+     * @return current connected picture state
+     */
+    fun projectionPresented(context: Context): SessionSnapshot {
+        projectionLaunchGeneration.incrementAndGet()
+        MiraxApp.instance.session.handle(SessionAction.ProjectionPresented)
         return commit(context)
     }
 
@@ -585,16 +605,24 @@ object SessionHost {
             consumed = true
         }
         if (SessionEffect.BringProjectionToFront in snapshot.effects) {
-            context.applicationContext.startActivity(
-                Intent(
-                    context.applicationContext,
-                    PictureActivity::class.java,
-                ).addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
-                ),
-            )
+            val generation = projectionLaunchGeneration.incrementAndGet()
+            if (MainActivity.isShowing() || PictureActivity.current()?.hasWindowFocus() == true) {
+                context.applicationContext.startActivity(
+                    Intent(
+                        context.applicationContext,
+                        PictureActivity::class.java,
+                    ).addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+                    ),
+                )
+            } else {
+                // A foreground service alone does not exempt background activity launches.
+                WfdOwnerBridge.bringProjectionToFront {
+                    projectionLaunchGeneration.get() == generation
+                }
+            }
             consumed = true
         }
         if (SessionEffect.PromptEnableWifi in snapshot.effects) {

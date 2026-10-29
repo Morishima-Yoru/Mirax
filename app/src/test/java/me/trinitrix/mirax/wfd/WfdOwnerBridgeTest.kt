@@ -369,6 +369,152 @@ class WfdOwnerBridgeTest {
         assertThat(ioTasks).isEmpty()
     }
 
+    @Test
+    fun projectionLaunch_isOffMain_andUsesOnlyFixedHelperCommand() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        var guardChecks = 0
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.helperExchange = { command, readAll ->
+            assertThat(readAll).isFalse()
+            calls += command
+            "OK"
+        }
+        WfdOwnerBridge.syncOwner(ContextWrapper(null), WfdOwner.HELPER)
+
+        WfdOwnerBridge.bringProjectionToFront { guardChecks++; true }
+        assertThat(calls).isEmpty()
+        assertThat(guardChecks).isEqualTo(0)
+        assertThat(ioTasks).hasSize(1)
+        ioTasks.removeFirst().run()
+
+        assertThat(guardChecks).isEqualTo(1)
+        assertThat(calls).containsExactly("SHOW_PROJECTION")
+    }
+
+    @Test
+    fun projectionLaunch_rechecksSessionGuard_onWorker() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        var connected = true
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+        WfdOwnerBridge.syncOwner(ContextWrapper(null), WfdOwner.HELPER)
+
+        WfdOwnerBridge.bringProjectionToFront { connected }
+        connected = false
+        ioTasks.removeFirst().run()
+
+        assertThat(calls).isEmpty()
+    }
+
+    @Test
+    fun projectionLaunch_dropsRequest_whenCapturedOwnerIsNoLongerCurrent() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+        WfdOwnerBridge.syncOwner(context, WfdOwner.HELPER)
+
+        WfdOwnerBridge.bringProjectionToFront { true }
+        WfdOwnerBridge.syncOwner(context, WfdOwner.NONE)
+        ioTasks.removeFirst().run()
+
+        assertThat(calls).isEmpty()
+    }
+
+    @Test
+    fun projectionLaunch_checksOwner_afterEvaluatingSessionGuard() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+        WfdOwnerBridge.syncOwner(context, WfdOwner.HELPER)
+
+        WfdOwnerBridge.bringProjectionToFront {
+            WfdOwnerBridge.syncOwner(context, WfdOwner.NONE)
+            true
+        }
+        ioTasks.removeFirst().run()
+
+        assertThat(calls).isEmpty()
+    }
+
+    @Test
+    fun projectionLaunch_rejectionMissingReplyAndExceptions_doNotPreventNextRequest() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.syncOwner(ContextWrapper(null), WfdOwner.HELPER)
+
+        for (response in listOf("ERR unknown", null)) {
+            WfdOwnerBridge.helperExchange = { command, _ -> calls += command; response }
+            WfdOwnerBridge.bringProjectionToFront { true }
+            ioTasks.removeFirst().run()
+        }
+        WfdOwnerBridge.helperExchange = { command, _ ->
+            calls += command
+            throw java.io.IOException("helper disconnected")
+        }
+        WfdOwnerBridge.bringProjectionToFront { true }
+        ioTasks.removeFirst().run()
+        WfdOwnerBridge.bringProjectionToFront { throw IllegalStateException("session unavailable") }
+        ioTasks.removeFirst().run()
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+        WfdOwnerBridge.bringProjectionToFront { true }
+        ioTasks.removeFirst().run()
+
+        assertThat(calls).containsExactly(
+            "SHOW_PROJECTION", "SHOW_PROJECTION", "SHOW_PROJECTION", "SHOW_PROJECTION",
+        )
+    }
+
+    @Test
+    fun projectionLaunch_withoutOwnerOrShizukuService_doesNotFallbackToHelper() {
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+
+        for (owner in listOf(WfdOwner.NONE, WfdOwner.SHIZUKU)) {
+            WfdOwnerBridge.syncOwner(ContextWrapper(null), owner)
+            WfdOwnerBridge.bringProjectionToFront { true }
+            ioTasks.removeFirst().run()
+        }
+
+        assertThat(calls).isEmpty()
+    }
+
+    @Test
+    fun projectionLaunch_usesShizuku_withoutFallbackAfterFailureOrOwnerChange() {
+        val context = ContextWrapper(null)
+        val ioTasks = ArrayDeque<Runnable>()
+        val calls = mutableListOf<String>()
+        var failLaunch = false
+        WfdOwnerBridge.ioRunner = { ioTasks.addLast(it) }
+        WfdOwnerBridge.helperExchange = { command, _ -> calls += command; "OK" }
+        WfdOwnerBridge.shizukuProjectionLauncher = {
+            calls += "SHIZUKU_SHOW_PROJECTION"
+            if (failLaunch) throw IllegalStateException("binder disconnected")
+        }
+        WfdOwnerBridge.syncOwner(context, WfdOwner.SHIZUKU)
+
+        for (fail in listOf(false, true, false)) {
+            failLaunch = fail
+            WfdOwnerBridge.bringProjectionToFront { true }
+            ioTasks.removeFirst().run()
+        }
+        WfdOwnerBridge.bringProjectionToFront { true }
+        WfdOwnerBridge.syncOwner(context, WfdOwner.HELPER)
+        ioTasks.removeFirst().run()
+
+        assertThat(calls).containsExactly(
+            "SHIZUKU_SHOW_PROJECTION", "SHIZUKU_SHOW_PROJECTION", "SHIZUKU_SHOW_PROJECTION",
+        )
+    }
+
     /**
      * Stand-in for the privileged owner process: records the command the
      * session emits without touching WifiP2pManager.

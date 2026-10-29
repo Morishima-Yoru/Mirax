@@ -29,7 +29,7 @@ import java.util.function.IntUnaryOperator;
 
 /**
  * Privileged helper process. Listens on the abstract {@code mirax-helper} socket
- * and applies WFD advertise / wm-size commands. Never starts Shizuku.
+ * for WFD, wm-size, and fixed activity launch commands. Never starts Shizuku.
  *
  * Typical start on a rooted device (from Mirax via {@code su}):
  * {@code CLASSPATH=<installed-apk> app_process /system/bin me.trinitrix.mirax.helper.Helper}
@@ -49,12 +49,12 @@ public final class Helper {
 
     /** Maximum concurrent clients; the fifth connection is rejected instead of queued. */
     static final int MAX_CLIENTS = 4;
-    /** Cap for wm-size output; keeps a rogue child from growing the helper heap. */
-    static final int WM_OUTPUT_LIMIT_BYTES = 8 * 1024;
-    /** Bounded wait for one wm-size query before the child is killed. */
-    static final int WM_TIMEOUT_MS = 3000;
+    /** Cap for subprocess output; keeps a rogue child from growing the helper heap. */
+    static final int PROCESS_OUTPUT_LIMIT_BYTES = 8 * 1024;
+    /** Bounded wait for one privileged subprocess before the child is killed. */
+    static final int PROCESS_TIMEOUT_MS = 3000;
     /** Poll step while waiting for staged pipe bytes or child exit. */
-    static final int WM_POLL_MS = 20;
+    static final int PROCESS_POLL_MS = 20;
     /** Client worker threads; SynchronousQueue gives zero queueing and fast reject. */
     private static final AtomicInteger CLIENT_SEQUENCE = new AtomicInteger(0);
     private static final ThreadPoolExecutor CLIENTS = new ThreadPoolExecutor(
@@ -282,14 +282,30 @@ public final class Helper {
     }
 
     private static void handleClient(LocalSocket client) throws Exception {
-        String line = readCommand(client.getInputStream());
-        OutputStream out = client.getOutputStream();
+        handleCommand(readCommand(client.getInputStream()), client.getOutputStream(),
+                Helper::bringProjectionToFront);
+    }
+
+    /**
+     * Dispatches one authorized frame; projection launch accepts no target or arguments.
+     *
+     * @param line complete command frame without the newline
+     * @param out response stream
+     * @param showProjection fixed no-argument launcher
+     * @throws Exception when command execution or response writing fails
+     */
+    static void handleCommand(String line, OutputStream out, Runnable showProjection) throws Exception {
         if ("UID".equals(line)) {
             writeLine(out, Integer.toString(android.os.Process.myUid()));
             return;
         }
         if ("STOP".equals(line)) {
             stopProcess();
+            writeLine(out, "OK");
+            return;
+        }
+        if ("SHOW_PROJECTION".equals(line)) {
+            showProjection.run();
             writeLine(out, "OK");
             return;
         }
@@ -350,6 +366,41 @@ public final class Helper {
     }
 
     /**
+     * Starts only Mirax's exported entry activity as the current privileged process.
+     *
+     * @throws IllegalStateException when the bounded launch fails or is interrupted
+     */
+    public static void bringProjectionToFront() {
+        try {
+            Process process = new ProcessBuilder(projectionLaunchCommand())
+                    .redirectErrorStream(true).start();
+            String output = readProcessOutput(process, "show projection");
+            if (output.isEmpty() || process.isAlive() || process.exitValue() != 0
+                    || output.contains("Error") || output.contains("Exception")) {
+                throw new IOException("am start failed: " + output);
+            }
+            Log.i(TAG, "show projection: " + output);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "show projection interrupted", err);
+            throw new IllegalStateException("show projection interrupted", err);
+        } catch (Exception err) {
+            Log.w(TAG, "show projection failed", err);
+            throw new IllegalStateException("show projection failed", err);
+        }
+    }
+
+    /** @return fixed argv with no caller-controlled target, user, flags, or extras */
+    static String[] projectionLaunchCommand() {
+        return new String[] {
+                "/system/bin/am", "start", "--user", "current",
+                "-n", "me.trinitrix.mirax/.MainActivity",
+                // NEW_TASK | SINGLE_TOP | REORDER_TO_FRONT; PictureActivity remains internal.
+                "-f", "0x30020000",
+        };
+    }
+
+    /**
      * Run the {@code wm size} query as the current (shell) process.
      *
      * @param displayId display to query, or a negative value for plain {@code wm size}
@@ -373,15 +424,7 @@ public final class Helper {
     }
 
     /**
-     * Reads the output of a wm-size child process with a bounded poll loop.
-     *
-     * <p>Never calls a blocking read: each iteration only consumes bytes
-     * already reported by {@code available()}, capped at
-     * {@link #WM_OUTPUT_LIMIT_BYTES}. The loop ends when the child exits with
-     * no bytes left, when output hits the cap, or when the deadline expires.
-     * A live child on timeout is killed and yields an empty string, while an
-     * exited child with a descendant-held pipe still returns staged bytes.
-     * Interruption kills the child and propagates.
+     * Reads a wm-size child using the shared bounded subprocess reader.
      *
      * @param process started wm-size process
      * @return decoded command output, or an empty string if the process does not finish
@@ -389,8 +432,30 @@ public final class Helper {
      * @throws InterruptedException when the current thread is interrupted
      */
     static String readWmSize(Process process) throws IOException, InterruptedException {
+        return readProcessOutput(process, "wm size");
+    }
+
+    /**
+     * Reads subprocess output with a bounded poll loop.
+     *
+     * <p>Never calls a blocking read: each iteration only consumes bytes
+     * already reported by {@code available()}, capped at
+     * {@link #PROCESS_OUTPUT_LIMIT_BYTES}. The loop ends when the child exits with
+     * no bytes left, when output hits the cap, or when the deadline expires.
+     * A live child on timeout is killed and yields an empty string, while an
+     * exited child with a descendant-held pipe still returns staged bytes.
+     * Interruption kills the child and propagates.
+     *
+     * @param process started subprocess with merged stderr
+     * @param operation label for diagnostics
+     * @return decoded command output, or an empty string if the process does not finish
+     * @throws IOException when output cannot be read
+     * @throws InterruptedException when the current thread is interrupted
+     */
+    private static String readProcessOutput(Process process, String operation)
+            throws IOException, InterruptedException {
         final long deadlineNanos = System.nanoTime()
-                + TimeUnit.MILLISECONDS.toNanos(WM_TIMEOUT_MS);
+                + TimeUnit.MILLISECONDS.toNanos(PROCESS_TIMEOUT_MS);
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         byte[] chunk = new byte[1024];
         boolean timedOut = false;
@@ -398,22 +463,22 @@ public final class Helper {
             try {
                 while (true) {
                     if (Thread.currentThread().isInterrupted()) {
-                        throw new InterruptedException("wm size read interrupted");
+                        throw new InterruptedException(operation + " read interrupted");
                     }
                     if (System.nanoTime() >= deadlineNanos) {
                         timedOut = true;
-                        Log.w(TAG, "wm size timed out");
+                        Log.w(TAG, operation + " timed out");
                         break;
                     }
                     int ready;
                     try {
                         ready = stdout.available();
                     } catch (IOException err) {
-                        Log.w(TAG, "wm size stream closed", err);
+                        Log.w(TAG, operation + " stream closed", err);
                         break;
                     }
                     if (ready > 0) {
-                        int room = WM_OUTPUT_LIMIT_BYTES - captured.size();
+                        int room = PROCESS_OUTPUT_LIMIT_BYTES - captured.size();
                         if (room <= 0) {
                             break;
                         }
@@ -423,7 +488,7 @@ public final class Helper {
                             break;
                         }
                         captured.write(chunk, 0, got);
-                        if (captured.size() >= WM_OUTPUT_LIMIT_BYTES) {
+                        if (captured.size() >= PROCESS_OUTPUT_LIMIT_BYTES) {
                             break;
                         }
                         continue;
@@ -434,7 +499,7 @@ public final class Helper {
                         // of blocking for EOF.
                         break;
                     }
-                    Thread.sleep(WM_POLL_MS);
+                    Thread.sleep(PROCESS_POLL_MS);
                 }
             } finally {
                 if (process.isAlive()) {

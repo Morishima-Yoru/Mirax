@@ -55,6 +55,9 @@ class MiraxShellUserService : IMiraxShellService.Stub() {
 
     override fun isListening(): Boolean = beaconReady && beacon.isListening
 
+    /** Launches the fixed exported entry activity under the service's shell UID. */
+    override fun bringProjectionToFront() = Helper.bringProjectionToFront()
+
     override fun destroy() {
         Log.i(TAG, "destroy")
         beacon.stopAdvertising()

@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
  */
 object WfdOwnerBridge {
     private const val TAG = "MiraxWfdBridge"
-    private const val USER_SERVICE_VERSION = 5
+    private const val USER_SERVICE_VERSION = 6
     private const val ARM_POLL_MS = 250L
     private const val ARM_TIMEOUT_MS = 4_000L
 
@@ -73,6 +73,7 @@ object WfdOwnerBridge {
     internal var clockMs: () -> Long = { System.nanoTime() / 1_000_000L }
     internal var armResultConsumer: (Boolean) -> Unit = ::defaultDispatchArmResult
     internal var shizukuAdvertiser: (Context, WfdAdvertiseCommand) -> Boolean = ::advertiseViaShizuku
+    internal var shizukuProjectionLauncher: () -> Unit = ::launchProjectionViaShizuku
 
     /**
      * Reset bridge state and restore production seams for unit tests.
@@ -97,6 +98,7 @@ object WfdOwnerBridge {
         clockMs = { System.nanoTime() / 1_000_000L }
         armResultConsumer = ::defaultDispatchArmResult
         shizukuAdvertiser = ::advertiseViaShizuku
+        shizukuProjectionLauncher = ::launchProjectionViaShizuku
     }
 
     /** @return a distinct binding callback whose identity rejects callbacks from older bindings. */
@@ -277,6 +279,31 @@ object WfdOwnerBridge {
             }
             WfdOwner.NONE -> "UNPAIRED"
         }
+    }
+
+    /**
+     * Ask the captured privileged owner to foreground the fixed Mirax entry activity off main.
+     *
+     * @param shouldLaunch thread-safe session guard, checked immediately before launching
+     */
+    fun bringProjectionToFront(shouldLaunch: () -> Boolean) {
+        val owner = activeOwner.get()
+        ioRunner(Runnable {
+            try {
+                if (!shouldLaunch() || activeOwner.get() != owner) return@Runnable
+                when (owner) {
+                    WfdOwner.SHIZUKU -> shizukuProjectionLauncher()
+                    WfdOwner.HELPER -> {
+                        if (exchangeHelper("SHOW_PROJECTION") != "OK") {
+                            Log.w(TAG, "helper projection launch failed")
+                        }
+                    }
+                    WfdOwner.NONE -> Log.w(TAG, "projection launch skipped; no privileged owner")
+                }
+            } catch (err: Exception) {
+                Log.w(TAG, "projection launch via $owner failed", err)
+            }
+        })
     }
 
     /**
@@ -593,6 +620,13 @@ object WfdOwnerBridge {
             Log.w(TAG, "Shizuku advertise failed", err)
             false
         }
+    }
+
+    /** Launches through the bound service without falling back to an app-context launch. */
+    private fun launchProjectionViaShizuku() {
+        checkNotNull(shellService.get()) {
+            "Shizuku service unavailable for projection launch"
+        }.bringProjectionToFront()
     }
 
     private fun sendHelperAdvertise(command: WfdAdvertiseCommand): Boolean {

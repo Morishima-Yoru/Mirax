@@ -249,6 +249,12 @@ class MiraxSession(
             }
             SessionAction.OpenedMiraxDashboard -> {
                 activeConnection.setAwayOnHomeScreen(false)
+                if (activeConnection.isConnected && !activeConnection.picturePresented) {
+                    enqueueEffect(SessionEffect.BringProjectionToFront)
+                }
+            }
+            SessionAction.ProjectionPresented -> {
+                activeConnection.onProjectionPresented()
             }
             SessionAction.FloatingBallTapped -> {
                 onFloatingBallTapped()
@@ -556,7 +562,9 @@ fun snapshot(): SessionSnapshot {
     }
 
     private fun enterPlay() {
-        if (resolveOwner(privilege) != WfdOwner.NONE && advertisingState.advertisingEnabledState) {
+        if (!activeConnection.isConnected &&
+            resolveOwner(privilege) != WfdOwner.NONE && advertisingState.advertisingEnabledState
+        ) {
             activeConnection.enterPlay()
             activeConnection.onPlayStarted()
             enqueueEffect(SessionEffect.BringProjectionToFront)

@@ -10,5 +10,7 @@ interface IMiraxShellService {
     String getPairingState() = 7;
     /** True after startListening succeeded for the current advertise request. */
     boolean isListening() = 8;
+    /** Launch only the exported Mirax entry activity for the current user. */
+    void bringProjectionToFront() = 9;
     void destroy() = 16777114;
 }

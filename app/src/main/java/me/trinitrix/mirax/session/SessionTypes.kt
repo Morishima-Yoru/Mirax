@@ -717,6 +717,9 @@ sealed interface SessionAction {
      */
     data object OpenedMiraxDashboard : SessionAction
 
+    /** The projection activity resumed and can present the current connection's picture. */
+    data object ProjectionPresented : SessionAction
+
     /**
      * User tapped the floating ball to return to projection.
      */

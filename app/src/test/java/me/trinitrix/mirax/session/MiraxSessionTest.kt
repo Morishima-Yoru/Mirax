@@ -1532,6 +1532,81 @@ class MiraxSessionTest {
     }
 
     @Test
+    fun connected_openedDashboard_beforePicturePresented_retriesConsumedLaunch() {
+        val session = connectedSession()
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    @Test
+    fun disconnected_openedDashboard_doesNotLaunchPicture() {
+        val session = connectedSession()
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.ConnectionEnded)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+    }
+
+    @Test
+    fun connected_duplicatePlay_doesNotRelaunchPicture() {
+        val session = connectedSession()
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.EnteredPlay)
+
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    @Test
+    fun connected_openedDashboard_afterPicturePresented_doesNotStealSettings() {
+        val session = connectedSession()
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    @Test
+    fun connected_projectionPresented_hidesBall_withoutLaunchingAgain() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.ProjectionPresented)
+
+        assertThat(session.snapshot().showFloatingBall).isFalse()
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    @Test
+    fun nextConnection_openedDashboard_retriesEvenWhenPreviousPictureWasPresented() {
+        val session = connectedSession()
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.ConnectionEnded)
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+    }
+
+    @Test
     fun connected_openedDashboard_keepsConnection_doesNotShowBall() {
         val session = connectedSession()
         session.report(OverlayPermissionReport(granted = true))
