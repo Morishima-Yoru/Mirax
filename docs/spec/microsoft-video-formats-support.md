@@ -61,14 +61,19 @@ Enabled Microsoft modes are persisted and retrieved using the existing `Set<Vide
 
 Retain existing preference keys and saved choices; filtering an unsupported mode must not erase it from stored settings. Settings edits apply to the next connection, not to the already frozen connection offer. Continue to use the selected `VideoMode` for picture scaling, diagnostics, and input coordinates without protocol-specific rendering changes.
 
+### 7. Custom Refresh Range
+Custom mode input accepts every integer refresh from 24 through 240 Hz inclusive, rather than snapping to the former 24/25/30/50/60 set. Preferred-mode text rounds decimals to the nearest integer with ties upward; positive out-of-range values clamp to 24 or 240. Preserve existing invalid-input and blank-input behavior. The custom-resolution UI remains integer-only and shows the range in English and Traditional Chinese.
+
+Keep H.264 Level 5.1 correction: shrink dimensions along the current aspect ratio when necessary, retaining the corrected refresh. Do not change fixed CEA/VESA/HH or Microsoft bitmap tables. Retain existing interactive 30 Hz alternatives and EDID preference, including the Microsoft/standard exceptions above. Existing settings keys and export/restore retain accepted custom Hz without a migration. M3 literal custom fields encode 120 Hz as `0078` and 240 Hz as `00F0`; M4 must preserve either selected rate. This input/negotiation range is not a physical source, decoder, or display throughput guarantee.
+
 ## Testing Decisions
 
 ### Test Characteristics
 Tests must exercise external behavior through existing component boundaries, focusing on wire-format input/output rather than private internal state.
 
 ### Modules Under Test
-- **RTSP session public boundary**: Feed raw M3/M4 messages to `RtspSinkSession.handle()`. Assert emitted hex, all 15 allowed index mappings, excluded/unoffered/reserved/ambiguous selections, request-order independence, subsequent format changes, and the EDID bytes including checksum and timing range.
-- **Product session public boundary**: Feed settings and actions to `MiraxSession`; inspect snapshots and exported settings. Assert the separate opt-in catalog, individual/bulk selection, restored settings, unsupported-mode filtering without data loss, frozen connection offers, and selected resolution reporting.
+- **RTSP session public boundary**: Feed raw M3/M4 messages to `RtspSinkSession.handle()`. Assert emitted hex, all 15 allowed index mappings, excluded/unoffered/reserved/ambiguous selections, request-order independence, subsequent format changes, and the EDID bytes including checksum and timing range. Custom-refresh regression covers 120/240 Hz M3 hex and M4 selection while retaining the interactive 30 Hz EDID preference.
+- **Product session public boundary**: Feed settings and actions to `MiraxSession`; inspect snapshots and exported settings. Assert the separate opt-in catalog, individual/bulk selection, restored settings, unsupported-mode filtering without data loss, frozen connection offers, and selected resolution reporting. Custom-refresh regression covers all 217 integer rates, decimal rounding, endpoint clamping, invalid inputs, settings export/restore, and Level 5.1 aspect-preserving shrink without lowering Hz.
 - Reuse existing tests for rendering and input regressions. Settings export/restore does not prove Android disk persistence, and host tests do not prove physical source selection, decoder playback, or rendered UI layout.
 
 ### Prior Art

@@ -147,7 +147,7 @@
     <string name="show_floating_ball">顯示浮動球</string>
     <string name="section_touch">觸控</string>
     <string name="custom_resolution">自訂解析度</string>
-    <string name="custom_resolution_body">新增要在連線時提供給來源端的解析度。下次連線起依下列順序提供。</string>
+    <string name="custom_resolution_body">新增要在連線時提供給來源端的解析度，更新率可設為 24 至 240 Hz 的整數。下次連線起依下列順序提供。</string>
     <string name="auto_wm_size">連接時，自動添加當下解析度</string>
     <string name="auto_wm_size_hint">建立連線時，會把目前的螢幕尺寸當作首選解析度提供給來源端。</string>
     <string name="custom_add">+ 添加</string>

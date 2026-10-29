@@ -13,6 +13,7 @@ Windows 的 Miracast Source 可支援 `[MS-WFDPE]` 協定擴充。針對 Surface
 5. **EDID 連動**：當使用者將 3:2 模式指定為首選模式（`preferredMode`）時，`wfd_display_edid` 直接為其產出 EDID 詳細時間描述符（DTD），引導 Windows Source 優先採用。
 6. **M4 決策階層**：`RtspSinkSession.applyParameters()` 解析 M4 `SET_PARAMETER` 時，遵循 `microsoft_custom_video_formats` > `microsoft_video_formats` > `wfd_video_formats` / `wfdx_video_formats` 之優先權順位。
 7. **持久化**：沿用既有 `Set<VideoMode>` 與偏好鍵，不新增遷移；限制套用於能力供給，不刪除已儲存的選擇。變更於下次連線生效。
+8. **自訂更新率**：自訂模式接受 24 至 240 Hz（含端點）的任意整數，不再吸附到 24、25、30、50、60。偏好文字的小數四捨五入，恰半取較高整數；正數超界夾到端點，原本無效或清空輸入的處理不變。超過 H.264 Level 5.1 時仍沿長寬比縮小尺寸，不降低已修正的更新率；互動模式仍沿用既有 30 Hz 備援與 EDID 偏好，不擴充固定模式表或宣稱來源／硬體已驗證高更新率。
 
 ## 查證補充
 

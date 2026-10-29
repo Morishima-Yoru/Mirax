@@ -81,6 +81,45 @@ class WfdProtocolTest {
         assertThat(response).contains("microsoft_video_formats: 000000000008\r\n")
     }
 
+    /** Verifies high custom Hz remains literal in M3 and survives Windows M4 selection. */
+    @Test
+    fun custom120And240Hz_areAdvertisedAndSelectedWithoutSnapping() {
+        val modes = setOf(VideoMode(1280, 720, 120), VideoMode(1280, 720, 240))
+        val session = RtspSinkSession(WfdCapabilityTable(modes, modes.first(), "Mirax"))
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "microsoft_custom_video_formats\r\n",
+        ).single()
+        assertThat(response).contains("microsoft_custom_video_formats: 0500 02D0 0078, 0500 02D0 00F0\r\n")
+
+        val selections = listOf("0078" to VideoMode(1280, 720, 120), "00F0" to VideoMode(1280, 720, 240))
+        for ((index, selection) in selections.withIndex()) {
+            val (wire, expected) = selection
+            session.handle(
+                "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: ${index + 3}\r\n\r\n" +
+                    "microsoft_custom_video_formats: 0500 02D0 $wire\r\n",
+            )
+            assertThat(session.selectedMode).isEqualTo(expected)
+            assertThat(session.formatChosen).isTrue()
+        }
+    }
+
+    /** Verifies high custom Hz does not remove the existing interactive 30 Hz preference. */
+    @Test
+    fun interactiveHighRefreshOffer_retains30HzEdidPreference() {
+        val modes = setOf(VideoMode(1280, 720, 120), VideoMode(1280, 720, 240))
+        val session = RtspSinkSession(WfdCapabilityTable(modes, modes.first(), "Mirax", touchEnabled = true))
+        val response = session.handle(
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n" +
+                "microsoft_custom_video_formats\r\nwfd_display_edid\r\n",
+        ).single()
+        assertThat(response).contains("microsoft_custom_video_formats: 0500 02D0 0078, 0500 02D0 00F0\r\n")
+        val edid = response.lineSequence().first { it.startsWith("wfd_display_edid:") }
+            .substringAfter("0001 ").trim().chunked(2).map { it.toInt(16) }
+        // 1440 x 772 total timing at 30 Hz rounds to a 3335 x 10 kHz pixel clock.
+        assertThat(edid[54] or (edid[55] shl 8)).isEqualTo(3335)
+    }
+
     /** Verifies the Fold custom offer retains its calibrated low-latency alternative. */
     @Test
     fun interactiveFoldOfferRetainsItsLowLatencyCustomRefresh() {

@@ -522,30 +522,49 @@ class MiraxSessionTest {
         assertThat(session.snapshot().preferredMode).isNotEqualTo(VideoMode(2176, 1812, 60))
     }
 
+    /** Verifies preferred text rounds to integer Hz, ties up, within 24 through 240. */
     @Test
-    fun refresh_snapsToNearestAllowed_tieTakesHigher() {
-        assertThat(PreferredModeCorrection.snapRefreshHz(27.0)).isEqualTo(25)
-        assertThat(PreferredModeCorrection.snapRefreshHz(27.5)).isEqualTo(30)
-        assertThat(PreferredModeCorrection.snapRefreshHz(55.0)).isEqualTo(60)
-        assertThat(PreferredModeCorrection.snapRefreshHz(42.0)).isEqualTo(50)
-
+    fun preferredRefresh_roundsToIntegerWithTiesUp_andClampsPositiveInputs() {
+        val cases = listOf(
+            "24" to 24,
+            "27" to 27,
+            "27.5" to 28,
+            "42" to 42,
+            "55" to 55,
+            "59.49" to 59,
+            "59.5" to 60,
+            "119.5" to 120,
+            "144" to 144,
+            "239.49" to 239,
+            "239.5" to 240,
+            "240" to 240,
+            "0.1" to 24,
+            "23" to 24,
+            "240.5" to 240,
+            "1000" to 240,
+        )
         val session = freshSession()
-        session.handle(SessionAction.CommitPreferredModeText("1280×720@55"))
-        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+        for ((input, expectedHz) in cases) {
+            session.handle(SessionAction.CommitPreferredModeText("1280×720@$input"))
+            assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, expectedHz))
+        }
     }
 
+    /** Verifies high refresh shrinks the picture along its aspect, not the requested Hz. */
     @Test
     fun preferredMode_overLevel51_shrinksAlongAspect() {
         val session = freshSession()
-        // Far beyond level 5.1 at 60 Hz; must shrink, not swap to a table mode.
-        session.handle(SessionAction.CommitPreferredModeText("7680×4320@60"))
-        val mode = session.snapshot().preferredMode
-        assertThat(mode).isNotNull()
-        checkNotNull(mode)
-        assertThat(H264Level51.fits(mode)).isTrue()
-        val aspect = 7680.0 / 4320.0
-        assertThat(mode.width.toDouble() / mode.height.toDouble()).isWithin(0.05).of(aspect)
-        assertThat(mode).isNotEqualTo(VideoMode(1920, 1080, 60))
+        for (refreshHz in listOf(60, 120, 240)) {
+            session.handle(SessionAction.CommitPreferredModeText("7680×4320@$refreshHz"))
+            val mode = checkNotNull(session.snapshot().preferredMode)
+            assertThat(mode.refreshHz).isEqualTo(refreshHz)
+            assertThat(mode.width).isLessThan(7680)
+            assertThat(mode.height).isLessThan(4320)
+            assertThat(H264Level51.fits(mode)).isTrue()
+            val aspect = 7680.0 / 4320.0
+            assertThat(mode.width.toDouble() / mode.height.toDouble()).isWithin(0.05).of(aspect)
+            assertThat(mode).isNotEqualTo(VideoMode(1920, 1080, 60))
+        }
     }
 
     @Test
@@ -555,12 +574,19 @@ class MiraxSessionTest {
         assertThat(session.snapshot().preferredMode).isNull()
         assertThat(session.snapshot().preferredModeText).isEmpty()
 
-        session.handle(SessionAction.CommitPreferredModeText("1280×720@60"))
-        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@144"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
 
-        session.handle(SessionAction.CommitPreferredModeText("garbage"))
-        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
-        assertThat(session.snapshot().preferredModeText).isEqualTo("1280×720@60")
+        val invalidInputs = listOf(
+            "garbage", "0×720@60", "1280×0@60", "2147483648×720@60",
+            "1280×720@0", "1280×720@-1", "1280×720@NaN", "1280×720@Infinity",
+            "1280×720@1e2", "1280×720@.5", "1280×720@60.",
+        )
+        for (input in invalidInputs) {
+            session.handle(SessionAction.CommitPreferredModeText(input))
+            assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
+            assertThat(session.snapshot().preferredModeText).isEqualTo("1280×720@144")
+        }
     }
 
     @Test
@@ -1864,6 +1890,43 @@ class MiraxSessionTest {
         assertThat(snap.connectionOfferModes).doesNotContain(VideoMode(720, 1280, 60))
         assertThat(snap.connectionOfferModes).contains(fold)
         assertThat(snap.customModes).containsExactly(fold).inOrder()
+    }
+
+    /** Verifies every allowed integer Hz survives adding, exporting, and restoring settings. */
+    @Test
+    fun customRefresh_everyIntegerFrom24Through240_survivesSettingsRestore() {
+        val session = freshSession()
+        val modes = (24..240).map { VideoMode(1280, 720, it) }
+        for (mode in modes) {
+            session.handle(SessionAction.AddCustomMode(mode.width, mode.height, mode.refreshHz))
+        }
+        assertThat(session.snapshot().customModes).containsExactlyElementsIn(modes).inOrder()
+        assertThat(session.snapshot().nextAdvertisementModes).containsAtLeastElementsIn(modes)
+
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@144"))
+        val restored = MiraxSession(session.exportSettings(), TestConnectionHistory())
+        assertThat(restored.snapshot().customModes).containsExactlyElementsIn(modes).inOrder()
+        assertThat(restored.snapshot().nextAdvertisementModes).containsAtLeastElementsIn(modes)
+        assertThat(restored.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
+        restored.handle(SessionAction.CommitPreferredModeText("1280×720"))
+        assertThat(restored.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
+    }
+
+    /** Verifies custom inputs clamp only positive Hz and still reject invalid dimensions. */
+    @Test
+    fun customRefresh_clampsPositiveOutOfRange_andIgnoresNonpositiveInputs() {
+        val session = freshSession()
+        for (refreshHz in listOf(1, 23, 241, Int.MAX_VALUE)) {
+            session.handle(SessionAction.AddCustomMode(1280, 720, refreshHz))
+        }
+        for (refreshHz in listOf(0, -1, Int.MIN_VALUE)) {
+            session.handle(SessionAction.AddCustomMode(640, 480, refreshHz))
+        }
+        session.handle(SessionAction.AddCustomMode(0, 720, 120))
+        session.handle(SessionAction.AddCustomMode(1280, -1, 120))
+        assertThat(session.snapshot().customModes).containsExactly(
+            VideoMode(1280, 720, 24), VideoMode(1280, 720, 240),
+        ).inOrder()
     }
 
     @Test

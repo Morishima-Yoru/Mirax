@@ -148,7 +148,7 @@
     <string name="show_floating_ball">Show floating ball</string>
     <string name="section_touch">Touch</string>
     <string name="custom_resolution">Custom resolutions</string>
-    <string name="custom_resolution_body">Add resolutions to offer the source. The next connection uses this order.</string>
+    <string name="custom_resolution_body">Add resolutions to offer the source. Use integer refresh rates from 24 to 240 Hz. The next connection uses this order.</string>
     <string name="auto_wm_size">On connect, add the current resolution</string>
     <string name="auto_wm_size_hint">Offers the current screen size as the preferred resolution when a connection starts.</string>
     <string name="custom_add">+ Add</string>
