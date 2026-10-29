@@ -19,8 +19,15 @@ internal class ActiveConnectionState {
     val isConnected: Boolean
         get() = _phase == ConnectionPhase.PLAYING
 
+    /** Whether the latest requested foreground presentation has been acknowledged. */
     var picturePresented: Boolean = false
         private set
+
+    /** Require fresh presentation confirmation for an explicit return to the connected picture. */
+    fun requestProjectionPresentation() {
+        picturePresented = false
+        awayOnHomeScreen = false
+    }
 
     /** Confirm that the connected picture reached the foreground, not merely that launch was requested. */
     fun onProjectionPresented() {

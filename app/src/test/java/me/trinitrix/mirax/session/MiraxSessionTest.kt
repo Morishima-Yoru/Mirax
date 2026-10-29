@@ -1627,6 +1627,31 @@ class MiraxSessionTest {
         assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
     }
 
+    /** Recover an explicit return through the owner even after the picture was previously presented. */
+    @Test
+    fun floatingBallTap_afterPresentation_recoversThroughOwnerDashboard() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+
+        session.handle(SessionAction.FloatingBallTapped)
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().showFloatingBall).isFalse()
+
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.OpenedMiraxDashboard)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+    }
+
     @Test
     fun floatingBallTap_returnsToProjection_hidesBall() {
         val session = connectedSession()

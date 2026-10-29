@@ -7,7 +7,9 @@ import androidx.core.view.children
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -32,6 +34,76 @@ class ProjectionLaunchDeviceTest {
     /** The real owner must foreground Mirax without an overlay grant or a visible app window. */
     @Test(timeout = 30_000)
     fun backgroundOwnerLaunch_withoutOverlay_opensPictureSurface(): Unit = verifyLaunch(background = true)
+
+    /** The floating ball must return to an already-presented picture through the owner entry. */
+    @Test(timeout = 30_000)
+    fun floatingBallReturn_afterPresentation_opensPictureAgain(): Unit = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("projectionLaunchTestMode") == "privileged")
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        val session = MiraxApp.instance.session
+        assumeTrue(!session.snapshot().showPicture && OverlayPermission.canDrawOverlays(context))
+        val originalBallEnabled = session.snapshot().floatingBallEnabled
+        device.wakeUp()
+        device.executeShellCommand("wm dismiss-keyguard")
+        ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
+            try {
+                scenario.onActivity { activity ->
+                    assertThat(session.snapshot().wfdOwner).isNotEqualTo(WfdOwner.NONE)
+                    session.handle(SessionAction.SetFloatingBallEnabled(true))
+                    session.enterMockConnected()
+                    SessionHost.openedMiraxDashboard(activity)
+                }
+                awaitPictureSurface()
+                device.pressHome()
+                withTimeout(5_000) {
+                    var away = false
+                    while (!away) {
+                        instrumentation.runOnMainSync {
+                            away = session.snapshot().showFloatingBall && !MainActivity.isShowing() &&
+                                PictureActivity.current()?.hasWindowFocus() != true
+                        }
+                        if (!away) delay(50)
+                    }
+                }
+                val ball = checkNotNull(device.wait(
+                    Until.findObject(By.pkg(context.packageName).desc(context.getString(R.string.app_name))),
+                    5_000,
+                )) { "Floating ball did not become visible" }
+                ball.click()
+                awaitPictureSurface()
+                instrumentation.runOnMainSync {
+                    assertThat(session.snapshot().showPicture).isTrue()
+                    assertThat(session.snapshot().showFloatingBall).isFalse()
+                }
+            } finally {
+                instrumentation.runOnMainSync {
+                    session.handle(SessionAction.ConnectionEnded)
+                    session.handle(SessionAction.SetFloatingBallEnabled(originalBallEnabled))
+                    PictureActivity.finishIfShowing()
+                    SessionHost.commit(context)
+                }
+            }
+        }
+    }
+
+    /** Wait for a focused projection activity with a valid Android rendering surface. */
+    private suspend fun awaitPictureSurface() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        withTimeout(10_000) {
+            var pictureReady = false
+            while (!pictureReady) {
+                instrumentation.runOnMainSync {
+                    val picture = PictureActivity.current()
+                    val stage = picture?.findViewById<FrameLayout>(android.R.id.content)?.getChildAt(0) as? FrameLayout
+                    val surface = stage?.children?.filterIsInstance<SurfaceView>()?.firstOrNull()
+                    pictureReady = picture?.hasWindowFocus() == true && surface?.holder?.surface?.isValid == true
+                }
+                if (!pictureReady) delay(50)
+            }
+        }
+    }
 
     /**
      * Exercise the real host and lifecycle, substituting only the connected RTSP state.
@@ -92,18 +164,7 @@ class ProjectionLaunchDeviceTest {
                         context.startActivity(launch)
                     }
                 }
-                withTimeout(10_000) {
-                    var pictureReady = false
-                    while (!pictureReady) {
-                        instrumentation.runOnMainSync {
-                            val picture = PictureActivity.current()
-                            val stage = picture?.findViewById<FrameLayout>(android.R.id.content)?.getChildAt(0) as? FrameLayout
-                            val surface = stage?.children?.filterIsInstance<SurfaceView>()?.firstOrNull()
-                            pictureReady = picture?.hasWindowFocus() == true && surface?.holder?.surface?.isValid == true
-                        }
-                        if (!pictureReady) delay(50)
-                    }
-                }
+                awaitPictureSurface()
                 if (background) assertThat(ownerLaunches.get()).isEqualTo(1)
                 instrumentation.runOnMainSync {
                     session.handle(SessionAction.AcknowledgeEffects)

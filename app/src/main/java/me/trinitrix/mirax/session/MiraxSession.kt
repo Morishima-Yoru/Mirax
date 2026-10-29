@@ -446,7 +446,7 @@ fun snapshot(): SessionSnapshot {
 
     private fun onFloatingBallTapped() {
         if (!activeConnection.isConnected || !activeConnection.awayOnHomeScreenState) return
-        activeConnection.setAwayOnHomeScreen(false)
+        activeConnection.requestProjectionPresentation()
         pendingEffects = pendingEffects.filterNot { it is SessionEffect.ConfirmEndConnection }
         enqueueEffect(SessionEffect.BringProjectionToFront)
     }
