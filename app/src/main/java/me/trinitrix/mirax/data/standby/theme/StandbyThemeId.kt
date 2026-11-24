@@ -14,7 +14,10 @@ enum class StandbyThemeId(val storageValue: String) {
     MATTER("matter"),
 
     /** Geometry and stream lines. */
-    HARDLINE("hardline");
+    HARDLINE("hardline"),
+
+    /** Legacy card dashboard, kept as a theme instead of a drawer entry. */
+    LEGACY("legacy");
 
     companion object {
         /**

@@ -1906,6 +1906,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateStandby(root: View, snapshot: SessionSnapshot) {
         val host = root as? BigStandbyHost ?: return
+        if (standbyTheme == StandbyThemeId.LEGACY) {
+            // Legacy dashboard is a standby theme now, not its own page: build its
+            // card column once inside the theme host, then keep it updated in place.
+            if (host.legacyHost.childCount == 0) {
+                host.legacyHost.addView(
+                    scroll(buildDashboard(snapshot)),
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+            }
+            updateDashboard(host.legacyHost, snapshot)
+        }
         val cause = prePlayFailureCause(snapshot)
         val projecting = snapshot.phase == ScreenPhase.CONNECTED
         val copyMotionAllowed = isStandbyCopyMotionAllowed(
@@ -3328,7 +3342,7 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.nav_about_group),
             getString(R.string.nav_about), versionName(),
         ),
-        selected = listOf(Page.STANDBY, Page.DASHBOARD, Page.HISTORY, Page.GENERAL,
+        selected = listOf(Page.STANDBY, Page.HISTORY, Page.GENERAL,
             Page.PICTURE, Page.ADVANCED, Page.ABOUT).map(::menuSelected),
         configuration = Configuration(resources.configuration),
         density = resources.displayMetrics.density,
@@ -3351,7 +3365,6 @@ class MainActivity : AppCompatActivity() {
         drawer.setTag(R.id.page_signature, null)
         drawer.removeAllViews()
         drawer.addView(menuCard(Page.STANDBY, getString(R.string.nav_standby), dashboardTitle(snapshot), topDp = 0))
-        drawer.addView(menuCard(Page.DASHBOARD, getString(R.string.nav_dashboard_legacy), dashboardTitle(snapshot)))
         drawer.addView(menuCard(Page.HISTORY, getString(R.string.history_title), historyCount(snapshot)))
         drawer.addView(drawerLabel(getString(R.string.nav_settings)))
         drawer.addView(menuCard(Page.GENERAL, getString(R.string.nav_general), snapshot.effectiveBroadcastName))

@@ -92,6 +92,7 @@ class StandbySettingsPanelModelTest {
             StandbyThemeId.LANDSCAPE,
             StandbyThemeId.MATTER,
             StandbyThemeId.HARDLINE,
+            StandbyThemeId.LEGACY,
         ).inOrder()
         assertThat(StandbySettingsPanelModel.LANGUAGE_ORDER).containsExactly(
             null,

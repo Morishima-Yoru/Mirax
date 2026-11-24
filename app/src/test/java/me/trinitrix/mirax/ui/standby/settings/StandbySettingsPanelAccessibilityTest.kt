@@ -31,7 +31,7 @@ class StandbySettingsPanelAccessibilityTest {
 
     @Test
     fun everyOptionHasLabelAndDescription() {
-        assertThat(StandbySettingsPanelView.OPTION_METADATA).hasSize(6)
+        assertThat(StandbySettingsPanelView.OPTION_METADATA).hasSize(7)
         for (option in StandbySettingsPanelView.OPTION_METADATA) {
             assertThat(option.key).isNotEmpty()
             assertThat(option.labelRes).isNotEqualTo(0)
@@ -48,6 +48,7 @@ class StandbySettingsPanelAccessibilityTest {
             "LANDSCAPE",
             "MATTER",
             "HARDLINE",
+            "LEGACY",
             StandbySettingsPanelView.FOLLOW_SYSTEM_KEY,
             "TRADITIONAL_CHINESE",
             "ENGLISH",

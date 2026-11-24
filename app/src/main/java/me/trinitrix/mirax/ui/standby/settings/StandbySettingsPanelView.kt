@@ -113,6 +113,11 @@ class StandbySettingsPanelView @JvmOverloads constructor(
             contentDescription = resources.getString(R.string.standby_settings_cd_theme_hardline)
             themeBaseDescriptions[StandbyThemeId.HARDLINE] = contentDescription?.toString().orEmpty()
         }
+        themeButtons[StandbyThemeId.LEGACY]?.apply {
+            setText(R.string.standby_settings_theme_legacy)
+            contentDescription = resources.getString(R.string.standby_settings_cd_theme_legacy)
+            themeBaseDescriptions[StandbyThemeId.LEGACY] = contentDescription?.toString().orEmpty()
+        }
 
         languageLabel.setText(R.string.standby_settings_language_section)
         addView(languageLabel, layoutParams())
@@ -435,6 +440,11 @@ class StandbySettingsPanelView @JvmOverloads constructor(
                 key = StandbyThemeId.HARDLINE.name,
                 labelRes = R.string.standby_settings_theme_hardline,
                 descriptionRes = R.string.standby_settings_cd_theme_hardline,
+            ),
+            PanelOption(
+                key = StandbyThemeId.LEGACY.name,
+                labelRes = R.string.standby_settings_theme_legacy,
+                descriptionRes = R.string.standby_settings_cd_theme_legacy,
             ),
             PanelOption(
                 key = FOLLOW_SYSTEM_KEY,

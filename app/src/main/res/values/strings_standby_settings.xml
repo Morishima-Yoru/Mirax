@@ -6,6 +6,7 @@
     <string name="standby_settings_theme_landscape">Landscape</string>
     <string name="standby_settings_theme_matter">Matter</string>
     <string name="standby_settings_theme_hardline">Hardline</string>
+    <string name="standby_settings_theme_legacy">Legacy</string>
     <string name="standby_settings_lang_follow">Follow system</string>
     <string name="standby_settings_lang_zh">Traditional Chinese</string>
     <string name="standby_settings_lang_en">English</string>
@@ -16,6 +17,7 @@
     <string name="standby_settings_cd_theme_landscape">Select standby theme: Landscape</string>
     <string name="standby_settings_cd_theme_matter">Select standby theme: Matter</string>
     <string name="standby_settings_cd_theme_hardline">Select standby theme: Hardline</string>
+    <string name="standby_settings_cd_theme_legacy">Select standby theme: Legacy</string>
     <string name="standby_settings_cd_lang_follow">Select language: Follow system</string>
     <string name="standby_settings_cd_lang_zh">Select language: Traditional Chinese</string>
     <string name="standby_settings_cd_lang_en">Select language: English</string>

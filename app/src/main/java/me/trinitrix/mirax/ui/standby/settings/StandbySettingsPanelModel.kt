@@ -69,7 +69,12 @@ data class StandbySettingsPanelModel(
 
         /** Stable traversal order for theme options. */
         val THEME_ORDER: List<StandbyThemeId> =
-            listOf(StandbyThemeId.LANDSCAPE, StandbyThemeId.MATTER, StandbyThemeId.HARDLINE)
+            listOf(
+            StandbyThemeId.LANDSCAPE,
+            StandbyThemeId.MATTER,
+            StandbyThemeId.HARDLINE,
+            StandbyThemeId.LEGACY,
+        )
 
         /** Stable traversal order for language options; `null` is follow-system. */
         val LANGUAGE_ORDER: List<StandbyLanguage?> =

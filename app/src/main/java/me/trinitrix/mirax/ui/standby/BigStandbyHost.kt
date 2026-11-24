@@ -56,6 +56,8 @@ class BigStandbyHost(
     private val landscapeForeground = LandscapeStandbyForegroundView(context)
     private val matterForeground = MatterStandbyForegroundView(context)
     private val hardlineForeground = HardlineStandbyForegroundView(context)
+    /** Legacy card dashboard hosted as a theme instead of a separate page. */
+    val legacyHost = FrameLayout(context)
     private val unavailableMenu = ImageButton(context).apply {
         tag = "standby-theme-unavailable-menu"
         setImageResource(R.drawable.ic_nav_menu)
@@ -109,6 +111,7 @@ class BigStandbyHost(
             landscapeForeground,
             matterForeground,
             hardlineForeground,
+            legacyHost,
         )
         layers.forEach { addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)) }
         val menuSize = (48f * resources.displayMetrics.density + 0.5f).toInt()
@@ -364,6 +367,7 @@ class BigStandbyHost(
         landscapeForeground.visibility = if (theme == StandbyThemeId.LANDSCAPE) View.VISIBLE else View.GONE
         matterForeground.visibility = if (theme == StandbyThemeId.MATTER) View.VISIBLE else View.GONE
         hardlineForeground.visibility = if (theme == StandbyThemeId.HARDLINE) View.VISIBLE else View.GONE
+        legacyHost.visibility = if (theme == StandbyThemeId.LEGACY) View.VISIBLE else View.GONE
         unavailableMenu.visibility = if (theme == null && callbacks.onOpenSettings != null) View.VISIBLE else View.GONE
         applyLegacyAmbient()
         updateHardlineGeometry()
