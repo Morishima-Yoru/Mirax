@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_probe_reference">待機探針參考行</string>
+    <string name="standby_probe_long_name">刻意過長的待機接收端名稱用於省略號觀察 0123456789 ABCDEFGHIJ abcdefghij</string>
+    <string name="standby_probe_overlay">原生疊加層</string>
+    <string name="standby_probe_overlay_desc">探針疊加層說明。用於對照自繪文字的原生文字基準。</string>
+</resources>
