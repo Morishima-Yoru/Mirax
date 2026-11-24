@@ -59,3 +59,6 @@ helper/classes/
 
 # deepwork state
 .slim/deepwork/
+
+# Local tool state (oh-my-opencode-slim worktree markers)
+.ignore
