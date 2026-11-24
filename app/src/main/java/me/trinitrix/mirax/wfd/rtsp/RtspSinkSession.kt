@@ -6,6 +6,54 @@ import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 /**
+ * Read-only terminal failure evidence for one sink RTSP exchange.
+ *
+ * Recorded only when an existing exchange drives the session to `ERROR`.
+ * Timeouts capture the pending sink method and CSeq; definitive rejections
+ * capture the same plus the source status code. Malformed, provisional,
+ * mismatched, cancelled, EOF/group-loss, source TEARDOWN, and 2xx outcomes
+ * leave this as null. Callers must ignore this once playback has started.
+ */
+sealed interface RtspFailure {
+    /** Sink request method that owned the exchange, or empty when unknown. */
+    val method: String
+    /** CSeq of the sink request that owned the exchange. */
+    val cseq: Int
+
+    /**
+     * Pending sink request expired before a usable response arrived.
+     *
+     * Covers both [RtspSinkSession.checkExchangeTimeout] and a matching
+     * response arriving after the deadline.
+     *
+     * @param method Sink method that timed out.
+     * @param cseq CSeq of the timed-out request.
+     */
+    data class Timeout(
+        override val method: String,
+        override val cseq: Int,
+    ) : RtspFailure
+
+    /**
+     * Source definitively rejected a known sink request.
+     *
+     * Only a strict definitive status line qualifies: the version token is
+     * exactly `RTSP/1.0` and the code token is exactly three ASCII digits in
+     * 300..599. Anything else keeps the existing state behavior but records
+     * nothing. The special `uibc-enable` kind never qualifies.
+     *
+     * @param method Rejected sink method.
+     * @param cseq CSeq of the rejected request.
+     * @param statusCode Definitive RTSP status code from the source.
+     */
+    data class Rejected(
+        override val method: String,
+        override val cseq: Int,
+        val statusCode: Int,
+    ) : RtspFailure
+}
+
+/**
  * Wi-Fi Display RTSP sink session from M1 through PLAY.
  *
  * Host-testable protocol state machine. Does not touch frozen/tile/handle UI.
@@ -23,6 +71,17 @@ class RtspSinkSession(
     private var outstandingKind: String = ""
     private var presentationUrl: String = ""
     private var sessionId: String = ""
+    /**
+     * Immutable terminal failure evidence once the session reaches `ERROR`.
+     *
+     * Stays null for non-terminal states and for ERROR paths without a
+     * genuine exchange cause (no pending request, mismatched CSeq, malformed
+     * or non-strict status line, provisional, cancelled, EOF/group-loss,
+     * source TEARDOWN, accepted 2xx, and the special `uibc-enable`
+     * rejection). Callers must ignore this after playback has started.
+     */
+    var terminalFailure: RtspFailure? = null
+        private set
     var state: String = "INIT"
         private set
     var selectedMode: VideoMode? = null
@@ -164,10 +223,19 @@ fun handle(message: String?): List<String> {
         if (outstandingAtMs < 0 || clockMs() - outstandingAtMs < TRANSACTION_TIMEOUT_MS) {
             return false
         }
+        val timedOutMethod = outstandingMethod
+        val timedOutCseq = outstandingCseq
+        val timedOutAtMs = outstandingAtMs
         outstandingCseq = -1
         outstandingMethod = ""
         outstandingKind = ""
         outstandingAtMs = -1L
+        // Evidence only for a genuine pending exchange; state handling is unchanged.
+        if (terminalFailure == null && state != "ERROR" &&
+            hasGenuinePending(timedOutCseq, timedOutMethod, timedOutAtMs)
+        ) {
+            terminalFailure = RtspFailure.Timeout(timedOutMethod, timedOutCseq)
+        }
         state = "ERROR"
         Log.w(TAG, "RTSP exchange timeout")
         return true
@@ -228,10 +296,19 @@ fun handle(message: String?): List<String> {
         }
         if (clockMs() - outstandingAtMs >= TRANSACTION_TIMEOUT_MS) {
             // WFD 6.5: late matching response — abort exchange, treat as timeout.
+            val timedOutMethod = outstandingMethod
+            val timedOutCseq = outstandingCseq
+            val timedOutAtMs = outstandingAtMs
             outstandingCseq = -1
             outstandingMethod = ""
             outstandingKind = ""
             outstandingAtMs = -1L
+            // Record evidence only for a genuine pending exchange.
+            if (terminalFailure == null && state != "ERROR" &&
+                hasGenuinePending(timedOutCseq, timedOutMethod, timedOutAtMs)
+            ) {
+                terminalFailure = RtspFailure.Timeout(timedOutMethod, timedOutCseq)
+            }
             state = "ERROR"
             Log.w(TAG, "RTSP late response timeout")
             return
@@ -239,6 +316,8 @@ fun handle(message: String?): List<String> {
         outstandingCseq = -1
         val method = outstandingMethod
         val kind = outstandingKind
+        val methodCseq = cseq
+        val pendingAtMs = outstandingAtMs
         outstandingMethod = ""
         outstandingKind = ""
         outstandingAtMs = -1L
@@ -248,6 +327,14 @@ fun handle(message: String?): List<String> {
             if (kind == "uibc-enable") {
                 Log.i(TAG, "sink M15 enable rejected code=$code")
                 return
+            }
+            // Evidence only for a genuine pending exchange with a strict
+            // definitive status line; state handling is unchanged.
+            val definitiveCode = strictDefinitiveCode(start)
+            if (definitiveCode != null && terminalFailure == null && state != "ERROR" &&
+                hasGenuinePending(methodCseq, method, pendingAtMs)
+            ) {
+                terminalFailure = RtspFailure.Rejected(method, methodCseq, definitiveCode)
             }
             state = "ERROR"
             return
@@ -429,6 +516,21 @@ fun handle(message: String?): List<String> {
         return checkExchangeTimeout() || outstandingCseq >= 0
     }
 
+    /**
+     * True only for a genuine pending sink exchange.
+     *
+     * Guards evidence recording so an unknown or already-cleared slot can
+     * never be reported as a failure. State handling is unchanged.
+     *
+     * @param pendingCseq Pending sink request CSeq.
+     * @param pendingMethod Pending sink request method.
+     * @param pendingAtMs Time the pending request was sent.
+     * @return True when all three identify a live exchange.
+     */
+    private fun hasGenuinePending(pendingCseq: Int, pendingMethod: String, pendingAtMs: Long): Boolean {
+        return pendingCseq >= 0 && pendingMethod.isNotEmpty() && pendingAtMs >= 0L
+    }
+
     private fun portField(value: String): Int {
         val match = Regex("port=(\\d+)").find(value) ?: return -1
         val port = match.groupValues[1].toIntOrNull() ?: return -1
@@ -515,6 +617,29 @@ fun handle(message: String?): List<String> {
             } catch (_: NumberFormatException) {
                 0
             }
+        }
+
+        /**
+         * Strict definitive status code for failure evidence only.
+         *
+         * Requires an exact `RTSP/1.0` version token and an exactly
+         * three-ASCII-digit code in 300..599. Returns null for anything else.
+         * Parsing and state handling keep using [statusCode].
+         *
+         * @param start Response status line.
+         * @return Definitive code, or null when the line is not strict.
+         */
+        private fun strictDefinitiveCode(start: String): Int? {
+            val parts = start.split(Regex("\\s+"))
+            if (parts.size < 2 || parts[0] != "RTSP/1.0") {
+                return null
+            }
+            val token = parts[1]
+            if (token.length != 3 || !token.all { it in '0'..'9' }) {
+                return null
+            }
+            val code = token.toIntOrNull() ?: return null
+            return if (code in 300..599) code else null
         }
 
         private fun headerInt(lines: List<String>, name: String): Int {

@@ -213,7 +213,7 @@ class H264SurfaceDecoder {
                 }
                 return
             }
-            val next = surface ?: return
+            val next = surface
             this.surface = next
             if (next === previous && codec != null) {
                 drainPending()

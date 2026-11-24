@@ -30,6 +30,10 @@ object UibcTouchChannel {
      */
     internal var writeRunner: (Runnable) -> Unit = { runnable -> writer.execute(runnable) }
 
+    /** Binds the socket to the P2P network before connecting. */
+    internal var socketBinder: (android.content.Context?, Socket) -> Boolean =
+        { context, socket -> P2pNetworkBinder.bind(context, socket) }
+
     var context: android.content.Context? = null
 
     /** Optional English status line, for the connection log. */
@@ -40,11 +44,12 @@ object UibcTouchChannel {
         close()
         val next = Channel(hidType = hidType, enabled = enabled)
         state.set(next)
+        val bindSocket = socketBinder
         Thread({
             val socket = Socket()
             try {
                 socket.bind(null)
-                P2pNetworkBinder.bind(context, socket)
+                bindSocket(context, socket)
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(host, port), 3_000)
                 synchronized(next) {

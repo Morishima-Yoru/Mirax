@@ -47,6 +47,25 @@ class ShizukuOwnerAdapter(
         }
     }
 
+    override fun groupSnapshotV2(): OwnerGroupSnapshot? {
+        return try {
+            OwnerGroupSnapshot.parse(owner, serviceProvider()?.groupSnapshotV2())
+        } catch (err: Exception) {
+            Log.w(TAG, "groupSnapshotV2 via Shizuku failed", err)
+            null
+        }
+    }
+
+    override fun endSessionIfEpoch(snapshot: OwnerGroupSnapshot): Boolean {
+        if (!snapshot.canEndBy(owner)) return false
+        return try {
+            serviceProvider()?.endSessionIfEpoch(snapshot.epoch) == true
+        } catch (err: Exception) {
+            Log.w(TAG, "endSessionIfEpoch via Shizuku failed", err)
+            false
+        }
+    }
+
     override fun endSession() {
         try {
             serviceProvider()?.endSession()

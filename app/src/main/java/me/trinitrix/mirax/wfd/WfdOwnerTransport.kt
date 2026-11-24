@@ -22,6 +22,16 @@ interface WfdOwnerTransport {
 
     fun groupState(): String?
 
+    /** @return a validated owner-issued snapshot, or null when unavailable */
+    fun groupSnapshotV2(): OwnerGroupSnapshot?
+
+    /**
+     * @param snapshot owner observation used for the guarded request
+     * @return true when the owner confirmed handler queueing, not removal; false may mean an
+     *         unknown outcome and must not trigger an automatic retry
+     */
+    fun endSessionIfEpoch(snapshot: OwnerGroupSnapshot): Boolean
+
     fun endSession()
 
     fun forgetAllPairings()
