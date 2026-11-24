@@ -1175,6 +1175,28 @@ class StandbyMediaStoreTest {
     }
 
     @Test
+    fun importedMediaSurvivesThemeSwitchPrefsWrite() {
+        val fake = FakePreferencesDataStore()
+        val dir = storageDir()
+        val store = storeFor(fake, dir, StandbyMediaValidator { StandbyMediaKind.IMAGE })
+        commitFirst(store, bytesOf(3, 1, 4), StandbyFraming.CENTERED)
+        val before = available(store)
+        runBlocking {
+            // Same preferences file also carries the persisted theme identity (standby.theme.id).
+            fake.updateData { prefs ->
+                prefs.toMutablePreferences().apply {
+                    set(stringPreferencesKey("standby.theme.id"), "hardline")
+                }
+            }
+        }
+        val after = available(store)
+        assertThat(after.file?.canonicalPath).isEqualTo(before.file?.canonicalPath)
+        assertThat(after.file?.readBytes()).isEqualTo(bytesOf(3, 1, 4))
+        assertThat(after.framing).isEqualTo(before.framing)
+        assertThat(after.generation).isEqualTo(before.generation)
+    }
+
+    @Test
     fun staleCandidateCannotReplaceNewer() {
         val fake = FakePreferencesDataStore()
         val dir = storageDir()
@@ -2728,4 +2750,30 @@ class StandbyMediaStoreTest {
         assertThat(fake.updateCount.value).isEqualTo(1)
         assertThat(staged.candidate.file.exists()).isTrue()
     }
+    @Test
+    fun importedMediaSurvivesExternalOriginalDeletionAcrossRestart() {
+        val fake = FakePreferencesDataStore()
+        val dir = storageDir()
+        val validator = StandbyMediaValidator { StandbyMediaKind.IMAGE }
+        val store = storeFor(fake, dir, validator)
+        val original = File(folders.root, "gallery_original.dat").apply { writeBytes(bytesOf(6, 2)) }
+        val staged = runBlocking { store.stageContent({ original.inputStream() }, StandbyFraming.CENTERED) }
+        assertThat(staged).isInstanceOf(StandbyStageResult.Staged::class.java)
+        val candidate = (staged as StandbyStageResult.Staged).candidate
+        assertThat(runBlocking { store.confirm(candidate) })
+            .isInstanceOf(StandbyConfirmResult.Committed::class.java)
+        assertThat(candidate.file.canonicalPath).isNotEqualTo(original.canonicalPath)
+
+        // External actor deletes user's original after import; store owns its copy.
+        original.delete()
+        val before = available(store)
+        assertThat(before.file?.readBytes()).isEqualTo(bytesOf(6, 2))
+
+        val restarted = storeFor(fake, dir, validator)
+        val after = available(restarted)
+        assertThat(after.file?.canonicalPath).isEqualTo(before.file?.canonicalPath)
+        assertThat(after.file?.readBytes()).isEqualTo(bytesOf(6, 2))
+        assertThat(after.generation).isEqualTo(before.generation)
+    }
+
 }

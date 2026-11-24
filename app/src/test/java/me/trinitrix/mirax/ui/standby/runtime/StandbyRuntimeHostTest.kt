@@ -195,4 +195,29 @@ class StandbyRuntimeHostTest {
         state.acceptTilt(requireNotNull(state.ticket()), 1.0, 0.0)
         assertThat(state.advance(0.1, 800, 600).canvasX).isGreaterThan(0f)
     }
+    @Test
+    fun standbyPauseAndReleaseTouchNoDecoderOrAudioPath() {
+        val (host, parallax, drift) = host()
+        host.onVisibilityChanged(StandbyVisibilityState.Visible, ScreenPhase.READY)
+        host.onMatterLayerAvailabilityChanged(true)
+        host.onAnimationPreferenceChanged(StandbyAnimationPreference.REDUCED)
+        host.onAnimationPreferenceChanged(StandbyAnimationPreference.DISABLED)
+        assertThat(parallax.starts).isEqualTo(1)
+        assertThat(drift.starts).isEqualTo(1)
+        host.onVisibilityChanged(StandbyVisibilityState.Projecting, ScreenPhase.CONNECTED)
+        host.onVisibilityChanged(StandbyVisibilityState.Background, ScreenPhase.READY)
+        host.onVisibilityChanged(StandbyVisibilityState.Hidden, ScreenPhase.READY)
+        assertThat(host.isHoldingSensors()).isFalse()
+        assertThat(host.shouldRunAmbient()).isFalse()
+        assertThat(parallax.resets).isEqualTo(1)
+        assertThat(drift.resets).isEqualTo(1)
+        // Host seam owns sensors only; no stream decoder or audio member is reachable from it.
+        val surfaced = StandbyRuntimeHost::class.java.declaredMethods.map { it.name } +
+            StandbyRuntimeHost::class.java.declaredFields.map { it.name }
+        val forbidden = surfaced.filter { name ->
+            listOf("decode", "decoder", "audio", "media").any { token -> name.lowercase().contains(token) }
+        }
+        assertThat(forbidden).isEmpty()
+    }
+
 }

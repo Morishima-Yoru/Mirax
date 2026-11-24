@@ -183,4 +183,44 @@ class FrozenPhaseSafetyTest {
         assertThat(lost.canReadWmSize).isFalse()
         assertThat(lost.phase).isEqualTo(ScreenPhase.FROZEN)
     }
+    @Test
+    fun wifiWarningStopDisablesAdvertisingWhileStayingPaused() {
+        val session = armedSession()
+        session.handle(SessionAction.BeaconListening)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        session.report(WifiReport(enabled = false))
+        val paused = session.snapshot()
+        assertThat(paused.phase).isEqualTo(ScreenPhase.WIFI_PAUSED)
+        assertThat(paused.advertisingEnabled).isTrue()
+
+        // Warning switch action (MainActivity.kt:1868-1872): stop advertising, intent off.
+        session.handle(SessionAction.SetAdvertising(false))
+        val stopped = session.snapshot()
+        assertThat(stopped.advertisingEnabled).isFalse()
+        assertThat(stopped.wfdAdvertise).isNull()
+        // Intent off leaves the paused phase: session reports READY, no advert retained.
+        assertThat(stopped.phase).isEqualTo(ScreenPhase.READY)
+
+        session.report(WifiReport(enabled = true))
+        val restored = session.snapshot()
+        assertThat(restored.advertisingEnabled).isFalse()
+        assertThat(restored.wfdAdvertise).isNull()
+        assertThat(restored.phase).isEqualTo(ScreenPhase.READY)
+    }
+
+    @Test
+    fun frozenInfoDialogShizukuPromptFollowsPrivilegeState() {
+        val session = MiraxSession(SessionSettings(), TestConnectionHistory())
+        session.report(PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = false))
+        session.handle(SessionAction.OpenApp)
+        val frozen = session.snapshot()
+        assertThat(frozen.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(frozen.shouldRequestShizukuPermission).isTrue()
+        assertThat(frozen.effects).isEmpty()
+
+        session.report(PrivilegeReport(shizukuServiceRunning = true, shizukuAuthorized = true))
+        session.handle(SessionAction.OpenApp)
+        assertThat(session.snapshot().shouldRequestShizukuPermission).isFalse()
+    }
+
 }
