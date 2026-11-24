@@ -1,0 +1,189 @@
+#e-scene {
+    --e-channel-size: min(54vw, 78svh);
+    --e-origin-x: 72vw;
+    --e-origin-y: 48svh;
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+}
+
+.stage.v-D #e-scene { display: block; }
+
+/* CSS-pixel rotation preserves the rising diagonal without changing D's SVG geometry. */
+#e-scene .e-channel {
+    --e-channel-height: 44px;
+    position: absolute;
+    left: var(--e-origin-x);
+    top: var(--e-origin-y);
+    width: 200vmax;
+    height: var(--e-channel-height);
+    border-block: 1px solid #393939;
+    background: #ffffff03;
+    transform: translate(-50%, -50%) rotate(-45deg) translateY(var(--e-channel-offset));
+    font: 11px/16px ui-monospace, "SFMono-Regular", Consolas, monospace;
+    letter-spacing: .1em;
+    color: #858585;
+}
+
+#e-scene .e-channel--upper {
+    --e-channel-offset: calc(var(--e-channel-size) * -.59);
+    /* Border-box inner was 62px and the three rows filled it, so the first line sat on the edge. */
+    --e-channel-height: 80px;
+}
+
+#e-scene .e-channel--lower {
+    --e-channel-offset: calc(var(--e-channel-size) * .59 - 16px);
+    --e-channel-height: 52px;
+}
+
+/* Scan only the viewport intersection of each band edge, not the offscreen rail. */
+#e-scene .e-channel::before,
+#e-scene .e-channel::after {
+    --e-scan-start: max(calc(var(--e-origin-x) * -1.414214 - var(--e-edge-offset)),
+        calc((var(--e-origin-y) - 100svh) * 1.414214 + var(--e-edge-offset)));
+    --e-scan-end: min(calc((100vw - var(--e-origin-x)) * 1.414214 - var(--e-edge-offset)),
+        calc(var(--e-origin-y) * 1.414214 + var(--e-edge-offset)));
+    --e-trace-length: clamp(56px, 12vmin, 96px);
+    content: "";
+    position: absolute;
+    left: calc(50% + var(--e-scan-start) - var(--e-trace-length));
+    width: var(--e-trace-length);
+    height: 1px;
+    background: linear-gradient(90deg, #fff0, #ffffff6b 65%,
+        #ffffffbd calc(100% - 5px), #fff calc(100% - 3px));
+    opacity: var(--e-shot-alpha, 0);
+    transform: translateX(calc((var(--e-scan-end) - var(--e-scan-start) +
+        var(--e-trace-length)) * var(--e-shot-position, 0)));
+    will-change: transform, opacity;
+}
+
+#e-scene .e-channel::before {
+    --e-edge-offset: calc(var(--e-channel-offset) - var(--e-channel-height) / 2);
+    --e-shot-alpha: var(--e-top-alpha, 0);
+    --e-shot-position: var(--e-top-position, 0);
+    top: -1px;
+}
+
+#e-scene .e-channel::after {
+    --e-edge-offset: calc(var(--e-channel-offset) + var(--e-channel-height) / 2);
+    --e-shot-alpha: var(--e-bottom-alpha, 0);
+    --e-shot-position: var(--e-bottom-position, 0);
+    bottom: -1px;
+}
+
+#e-scene .e-stream-window {
+    --e-axis-offset: var(--e-channel-offset);
+    --e-axis-start: max(calc(var(--e-origin-x) * -1.414214 - var(--e-axis-offset)), calc((var(--e-origin-y) - 100svh) * 1.414214 + var(--e-axis-offset)));
+    --e-axis-end: min(calc((100vw - var(--e-origin-x)) * 1.414214 - var(--e-axis-offset)), calc(var(--e-origin-y) * 1.414214 + var(--e-axis-offset)));
+    position: absolute;
+    left: calc(50% + var(--e-axis-start));
+    inset-block: 0;
+    width: max(0px, calc(var(--e-axis-end) - var(--e-axis-start)));
+    overflow: hidden;
+    display: grid;
+    /* Shared scan axis places every viewport's track entry on the visible band. */
+    grid-template-columns: minmax(0, 1fr);
+    align-content: center;
+    gap: 3px;
+}
+
+#e-scene .e-stream-row { height: 16px; }
+#e-scene .e-code-address { color: #9d9d9d; font-size: 10px; }
+#e-scene .e-code-word { color: #cecece; font-size: 12px; }
+#e-scene .e-code-comment { color: #858585; font-size: 10px; }
+#e-scene .e-code-marker { color: #c4c4c4; font-size: 13px; }
+
+/* This secondary status follows the real stage state; the primary status remains the announcer. */
+#e-scene .e-stream-row--status {
+    position: relative;
+    height: 24px;
+    color: #f2f2f2;
+    font-size: calc(12px + 2pt);
+    font-weight: 700;
+    line-height: 24px;
+}
+
+#e-scene .e-status-message { display: block; position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s linear 180ms; }
+.stage[data-phase="off"] #e-scene .e-status-message[data-status="off"],
+.stage[data-phase="arming"] #e-scene .e-status-message[data-status="arming"],
+.stage[data-phase="wifi-paused"] #e-scene .e-status-message[data-status="wifi-paused"],
+.stage[data-phase="frozen"] #e-scene .e-status-message[data-status="frozen"],
+.stage[data-phase="waiting"] #e-scene .e-status-message[data-status="waiting"],
+.stage[data-phase="connecting"] #e-scene .e-status-message[data-status="connecting"],
+.stage[data-phase="failed"] #e-scene .e-status-message[data-status="failed"],
+.stage[data-phase="projecting"] #e-scene .e-status-message[data-status="projecting"] { opacity: 1; visibility: visible; transition: opacity 180ms ease, visibility 0s linear 0s; }
+
+.stage[data-broadcast="true"][data-phase="failed"] #e-scene .e-stream-row--status { color: #ff6b6b; }
+.stage[data-phase="failed"] #e-scene .e-stream-row--status { color: #ff6b6b; }
+.stage[data-phase="frozen"] #e-scene .e-stream-row--status { color: #ff6b6b; }
+.stage[data-home="simple"] #e-scene .e-stream-row--status,
+.stage[data-phase="projecting"] #e-scene .e-stream-row--status,
+.stage.page-hidden #e-scene .e-stream-row--status,
+.stage.has-media #e-scene .e-stream-row--status { visibility: hidden; }
+
+/* Eight compact phrases per segment keep each state's estimated travel near 24 CSS px/s. */
+#e-scene .e-status-message[data-status="off"] { --e-status-duration: 148s; }
+#e-scene .e-status-message[data-status="arming"] { --e-status-duration: 68s; }
+#e-scene .e-status-message[data-status="wifi-paused"] { --e-status-duration: 144s; } /* shortcut: 48/40 character ratio ignores glyph width, upgrade when parent measures px/s */
+#e-scene .e-status-message[data-status="frozen"] { --e-status-duration: 112s; }
+#e-scene .e-status-message[data-status="waiting"] { --e-status-duration: 144s; }
+#e-scene .e-status-message[data-status="connecting"] { --e-status-duration: 84s; }
+#e-scene .e-status-message[data-status="failed"] { --e-status-duration: 140s; }
+#e-scene .e-status-message[data-status="projecting"] { --e-status-duration: 108s; }
+#e-scene .e-channel--upper .e-stream-row--status .e-stream-track { animation-duration: var(--e-status-duration); }
+#e-scene .e-stream-row--status .e-stream-segment { padding-right: 0; }
+#e-scene .e-status-phrase { padding-inline: 16px; }
+
+#e-scene .e-stream-track {
+    display: flex;
+    width: max-content;
+    white-space: nowrap;
+    animation: e-command-flow 240s linear infinite;
+    animation-play-state: paused;
+}
+
+#e-scene .e-stream-segment { position: relative; flex: none; padding-right: 8ch; }
+#e-scene .e-channel--lower .e-stream-track { animation-duration: 360s; }
+
+/* Equal segments loop along positive local X, from bottom-left to upper-right. */
+@keyframes e-command-flow {
+    from { transform: translate3d(-50%, 0, 0); }
+    to { transform: translate3d(0, 0, 0); }
+}
+
+.stage.v-D.e-motion-active #e-scene .e-stream-track {
+    animation-play-state: running;
+}
+
+.stage.ui-motion-stopped #e-scene .e-status-message,
+.stage.motion-stopped #e-scene .e-status-message { transition: none; }
+
+.stage.v-D.e-motion-active #e-scene .e-status-message .e-stream-track { animation-play-state: paused; }
+.stage[data-phase="off"].v-D.e-motion-active #e-scene .e-status-message[data-status="off"] .e-stream-track,
+.stage[data-phase="arming"].v-D.e-motion-active #e-scene .e-status-message[data-status="arming"] .e-stream-track,
+.stage[data-phase="wifi-paused"].v-D.e-motion-active #e-scene .e-status-message[data-status="wifi-paused"] .e-stream-track,
+.stage[data-phase="frozen"].v-D.e-motion-active #e-scene .e-status-message[data-status="frozen"] .e-stream-track,
+.stage[data-phase="waiting"].v-D.e-motion-active #e-scene .e-status-message[data-status="waiting"] .e-stream-track,
+.stage[data-phase="connecting"].v-D.e-motion-active #e-scene .e-status-message[data-status="connecting"] .e-stream-track,
+.stage[data-phase="failed"].v-D.e-motion-active #e-scene .e-status-message[data-status="failed"] .e-stream-track,
+.stage[data-phase="projecting"].v-D.e-motion-active #e-scene .e-status-message[data-status="projecting"] .e-stream-track { animation-play-state: running; }
+
+@media (max-width: 600px) and (orientation: portrait) {
+    #e-scene {
+        --e-channel-size: min(84vw, 48svh);
+        --e-origin-x: 59vw;
+        --e-origin-y: 38svh;
+    }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+    #e-scene {
+        --e-channel-size: min(44vw, 74svh);
+        --e-origin-x: 75vw;
+        --e-origin-y: 47svh;
+    }
+}
