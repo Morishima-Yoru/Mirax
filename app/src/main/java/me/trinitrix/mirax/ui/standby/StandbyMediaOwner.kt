@@ -430,6 +430,32 @@ internal class StandbyMediaOwner(
         binding?.view?.setFraming(currentFraming())
         publish()
     }
+    /**
+     * Removes the committed custom background so the selected theme shows again.
+     *
+     * Only reachable while no candidate is staged: staging owns the store transaction
+     * and must finish first. A failed clear reports truthfully and leaves the
+     * background in place.
+     */
+    fun clearCustomBackground(lease: Long) {
+        if (!leases.isCurrent(lease)) return
+        if (edit != null || staging) return
+        scope.launch {
+            try {
+                if (store.clearActive() == StandbySnapshot.Unavailable) {
+                    notice(R.string.standby_media_read_failed)
+                    return@launch
+                }
+                refreshActive()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.e(TAG, "Cannot clear standby media", failure)
+                notice(R.string.standby_media_read_failed)
+            }
+        }
+    }
+    
 
     private fun commit(candidate: StagedCandidate, framing: StandbyFraming, wasUncertain: Boolean) {
         scope.launch {

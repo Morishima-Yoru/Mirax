@@ -689,6 +689,50 @@ class StandbyMediaStore(
     }
 
     /**
+     * Drops the committed custom background so the selected theme shows again.
+
+     * Clears the media pointer in one metadata transaction, then retires the
+     * store-owned file that pointer referenced. Framing resets to centred
+     * because it only ever described the removed media. Unreadable or corrupt
+     * metadata yields [StandbySnapshot.Unavailable] and removes nothing.
+
+     * @return fresh classified snapshot after the write attempt.
+     */
+    suspend fun clearActive(): StandbySnapshot {
+        return sharedLock.withLock {
+            val current = readPointerBounded()
+            if (!current.isSafeForMutation()) {
+                return StandbySnapshot.Unavailable
+            }
+            val oldBasename = (current as? PointerRead.Intact)?.record?.basename
+            val committed = withContext(NonCancellable) {
+                try {
+                    dataStore.updateData { prefs ->
+                        prefs.toMutablePreferences().apply {
+                            remove(KEY_BASENAME)
+                            remove(KEY_KIND)
+                            this[KEY_CENTER_X] = StandbyFraming.CENTERED.centerX
+                            this[KEY_CENTER_Y] = StandbyFraming.CENTERED.centerY
+                            this[KEY_ZOOM] = StandbyFraming.CENTERED.zoom
+                            if (!contains(KEY_GENERATION)) this[KEY_GENERATION] = 0L
+                        }.toPreferences()
+                    }
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            if (!committed) {
+                return StandbySnapshot.Unavailable
+            }
+            if (oldBasename != null) {
+                pruneIfReplaced(oldBasename, "")
+            }
+            snapshot()
+        }
+    }
+
+    /**
      * Commits [framing] while keeping the current media pointer.
      *
      * Single metadata transaction; never deletes any file. Unreadable or

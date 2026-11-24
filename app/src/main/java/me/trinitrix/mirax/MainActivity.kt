@@ -909,6 +909,8 @@ class MainActivity : AppCompatActivity() {
         val enabled = activityStarted && mediaLease != null && !mediaStaging && mediaEdit == null
         listOf(binding.pageStart, binding.pageEnd).forEach { pane ->
             pane.findViewWithTag<View>("standby-media-import")?.isEnabled = enabled
+            pane.findViewWithTag<View>("standby-media-restore")?.isEnabled =
+                enabled && standbyMediaReady
             pane.findViewWithTag<View>("standby-media-importing")?.visibility =
                 if (mediaStaging) View.VISIBLE else View.GONE
         }
@@ -2412,6 +2414,12 @@ class MainActivity : AppCompatActivity() {
         column.addView(hint(getString(R.string.standby_media_importing)).apply {
             tag = "standby-media-importing"
             visibility = if (mediaStaging) View.VISIBLE else View.GONE
+        })
+column.addView(jump(getString(R.string.standby_media_restore_title), "") {
+            mediaLease?.let { MiraxApp.instance.standbyMediaOwner.clearCustomBackground(it) }
+        }.apply {
+            tag = "standby-media-restore"
+            isEnabled = mediaLease != null && standbyMediaReady && !mediaStaging && mediaEdit == null
         })
         return column
     }
