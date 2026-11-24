@@ -5,6 +5,9 @@ import android.content.pm.PackageManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.net.wifi.WifiManager
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import me.trinitrix.mirax.helper.Helper
 import me.trinitrix.mirax.session.PrivilegeReport
@@ -46,7 +49,7 @@ object PrivilegeProbe {
                 shizukuServiceRunning = false,
                 shizukuAuthorized = false,
                 helperRunning = false,
-                rootAvailable = RootHelper.availableCached(),
+                rootAvailable = if (!helperPathsAllowed()) false else RootHelper.availableCached()
             )
         }
         
@@ -54,16 +57,18 @@ object PrivilegeProbe {
         return PrivilegeReport(
             shizukuServiceRunning = shizuku.serviceRunning,
             shizukuAuthorized = shizuku.authorized,
-            helperRunning = isHelperRunning(),
-            rootAvailable = RootHelper.availableCached(),
+            helperRunning = if (!helperPathsAllowed()) false else isHelperRunning(),
+            rootAvailable = if (!helperPathsAllowed()) false else RootHelper.availableCached()
         )
     }
 
     /** Whether the privileged helper socket is accepting connections. */
-    fun isHelperRunning(): Boolean = probeHelper()
+    fun isHelperRunning(): Boolean = if (!helperPathsAllowed()) false else probeHelper()
 
     /** UID reported by the process currently bound to the helper socket. */
     fun helperUid(): Int? {
+        //Trial never opens the helper socket.
+        if (!helperPathsAllowed()) return null
         return try {
             LocalSocket().use { socket ->
                 socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
@@ -105,6 +110,8 @@ object PrivilegeProbe {
 
     /** Stop the currently listening helper process. */
     fun requestStopHelper() {
+        //Trial never signals the shared helper.
+        if (!helperPathsAllowed()) return
         try {
             LocalSocket().use { socket ->
                 socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
@@ -141,9 +148,18 @@ object PrivilegeProbe {
     private fun probeHelper(): Boolean {
         return try {
             LocalSocket().use { socket ->
+                // LocalSocket allocates its descriptor lazily and does not support connect timeout.
+                socket.inputStream
+                val fd = socket.fileDescriptor ?: return false
+                val flags = Os.fcntlInt(fd, OsConstants.F_GETFL, 0)
+                Os.fcntlInt(fd, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
+                // shortcut: pending connect fails closed, add completion polling if retries are needed.
                 socket.connect(LocalSocketAddress(Helper.SOCKET_NAME))
                 true
             }
+        } catch (err: ErrnoException) {
+            Log.d(TAG, "Helper socket not reachable", err)
+            false
         } catch (err: IOException) {
             Log.d(TAG, "Helper socket not reachable", err)
             false

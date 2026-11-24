@@ -1,6 +1,8 @@
 package me.trinitrix.mirax
 
 import android.content.Context
+import android.util.Log
+import androidx.annotation.VisibleForTesting
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.PictureScale
 import me.trinitrix.mirax.session.SessionSettings
@@ -32,9 +34,25 @@ object SessionPreferences {
     private const val KEY_CAMERA_CUTOUT_AFFECTS_LAYOUT = "camera_cutout_affects_layout"
     private const val KEY_BROADCAST_AUTO_STOP_MINUTES = "broadcast_auto_stop_minutes"
 
+    /** Last settings written by [saveResolutionSettings]; skips redundant startup writes. */
+    @Volatile
+    private var lastSavedResolutionSettings: SessionSettings? = null
+
+    /** Clears the write cache so tests observe real persistence. */
+    @VisibleForTesting
+    fun resetCacheForTesting() {
+        lastSavedResolutionSettings = null
+    }
+
     fun load(context: Context): SessionSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val language = when (prefs.getString(KEY_LANGUAGE, LanguagePreference.FOLLOW_SYSTEM.name)) {
+        val languageRaw = try {
+            prefs.getString(KEY_LANGUAGE, LanguagePreference.FOLLOW_SYSTEM.name)
+        } catch (failure: ClassCastException) {
+            Log.e("SessionPreferences", "Invalid language preference type", failure)
+            null
+        }
+        val language = when (languageRaw) {
             LanguagePreference.TRADITIONAL_CHINESE.name -> LanguagePreference.TRADITIONAL_CHINESE
             LanguagePreference.ENGLISH.name -> LanguagePreference.ENGLISH
             else -> LanguagePreference.FOLLOW_SYSTEM
@@ -88,17 +106,10 @@ object SessionPreferences {
     }
 
     fun saveAdvertising(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_ADVERTISING, enabled)
-            .apply()
-    }
-
-    fun saveLanguagePreference(context: Context, preference: LanguagePreference) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_LANGUAGE, preference.name)
-            .apply()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_ADVERTISING, false) != enabled) {
+            prefs.edit().putBoolean(KEY_ADVERTISING, enabled).apply()
+        }
     }
 
     fun saveDisplayNameOverride(context: Context, override: String?) {
@@ -121,6 +132,7 @@ object SessionPreferences {
      * bottom-handle, floating-ball, and picture-scale settings.
      */
     fun saveResolutionSettings(context: Context, settings: SessionSettings) {
+        if (settings == lastSavedResolutionSettings) return
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .apply {
@@ -150,6 +162,7 @@ object SessionPreferences {
                 putInt(KEY_BROADCAST_AUTO_STOP_MINUTES, settings.broadcastAutoStopMinutes)
             }
             .apply()
+        lastSavedResolutionSettings = settings
     }
 
     fun saveBottomHandleEnabled(context: Context, enabled: Boolean) {

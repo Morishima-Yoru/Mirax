@@ -3,28 +3,34 @@ package me.trinitrix.mirax
 import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.view.Display
 import android.view.Surface
 import android.widget.Toast
 import me.trinitrix.mirax.broadcast.BroadcastAutoStop
 import me.trinitrix.mirax.broadcast.EndConnectionConfirm
-import me.trinitrix.mirax.host.OverlayPermission
-import me.trinitrix.mirax.host.PrivilegeProbe
-import me.trinitrix.mirax.host.RootHelper
+import me.trinitrix.mirax.host.SessionPlatformBinding
 import me.trinitrix.mirax.session.PictureRotationReport
 import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.session.PictureScale
+import me.trinitrix.mirax.session.PrePlayAttemptId
+import me.trinitrix.mirax.session.PrePlayAttemptIdGenerator
+import me.trinitrix.mirax.session.PrePlayFailureEpisodeOwner
+import me.trinitrix.mirax.session.PrePlayNonFailureReason
+import me.trinitrix.mirax.session.PrePlayPreemptReason
+import me.trinitrix.mirax.session.SinkAttemptSource
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.SessionEffect
 import me.trinitrix.mirax.session.SessionSnapshot
 import me.trinitrix.mirax.session.TileState
 import me.trinitrix.mirax.session.WfdOwner
-import me.trinitrix.mirax.tile.BroadcastTileService
-import me.trinitrix.mirax.wfd.SinkConnectionController
-import me.trinitrix.mirax.wfd.WfdOwnerBridge
-import me.trinitrix.mirax.widget.BroadcastStatusWidget
-import me.trinitrix.mirax.wifi.WifiRadio
-import me.trinitrix.mirax.wm.WmSize
+import me.trinitrix.mirax.wfd.SinkWmReadCoordinator
+import me.trinitrix.mirax.wfd.SinkWmReadScope
+import me.trinitrix.mirax.wfd.isCurrentSinkWmReading
+import me.trinitrix.mirax.wfd.isCurrentSinkWmScope
 
 /**
  * Host-side bridge that applies session actions, persists settings, keeps the
@@ -41,14 +47,115 @@ import me.trinitrix.mirax.wm.WmSize
  * the session decides visible-picture axes.
  */
 object SessionHost {
+    private const val TAG = "SessionHost"
+    private const val WM_READ_DEADLINE_MS = 2_000L
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private data class ProvisioningRead(
+        val request: SinkWmReadCoordinator.Request,
+        val scope: SinkWmReadScope,
+        val deadline: Long,
+        var expired: Boolean = false,
+    )
+    private var provisioningRead: ProvisioningRead? = null
+    private var provisioningWaitingForWm: SinkWmReadCoordinator.Request? = null
+    private var provisioningUnavailableOnce = false
+    private var screenRead: SinkWmReadCoordinator.Request? = null
+    private var useScreenSequence = 0L
+    private var lastPrePlayAttempt: PrePlayAttemptId? = null
+
+    /**
+     * Returns the latest attempt identity issued for pre-play, or null.
+     *
+     * MainActivity consumes this to verify "still latest" before showing FAILED.
+     *
+     * @return Latest attempt, or null before the first pre-play entry.
+     */
+    fun latestPrePlayAttempt(): PrePlayAttemptId? = lastPrePlayAttempt
+
+    /**
+     * Registers a source accepted on the main thread, even during CONNECTING.
+     *
+     * @param source Accepted sink group identity.
+     */
+    internal fun onSinkAttemptStarted(source: SinkAttemptSource) {
+        check(android.os.Looper.getMainLooper()?.isCurrentThread == true)
+        val attempt = PrePlayAttemptIdGenerator.getInstance().next()
+        if (PrePlayFailureEpisodeOwner.getInstance().onPrePlayAttemptStarted(attempt, source)) {
+            lastPrePlayAttempt = attempt
+        }
+    }
+
+    /**
+     * Consumes a source immediately when its controller is stopped or restarted.
+     */
+    internal fun onSinkStopped() {
+        check(android.os.Looper.getMainLooper()?.isCurrentThread == true)
+        PrePlayFailureEpisodeOwner.getInstance().onExplicitStop()
+    }
+
+    /**
+     * Consumes an unclassified natural group drop without dismissing a failure.
+     *
+     * @param source Source whose group dropped.
+     */
+    internal fun onSinkGroupDropped(source: SinkAttemptSource) {
+        check(android.os.Looper.getMainLooper()?.isCurrentThread == true)
+        PrePlayFailureEpisodeOwner.getInstance()
+            .onPrePlayNonFailure(PrePlayNonFailureReason.UNKNOWN_DROP, source)
+    }
+
+    /**
+     * Applies truth changes which supersede a failure episode.
+     *
+     * @param snapshot Latest session snapshot.
+     */
+    private fun trackPrePlayPreemption(snapshot: SessionSnapshot) {
+        when (snapshot.phase) {
+            me.trinitrix.mirax.session.ScreenPhase.CONNECTED ->
+                PrePlayFailureEpisodeOwner.getInstance()
+                    .onPreempted(PrePlayPreemptReason.PROJECTION_STARTED)
+            me.trinitrix.mirax.session.ScreenPhase.WIFI_PAUSED ->
+                PrePlayFailureEpisodeOwner.getInstance()
+                    .onPreempted(PrePlayPreemptReason.WIFI_PAUSED)
+            me.trinitrix.mirax.session.ScreenPhase.FROZEN ->
+                PrePlayFailureEpisodeOwner.getInstance()
+                    .onPreempted(PrePlayPreemptReason.FROZEN_STATE)
+            else -> Unit
+        }
+    }
+
+    /**
+     * Notifies the FAILED owner that Big Standby foreground visibility changed.
+     * The 7.5s budget accrues only while visible. Must run on the main thread;
+     * background threads are rejected by the owner guard.
+     *
+     * Registers a one-time static UI refresh on episode changes so a 7.5s
+     * expiry (or dismiss/preemption) redraws the FAILED text without touching
+     * broadcast, idle, or navigation state.
+     *
+     * @param visible True while Big Standby is in the visible foreground.
+     */
+    fun onStandbyForegroundVisible(visible: Boolean) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return
+        val owner = PrePlayFailureEpisodeOwner.getInstance()
+        owner.setEpisodeListener { MainActivity.refreshPrePlayFailureOnly() }
+        owner.onForegroundVisibilityChanged(visible)
+    }
     /**
      * Dashboard or other UI toggled the shared advertising switch.
      */
     fun setAdvertising(context: Context, enabled: Boolean): SessionSnapshot {
         val session = MiraxApp.instance.session
-        session.report(WifiRadio.report(context))
+        val wasAdvertising = session.snapshot().advertisingEnabled
+        session.report(SessionPlatformBinding.platform.reportWifi(context))
         session.handle(SessionAction.SetAdvertising(enabled))
-        return commit(context)
+        val snapshot = commit(context)
+        // An explicit user stop supersedes any FAILED episode so a late
+        // terminal for the consumed attempt cannot reopen it.
+        if (!enabled && wasAdvertising) {
+            explicitStopPrePlay()
+        }
+        return snapshot
     }
 
     /**
@@ -61,8 +168,9 @@ object SessionHost {
     fun onTileClick(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
         val wasGray = session.snapshot().tileState == TileState.GRAY
-        session.report(PrivilegeProbe.probe(context))
-        session.report(WifiRadio.report(context))
+        val wasAdvertising = session.snapshot().advertisingEnabled
+        session.report(SessionPlatformBinding.platform.probePrivilege(context))
+        session.report(SessionPlatformBinding.platform.reportWifi(context))
         if (wasGray) {
             // Probe success turns broadcast on (not a toggle), so a switch that
             // was already on while frozen is not flipped off.
@@ -74,23 +182,66 @@ object SessionHost {
         } else {
             session.handle(SessionAction.TileTap)
         }
-        return commit(context)
+        val snapshot = commit(context)
+        // An explicit user stop via the tile supersedes any FAILED episode.
+        if (!wasGray && wasAdvertising && !snapshot.advertisingEnabled) {
+            explicitStopPrePlay()
+        }
+        return snapshot
     }
 
     /**
-     * "Use this screen" after confirming the session allows a wm size read.
+     * Starts a bounded asynchronous screen-size read after checking permission.
+     *
+     * @return The current snapshot; a valid completed read refreshes it asynchronously.
      */
     fun useThisScreen(context: Context, displayId: Int): SessionSnapshot {
         val session = MiraxApp.instance.session
         session.report(me.trinitrix.mirax.session.MiraxDisplayReport(displayId))
         val snapshot = session.snapshot()
         if (!snapshot.canUseThisScreen) {
+            useScreenSequence++
             return snapshot
         }
-        val reading = WmSize.readForDisplay(displayId) ?: return snapshot
-        session.report(PictureRotationReport(degrees = pictureRotationDegrees(context, displayId)))
-        session.handle(SessionAction.UseThisScreen(reading))
-        return commit(context)
+        val deadline = SystemClock.elapsedRealtime() + WM_READ_DEADLINE_MS
+        val fence = SessionPlatformBinding.platform.provisioningFence()
+        val revision = SessionPlatformBinding.platform.ownerRevision(snapshot.wfdOwner) ?: run {
+            useScreenSequence++
+            return snapshot
+        }
+        val scope = SinkWmReadScope(snapshot.wfdOwner, fence, revision)
+        val request = SessionPlatformBinding.platform.requestWmReading(scope, deadline, displayId) ?: run {
+            useScreenSequence++
+            Log.w(TAG, "Screen WM read unavailable while another display read is pending")
+            return snapshot
+        }
+        if (screenRead === request) return snapshot
+        val readDeadline = minOf(deadline, request.deadlineMs)
+        val sequence = ++useScreenSequence
+        screenRead = request
+        val appContext = context.applicationContext
+        request.onComplete {
+            mainHandler.post {
+                if (screenRead === request) screenRead = null
+                val current = session.snapshot()
+                val reading = request.result()
+                if (reading == null || SystemClock.elapsedRealtime() >= readDeadline || sequence != useScreenSequence ||
+                    MiraxApp.instance.session !== session || current.wfdOwner != snapshot.wfdOwner ||
+                    !current.canUseThisScreen || current.miraxDisplayId != displayId ||
+                    current.preferredMode != snapshot.preferredMode ||
+                    current.preferredModeText != snapshot.preferredModeText ||
+                    !isCurrentSinkWmScope(
+                        scope, current.wfdOwner, SessionPlatformBinding.platform.provisioningFence(),
+                        SessionPlatformBinding.platform.ownerRevision(current.wfdOwner),
+                    )
+                ) return@post
+                session.report(PictureRotationReport(degrees = pictureRotationDegrees(appContext, displayId)))
+                session.handle(SessionAction.UseThisScreen(reading))
+                commit(appContext)
+                MainActivity.refreshIfShowing()
+            }
+        }
+        return snapshot
     }
 
     /**
@@ -99,28 +250,51 @@ object SessionHost {
     fun commit(context: Context): SessionSnapshot {
         val appContext = context.applicationContext
         val session = MiraxApp.instance.session
-        WfdOwnerBridge.syncOwner(appContext, session.snapshot().wfdOwner)
-        maybeApplyProvisioningWmSize(appContext, session)
-        val snapshot = session.snapshot()
-        SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
-        SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
-        WifiRadio.sync(appContext, snapshot.advertisingEnabled)
-        BroadcastAutoStop.sync(snapshot)
-        AdvertisingKeepAliveService.sync(appContext, snapshot)
-        BroadcastStatusWidget.updateAll(appContext, snapshot)
-        BroadcastTileService.requestListening(appContext)
-        FloatingBallService.sync(appContext, snapshot)
+        SessionPlatformBinding.platform.syncOwner(appContext, session.snapshot().wfdOwner)
+        val provisioningPending = maybeApplyProvisioningWmSize(appContext, session)
+        val snapshot = publishSessionState(appContext, session)
         applyEffects(appContext, snapshot)
         // Apply one-shot effects before the owner receives the advertise command.
         val afterEffects = MiraxApp.instance.session.snapshot()
-        WfdOwnerBridge.syncOwner(appContext, afterEffects.wfdOwner)
-        val advertiseOk = WfdOwnerBridge.sync(appContext, afterEffects.wfdAdvertise)
-        if (afterEffects.wfdAdvertise != null && !advertiseOk) {
-            session.handle(SessionAction.BeaconFailed)
-            applyEffects(appContext, session.snapshot())
+        SessionPlatformBinding.platform.syncOwner(appContext, afterEffects.wfdOwner)
+        val waitingForProvisioning = provisioningPending && afterEffects.canReadWmSize &&
+            SessionEffect.ReadPlainWmSizeForProvisioning in afterEffects.effects
+        if (!waitingForProvisioning || afterEffects.wfdAdvertise == null) {
+            val advertiseOk = SessionPlatformBinding.platform.syncAdvertise(appContext, afterEffects.wfdAdvertise)
+            if (afterEffects.wfdAdvertise != null && !advertiseOk) {
+                session.handle(SessionAction.BeaconFailed)
+                val failureSnapshot = publishSessionState(appContext, session)
+                applyEffects(appContext, failureSnapshot)
+                SessionPlatformBinding.platform.syncAdvertise(appContext, session.snapshot().wfdAdvertise)
+            }
+            SessionPlatformBinding.platform.syncSink(appContext, session.snapshot().wfdAdvertise)
         }
-        SinkConnectionController.sync(appContext, afterEffects.wfdAdvertise)
-        return MiraxApp.instance.session.snapshot()
+        val finalSnapshot = MiraxApp.instance.session.snapshot()
+        trackPrePlayPreemption(finalSnapshot)
+        return finalSnapshot
+    }
+
+    /**
+     * Publishes the original session's current state without applying effects or provisioning.
+     *
+     * @param appContext Application context of the current commit.
+     * @param session Original session whose state is published.
+     * @return Snapshot used for all publications.
+     */
+    private fun publishSessionState(
+        appContext: Context,
+        session: me.trinitrix.mirax.session.MiraxSession,
+    ): SessionSnapshot {
+        val snapshot = session.snapshot()
+        SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
+        SessionPreferences.saveResolutionSettings(appContext, session.exportSettings())
+        SessionPlatformBinding.platform.syncWifi(appContext, snapshot.advertisingEnabled)
+        BroadcastAutoStop.sync(snapshot)
+        SessionPlatformBinding.platform.syncKeepAlive(appContext, snapshot)
+        SessionPlatformBinding.platform.updateWidgets(appContext, snapshot)
+        SessionPlatformBinding.platform.requestTileListening(appContext)
+        SessionPlatformBinding.platform.syncFloatingBall(appContext, snapshot)
+        return snapshot
     }
 
     /**
@@ -131,8 +305,76 @@ object SessionHost {
         val session = MiraxApp.instance.session
         session.handle(action)
         val snapshot = commit(context)
+        // Genuine RTSP terminal evidence opens FAILED; unproven paths stay silent.
+        // PrePlayGroupDropped / user drops carry no RtspFailure and never fake FAILED.
         MainActivity.refreshIfShowing()
         return snapshot
+    }
+
+    /**
+     * Applies a run-local history update without recursively committing the host.
+     *
+     * @param action Append or finish action accepted by the sink arbiter.
+     */
+    internal fun onSinkHistoryEvent(action: SessionAction) {
+        check(android.os.Looper.getMainLooper()?.isCurrentThread == true)
+        check(action is SessionAction.AppendConnectionLog || action is SessionAction.FinishConnectionRun)
+        MiraxApp.instance.session.handle(action)
+    }
+
+    /** Refreshes connection diagnostics after a current run's log changes. */
+    internal fun refreshSinkDiagnostics() {
+        check(android.os.Looper.getMainLooper()?.isCurrentThread == true)
+        MainActivity.refreshIfShowing()
+    }
+
+    /**
+     * Forwards genuine RTSP sink terminal evidence for the current attempt.
+     * Must be called on the main thread; background threads are rejected.
+     * Null or unproven evidence never opens an episode.
+     *
+     * @param failure Terminal evidence from the sink session, or null.
+     * @param source Sink attempt source identity at group-up boundary.
+     */
+    fun onRtspTerminal(
+        failure: me.trinitrix.mirax.wfd.rtsp.RtspFailure?,
+        source: me.trinitrix.mirax.session.SinkAttemptSource
+    ) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return
+        PrePlayFailureEpisodeOwner.getInstance().onPrePlayTerminal(failure, source)
+        MainActivity.refreshPrePlayFailureOnly()
+    }
+
+    /** Forwards a proven current-run TCP establishment timeout. */
+    internal fun onTcpEstablishmentTimeout(
+        evidence: me.trinitrix.mirax.session.TcpEstablishmentTimeout,
+        source: SinkAttemptSource,
+    ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) return
+        PrePlayFailureEpisodeOwner.getInstance().onTcpEstablishmentTimeout(evidence, source)
+        MainActivity.refreshPrePlayFailureOnly()
+    }
+
+    /**
+     * Clears any FAILED episode on an explicit user stop. Runs on the main
+     * thread; background threads are rejected by the owner guard. Changes no
+     * broadcast state and emits no session effects.
+     */
+    private fun explicitStopPrePlay() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return
+        PrePlayFailureEpisodeOwner.getInstance().onExplicitStop()
+        MainActivity.refreshPrePlayFailureOnly()
+    }
+
+    /**
+     * Dismisses the FAILED presentation. Changes no broadcast state, resets no
+     * idle clock, and navigates nowhere; purely presentational.
+     * Must be called on the main thread.
+     */
+    fun dismissPrePlayFailure() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return
+        PrePlayFailureEpisodeOwner.getInstance().onDismissed()
+        MainActivity.refreshPrePlayFailureOnly()
     }
 
     /**
@@ -140,14 +382,32 @@ object SessionHost {
      *
      * Does not re-apply the listen beacon. The wm-size preference is for this
      * connection's capability answer only.
+     *
+     * @param context Context used to read rotation.
+     * @param reading Run-local wm size, when available.
+     * @param canCommit Claims the originating request immediately before mutation.
+     * @param isCurrent Revalidates the source after the claim.
+     * @return The frozen snapshot, or null when the request was superseded.
      */
-    fun freezeConnectionOffer(context: Context, reading: WmSizeReading?): SessionSnapshot {
+    internal fun freezeConnectionOffer(
+        context: Context,
+        reading: WmSizeReading?,
+        canCommit: () -> Boolean,
+        isCurrent: () -> Boolean,
+    ): SessionSnapshot? {
+        val rotation = pictureRotationDegrees(context, null)
+        if (!canCommit() || !isCurrent()) return null
         val session = MiraxApp.instance.session
-        session.report(PictureRotationReport(pictureRotationDegrees(context, null)))
+        session.report(PictureRotationReport(rotation))
+        if (reading != null && SessionEffect.ReadPlainWmSizeForProvisioning in session.snapshot().effects &&
+            session.snapshot().canReadWmSize
+        ) {
+            session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+            SessionPreferences.saveResolutionSettings(context.applicationContext, session.exportSettings())
+        }
+        if (!isCurrent()) return null
         session.handle(SessionAction.FreezeConnectionOffer(reading))
-        val snapshot = session.snapshot()
-        MainActivity.refreshIfShowing()
-        return snapshot
+        return session.snapshot()
     }
 
     /**
@@ -232,7 +492,7 @@ object SessionHost {
      */
     fun requestOverlayPermission(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
-        session.report(OverlayPermission.report(context))
+        session.report(SessionPlatformBinding.platform.reportOverlay(context))
         session.handle(SessionAction.RequestOverlayPermission)
         return commit(context)
     }
@@ -242,7 +502,7 @@ object SessionHost {
      */
     fun leftProjectionToHome(context: Context): SessionSnapshot {
         val session = MiraxApp.instance.session
-        session.report(OverlayPermission.report(context))
+        session.report(SessionPlatformBinding.platform.reportOverlay(context))
         session.handle(SessionAction.LeftProjectionToHome)
         return commit(context)
     }
@@ -271,34 +531,106 @@ object SessionHost {
     fun refreshPrivilegeAndSurfaces(context: Context): SessionSnapshot {
         val appContext = context.applicationContext
         // Root probe / su helper start off the main thread; re-commit if state moves.
-        RootHelper.refreshAsync(appContext) {
+        SessionPlatformBinding.platform.refreshRoot(appContext) {
             val session = MiraxApp.instance.session
-            session.report(PrivilegeProbe.probe(appContext))
+            session.report(SessionPlatformBinding.platform.probePrivilege(appContext))
             commit(appContext)
         }
         val session = MiraxApp.instance.session
-        session.report(PrivilegeProbe.probe(appContext))
-        session.report(OverlayPermission.report(appContext))
-        session.report(WifiRadio.report(appContext))
+        session.report(SessionPlatformBinding.platform.probePrivilege(appContext))
+        session.report(SessionPlatformBinding.platform.reportOverlay(appContext))
+        session.report(SessionPlatformBinding.platform.reportWifi(appContext))
         return commit(appContext)
     }
 
     private fun maybeApplyProvisioningWmSize(
         context: Context,
         session: me.trinitrix.mirax.session.MiraxSession,
-    ) {
+    ): Boolean {
         val snapshot = session.snapshot()
-        if (SessionEffect.ReadPlainWmSizeForProvisioning !in snapshot.effects) {
-            return
+        if (SessionEffect.ReadPlainWmSizeForProvisioning !in snapshot.effects || !snapshot.canReadWmSize) {
+            provisioningUnavailableOnce = false
+            return false
         }
-        if (!snapshot.canReadWmSize) {
-            return
+        provisioningRead?.let { pending ->
+            return !pending.expired && SystemClock.elapsedRealtime() < pending.deadline &&
+                isCurrentSinkWmScope(
+                    pending.scope, snapshot.wfdOwner, SessionPlatformBinding.platform.provisioningFence(),
+                    SessionPlatformBinding.platform.ownerRevision(snapshot.wfdOwner),
+                )
         }
-        val reading = WmSize.readPlain() ?: return
-        session.report(
-            PictureRotationReport(degrees = pictureRotationDegrees(context, displayId = null)),
-        )
-        session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+        if (provisioningUnavailableOnce) {
+            provisioningUnavailableOnce = false
+            return false
+        }
+        val deadline = SystemClock.elapsedRealtime() + WM_READ_DEADLINE_MS
+        val fence = SessionPlatformBinding.platform.provisioningFence()
+        val revision = SessionPlatformBinding.platform.ownerRevision(snapshot.wfdOwner) ?: return false
+        val scope = SinkWmReadScope(snapshot.wfdOwner, fence, revision)
+        val request = SessionPlatformBinding.platform.requestWmReading(scope, deadline) ?: run {
+            val busy = SessionPlatformBinding.platform.activeWmRequest()
+            if (busy != null && provisioningWaitingForWm !== busy) {
+                provisioningWaitingForWm = busy
+                busy.onComplete {
+                    mainHandler.post {
+                        if (provisioningWaitingForWm === busy) {
+                            provisioningWaitingForWm = null
+                            if (MiraxApp.instance.session === session) commit(context)
+                        }
+                    }
+                }
+            }
+            return false
+        }
+        val pending = ProvisioningRead(request, scope, minOf(deadline, request.deadlineMs))
+        provisioningRead = pending
+        mainHandler.postDelayed({
+            if (provisioningRead === pending) {
+                pending.expired = true
+                Log.w(TAG, "Provisioning WM read timed out; retaining the original worker")
+                if (MiraxApp.instance.session === session) commit(context)
+            }
+        }, (pending.deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+        pending.request.onComplete {
+            mainHandler.post {
+                if (provisioningRead !== pending) return@post
+                provisioningRead = null
+                if (pending.expired) Log.i(TAG, "Provisioning WM read completed after its deadline")
+                val current = session.snapshot()
+                val eligible = MiraxApp.instance.session === session && current.canReadWmSize &&
+                    SessionEffect.ReadPlainWmSizeForProvisioning in current.effects
+                val now = SystemClock.elapsedRealtime()
+                val expired = pending.expired || now >= pending.deadline
+                val valid = isCurrentSinkWmReading(
+                    nowMs = now,
+                    deadlineMs = pending.deadline,
+                    eligible = eligible && !pending.expired,
+                    sameIdentity = isCurrentSinkWmScope(
+                        pending.scope, current.wfdOwner, SessionPlatformBinding.platform.provisioningFence(),
+                        SessionPlatformBinding.platform.ownerRevision(current.wfdOwner),
+                    ),
+                )
+                val reading = pending.request.result()
+                if (valid) {
+                    if (reading != null) {
+                        session.report(PictureRotationReport(degrees = pictureRotationDegrees(context, displayId = null)))
+                        session.handle(SessionAction.ApplyProvisioningWmSize(reading))
+                        if (SessionEffect.ReadPlainWmSizeForProvisioning in session.snapshot().effects) {
+                            provisioningUnavailableOnce = true
+                        }
+                    } else {
+                        Log.w(TAG, "Provisioning WM read completed without a usable size")
+                        provisioningUnavailableOnce = true
+                    }
+                    commit(context)
+                    MainActivity.refreshIfShowing()
+                } else if (eligible) {
+                    if (expired) provisioningUnavailableOnce = true
+                    commit(context)
+                }
+            }
+        }
+        return true
     }
 
     /**
@@ -349,15 +681,15 @@ object SessionHost {
             consumed = true
         }
         if (SessionEffect.DropActiveConnection in snapshot.effects) {
-            SinkConnectionController.dropActiveConnection()
+            SessionPlatformBinding.platform.dropActiveConnection()
             consumed = true
         }
         if (SessionEffect.RequestOverlayPermission in snapshot.effects) {
-            OverlayPermission.request(context)
+            SessionPlatformBinding.platform.requestOverlay(context)
             consumed = true
         }
         if (SessionEffect.OpenOverlaySettings in snapshot.effects) {
-            OverlayPermission.openSettings(context)
+            SessionPlatformBinding.platform.openOverlaySettings(context)
             consumed = true
         }
         if (SessionEffect.BringProjectionToFront in snapshot.effects) {
@@ -374,7 +706,7 @@ object SessionHost {
             consumed = true
         }
         if (SessionEffect.PromptEnableWifi in snapshot.effects) {
-            WifiRadio.prompt(context)
+            SessionPlatformBinding.platform.promptWifi(context)
             consumed = true
         }
         if (consumed) {

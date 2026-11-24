@@ -44,6 +44,10 @@ class MiraxShellUserService : IMiraxShellService.Stub() {
 
     override fun groupState(): String = beacon.groupState()
 
+    override fun groupSnapshotV2(): String = beacon.groupSnapshotV2()
+
+    override fun endSessionIfEpoch(epoch: String?): Boolean = beacon.endSessionIfEpoch(epoch)
+
     override fun wmSize(displayId: Int): String = Helper.wmSize(displayId)
 
     override fun forgetAllPairings() {
