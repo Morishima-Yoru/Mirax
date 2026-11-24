@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wfd;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.net.MacAddress;
 import android.net.wifi.WifiManager;
@@ -15,8 +16,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -25,6 +27,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /**
  * Shell-UID Wi-Fi Display Primary Sink beacon.
@@ -44,6 +54,8 @@ public final class PrimarySinkBeacon {
     public static final int RTSP_CONTROL_PORT = 7236;
     private static final int MAX_THROUGHPUT_MBPS = 50;
     private static final long POLL_INTERVAL_MS = 1000;
+    private static final long NEIGHBOR_TIMEOUT_MS = 750;
+    private static final int NEIGHBOR_OUTPUT_LIMIT = 65536;
     /** Android shuts an idle P2P interface down after 150 s; re-arm well before that. */
     private static final long RELISTEN_INTERVAL_MS = 30_000;
     /** WPS pairing timeout. */
@@ -64,20 +76,232 @@ public final class PrimarySinkBeacon {
     }
 
     private final Handler handler;
+    private final GroupTracker groupTracker = new GroupTracker();
+    private final NeighborQuery neighborQuery;
     private final Set<String> approverMacs = new HashSet<>();
     private Context context;
     private WifiP2pManager manager;
     private WifiP2pManager.Channel channel;
     private volatile boolean wanted;
     private volatile boolean advertising;
-    private volatile String groupState = GROUP_DOWN;
     private volatile String lastName = "";
-    private boolean groupFormed;
     private boolean forgetSavedGroups;
     private long lastArmedAt;
     private volatile PairingState pairingState = PairingState.UNPAIRED;
     private String pendingPairingMac = null;
     private Runnable wpsTimeoutRunnable = null;
+
+    private static final Pattern EPOCH_PATTERN = Pattern.compile(
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[1-9][0-9]{0,18}");
+
+    /**
+     * @param epoch untrusted epoch token
+     * @return whether the token has the exact owner epoch wire format
+     */
+    public static boolean isValidGroupEpoch(String epoch) {
+        return epoch != null && EPOCH_PATTERN.matcher(epoch).matches();
+    }
+
+    /**
+     * Handler-confined observations with an atomic cross-thread snapshot.
+     * Unobserved replacement groups with the same address remain indistinguishable.
+     */
+    static final class GroupTracker {
+        /** Immutable group state and its owner-issued identity. */
+        static final class Snapshot {
+            final String epoch;
+            final String state;
+            final boolean phoneIsOwner;
+
+            Snapshot(String epoch, String state, boolean phoneIsOwner) {
+                this.epoch = epoch;
+                this.state = state;
+                this.phoneIsOwner = phoneIsOwner;
+            }
+        }
+
+        /** Identity of one asynchronous connection-info request. */
+        static final class Request {
+            final long generation;
+            final long sequence;
+
+            Request(long generation, long sequence) {
+                this.generation = generation;
+                this.sequence = sequence;
+            }
+        }
+
+        private final String nonce = UUID.randomUUID().toString();
+        private long epochCounter;
+        private long generation;
+        private long requestSequence;
+        private long acceptedSequence;
+        private boolean wanted;
+        private boolean consumed;
+        private volatile Snapshot snapshot = new Snapshot(nextEpoch(), GROUP_DOWN, false);
+
+        private String nextEpoch() {
+            return nonce + "-" + ++epochCounter;
+        }
+
+        Snapshot snapshot() {
+            return snapshot;
+        }
+
+        boolean isFormed() {
+            return !GROUP_DOWN.equals(snapshot.state);
+        }
+
+        void setWanted(boolean nextWanted) {
+            if (wanted == nextWanted) {
+                return;
+            }
+            wanted = nextWanted;
+            generation++;
+            snapshot = new Snapshot(nextEpoch(), GROUP_DOWN, false);
+        }
+
+        Request request() {
+            return new Request(generation, ++requestSequence);
+        }
+
+        boolean accept(Request request, Runnable callback) {
+            if (!wanted || request.generation != generation
+                    || request.sequence <= acceptedSequence || request.sequence > requestSequence) {
+                return false;
+            }
+            acceptedSequence = request.sequence;
+            callback.run();
+            return true;
+        }
+
+        void observe(boolean formed, boolean phoneIsOwner, String source) {
+            String state = !formed ? GROUP_DOWN : source == null ? GROUP_PENDING
+                    : GROUP_UP_PREFIX + source + (phoneIsOwner ? " OWNER" : "");
+            boolean owner = formed && phoneIsOwner;
+            Snapshot current = snapshot;
+            // A reset or formed-state change does not prove the prior removal has finished.
+            if (!formed) {
+                consumed = false;
+            }
+            if (!current.state.equals(state) || current.phoneIsOwner != owner) {
+                snapshot = new Snapshot(nextEpoch(), state, owner);
+            }
+        }
+
+        boolean acceptsNeighbor(Request request, String epoch) {
+            Snapshot current = snapshot;
+            return wanted && request.generation == generation && request.sequence == acceptedSequence
+                    && current.epoch.equals(epoch) && current.phoneIsOwner && isFormed();
+        }
+
+        /**
+         * @param epoch observed group identity
+         * @param remove starts removal and receives success and failure callbacks
+         * @return handler runnable that consumes the epoch before removal
+         */
+        Runnable guardedEnd(String epoch, BiConsumer<Runnable, Runnable> remove) {
+            return () -> {
+                Snapshot current = snapshot;
+                if (!wanted || !isValidGroupEpoch(epoch) || GROUP_DOWN.equals(current.state)
+                        || !current.epoch.equals(epoch) || consumed) {
+                    return;
+                }
+                consumed = true;
+                long endGeneration = ++generation;
+                boolean[] completed = {false};
+                Runnable onSuccess = () -> completed[0] = true;
+                Runnable onFailure = () -> {
+                    if (completed[0]) {
+                        return;
+                    }
+                    completed[0] = true;
+                    Snapshot latest = snapshot;
+                    if (wanted && consumed && generation == endGeneration && latest.epoch.equals(epoch)) {
+                        consumed = false;
+                        snapshot = new Snapshot(nextEpoch(), latest.state, latest.phoneIsOwner);
+                    }
+                };
+                // Wi-Fi Direct has no atomic group-ID check at removeGroup execution.
+                try {
+                    remove.accept(onSuccess, onFailure);
+                } catch (RuntimeException | Error err) {
+                    onFailure.run();
+                    throw err;
+                }
+            };
+        }
+    }
+
+    /** One outstanding owner-neighbor query; all state is confined to the beacon handler. */
+    static final class NeighborQuery {
+        private final GroupTracker tracker;
+        private final Executor worker;
+        private final Consumer<Runnable> post;
+        private final BiFunction<Runnable, Long, Boolean> schedule;
+        private final Supplier<String> lookup;
+        private boolean running;
+        private boolean expired;
+        private long ticket;
+
+        NeighborQuery(GroupTracker tracker, Executor worker, Consumer<Runnable> post,
+                BiFunction<Runnable, Long, Boolean> schedule, Supplier<String> lookup) {
+            this.tracker = tracker;
+            this.worker = worker;
+            this.post = post;
+            this.schedule = schedule;
+            this.lookup = lookup;
+        }
+
+        void request(GroupTracker.Request request) {
+            GroupTracker.Snapshot current = tracker.snapshot();
+            if (running || !tracker.acceptsNeighbor(request, current.epoch)) {
+                return;
+            }
+            running = true;
+            expired = false;
+            long nextTicket = ++ticket;
+            try {
+                if (!schedule.apply(() -> {
+                    if (running && ticket == nextTicket) {
+                        expired = true;
+                    }
+                }, NEIGHBOR_TIMEOUT_MS)) {
+                    running = false;
+                    Log.w(TAG, "neighbor timeout could not be scheduled");
+                    return;
+                }
+                worker.execute(() -> {
+                    String address = null;
+                    try {
+                        address = lookup.get();
+                    } catch (Throwable err) {
+                        Log.w(TAG, "neighbor lookup failed", err);
+                    }
+                    String result = address;
+                    post.accept(() -> finish(nextTicket, request, current.epoch, result));
+                });
+            } catch (RuntimeException err) {
+                running = false;
+                Log.w(TAG, "neighbor scheduling failed", err);
+            }
+        }
+
+        private void finish(long finishedTicket, GroupTracker.Request request, String epoch, String address) {
+            if (!running || ticket != finishedTicket) {
+                return;
+            }
+            running = false;
+            if (expired || address == null || !tracker.acceptsNeighbor(request, epoch)) {
+                return;
+            }
+            GroupTracker.Snapshot previous = tracker.snapshot();
+            tracker.observe(true, true, address);
+            if (previous != tracker.snapshot()) {
+                Log.i(TAG, "source address " + address + " phoneIsOwner=true");
+            }
+        }
+    }
 
     private final Runnable poll = new Runnable() {
         @Override
@@ -92,6 +316,15 @@ public final class PrimarySinkBeacon {
 
     public PrimarySinkBeacon(Looper looper) {
         this.handler = new Handler(looper);
+        this.neighborQuery = new NeighborQuery(groupTracker, task -> {
+            Thread worker = new Thread(task, "mirax-neighbor");
+            worker.setDaemon(true);
+            worker.start();
+        }, task -> {
+            if (!handler.post(task)) {
+                Log.w(TAG, "neighbor result could not be posted");
+            }
+        }, (task, delay) -> handler.postDelayed(task, delay), PrimarySinkBeacon::p2pNeighbor);
     }
 
     /**
@@ -181,8 +414,7 @@ public final class PrimarySinkBeacon {
             applyDeviceName(lastName);
             if (!wanted) {
                 wanted = true;
-                groupFormed = false;
-                groupState = GROUP_DOWN;
+                groupTracker.setWanted(true);
                 removeGroupQuietly("removeGroup");
             }
             // Clear any leftover approvers from previous runs
@@ -200,8 +432,7 @@ public final class PrimarySinkBeacon {
         handler.post(() -> {
             wanted = false;
             advertising = false;
-            groupFormed = false;
-            groupState = GROUP_DOWN;
+            groupTracker.setWanted(false);
             clientConnectAttempted.clear();
             handler.removeCallbacks(poll);
             if (manager == null || channel == null) {
@@ -222,6 +453,18 @@ public final class PrimarySinkBeacon {
     /** End the current connection's P2P group; advertising resumes once the group is down. */
     public void endSession() {
         handler.post(() -> removeGroupQuietly("endSession"));
+    }
+
+    /**
+     * Queue an epoch-guarded group removal; success only means the runnable was queued.
+     *
+     * @param epoch owner-issued group epoch
+     * @return true if the request was valid and queued
+     */
+    public boolean endSessionIfEpoch(String epoch) {
+        return isValidGroupEpoch(epoch)
+                && handler.post(groupTracker.guardedEnd(epoch,
+                        (onSuccess, onFailure) -> removeGroupQuietly("endSessionV2", onSuccess, onFailure)));
     }
 
     /**
@@ -260,7 +503,13 @@ public final class PrimarySinkBeacon {
      * @return {@link #GROUP_DOWN}, {@link #GROUP_PENDING}, or {@code UP <source address>}
      */
     public String groupState() {
-        return groupState;
+        return groupTracker.snapshot().state;
+    }
+
+    /** @return a versioned group state and epoch from the same snapshot */
+    public String groupSnapshotV2() {
+        GroupTracker.Snapshot current = groupTracker.snapshot();
+        return "V2 " + current.epoch + " " + current.state;
     }
 
     /**
@@ -290,12 +539,25 @@ public final class PrimarySinkBeacon {
         return null;
     }
 
+    /**
+     * @param output currently available process output
+     * @return the first peer from a complete line, or null
+     */
+    static String parseAvailableP2pNeighbor(String output) {
+        int end = output.lastIndexOf('\n');
+        return end < 0 ? null : parseP2pNeighbor(output.substring(0, end));
+    }
+
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void pollOnce() {
         if (manager == null || channel == null) {
             return;
         }
         try {
-            manager.requestConnectionInfo(channel, this::onConnectionInfo);
+            GroupTracker.Request request = groupTracker.request();
+            manager.requestConnectionInfo(channel,
+                    info -> groupTracker.accept(request, () -> onConnectionInfo(info, request)));
             manager.requestPeers(channel, peers -> {
                 if (peers == null) {
                     return;
@@ -307,21 +569,25 @@ public final class PrimarySinkBeacon {
         } catch (Throwable err) {
             Log.w(TAG, "poll failed", err);
         }
-        if (!groupFormed && SystemClock.elapsedRealtime() - lastArmedAt >= RELISTEN_INTERVAL_MS) {
+        if (!groupTracker.isFormed() && SystemClock.elapsedRealtime() - lastArmedAt >= RELISTEN_INTERVAL_MS) {
             armSink();
         }
     }
 
-    private void onConnectionInfo(WifiP2pInfo info) {
+    private void onConnectionInfo(WifiP2pInfo info, GroupTracker.Request request) {
         if (!wanted) {
             return;
         }
-        boolean formed = info != null && info.groupFormed;
+        if (info == null) {
+            Log.w(TAG, "connection info unavailable");
+            return;
+        }
+        boolean formed = info.groupFormed;
         if (!formed) {
-            if (groupFormed) {
+            boolean wasFormed = groupTracker.isFormed();
+            groupTracker.observe(false, false, null);
+            if (wasFormed) {
                 Log.i(TAG, "P2P group down");
-                groupFormed = false;
-                groupState = GROUP_DOWN;
                 clientConnectAttempted.clear();
                 // Do NOT forget saved groups here - preserve persistent group for reinvocation
                 // forgetSavedGroups is only set to true when user explicitly calls forgetAllPairings()
@@ -329,9 +595,8 @@ public final class PrimarySinkBeacon {
             }
             return;
         }
-        if (!groupFormed) {
-            groupFormed = true;
-            groupState = GROUP_PENDING;
+        if (!groupTracker.isFormed()) {
+            groupTracker.observe(true, info.isGroupOwner, null);
             Log.i(TAG, "P2P group up phoneIsOwner=" + info.isGroupOwner
                     + " owner=" + info.groupOwnerAddress);
             if (pairingState != PairingState.PAIRED) {
@@ -345,18 +610,23 @@ public final class PrimarySinkBeacon {
                 Log.i(TAG, "P2P group formed; pairing state " + previousPairingState + " -> PAIRED");
             }
         }
-        if (groupState.startsWith(GROUP_UP_PREFIX)) {
+        if (info.isGroupOwner) {
+            if (!groupTracker.snapshot().phoneIsOwner) {
+                groupTracker.observe(true, true, null);
+            }
+            neighborQuery.request(request);
             return;
         }
-        String source = info.isGroupOwner ? p2pNeighbor() : hostOf(info.groupOwnerAddress);
-        if (source != null) {
-            // OWNER suffix tells the app-process sink to accept RTSP instead of
-            // dialing: when this phone is GO, Windows is the client.
-            groupState = GROUP_UP_PREFIX + source + (info.isGroupOwner ? " OWNER" : "");
-            Log.i(TAG, "source address " + source + " phoneIsOwner=" + info.isGroupOwner);
+        String source = hostOf(info.groupOwnerAddress);
+        GroupTracker.Snapshot previous = groupTracker.snapshot();
+        groupTracker.observe(true, false, source);
+        if (source != null && previous != groupTracker.snapshot()) {
+            Log.i(TAG, "source address " + source + " phoneIsOwner=false");
         }
     }
 
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void armSink() {
         if (manager == null || channel == null) {
             return;
@@ -425,6 +695,8 @@ public final class PrimarySinkBeacon {
         }
     }
 
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void clearWfdInfo() {
         try {
             final WifiP2pWfdInfo wfd = new WifiP2pWfdInfo();
@@ -468,12 +740,40 @@ public final class PrimarySinkBeacon {
     }
 
     private void removeGroupQuietly(String label) {
+        removeGroupQuietly(label, null, null);
+    }
+
+    private void removeGroupQuietly(String label, Runnable onSuccess, Runnable onFailure) {
         if (manager == null || channel == null) {
+            if (onFailure != null) {
+                Log.w(TAG, label + " unavailable");
+                onFailure.run();
+            }
             return;
         }
         try {
-            manager.removeGroup(channel, logged(label));
-        } catch (Throwable ignored) {
+            manager.removeGroup(channel, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    Log.i(TAG, label + " success");
+                    if (onSuccess != null) {
+                        onSuccess.run();
+                    }
+                }
+
+                @Override
+                public void onFailure(int reason) {
+                    Log.w(TAG, label + " failed reason=" + reason);
+                    if (onFailure != null) {
+                        onFailure.run();
+                    }
+                }
+            });
+        } catch (Throwable err) {
+            Log.w(TAG, label + " failed", err);
+            if (onFailure != null) {
+                onFailure.run();
+            }
         }
     }
 
@@ -539,30 +839,40 @@ public final class PrimarySinkBeacon {
         }
     }
 
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void startListening(boolean announce) {
         if (!wanted || manager == null || channel == null) {
             return;
         }
-        manager.startListening(channel, new WifiP2pManager.ActionListener() {
-            @Override
-            public void onSuccess() {
-                if (!advertising) {
-                    Log.i(TAG, "startListening success; Primary Sink on port "
-                            + RTSP_CONTROL_PORT);
+        try {
+            manager.startListening(channel, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    if (!advertising) {
+                        Log.i(TAG, "startListening success; Primary Sink on port "
+                                + RTSP_CONTROL_PORT);
+                    }
+                    advertising = true;
+                    notifyArmListening();
                 }
-                advertising = true;
-                notifyArmListening();
-            }
 
-            @Override
-            public void onFailure(int reason) {
-                if (announce) {
-                    advertising = false;
-                    Log.e(TAG, "startListening failed reason=" + reason);
-                    notifyArmFailed("startListening failed reason=" + reason);
+                @Override
+                public void onFailure(int reason) {
+                    if (announce) {
+                        advertising = false;
+                        Log.e(TAG, "startListening failed reason=" + reason);
+                        notifyArmFailed("startListening failed reason=" + reason);
+                    }
                 }
-            }
-        });
+            });
+        } catch (SecurityException denied) {
+            // Shell-UID callers hold NEARBY_WIFI_DEVICES; otherwise fail closed
+            // instead of letting the exception escape the arm path.
+            Log.w(TAG, "startListening denied", denied);
+            advertising = false;
+            notifyArmFailed("startListening denied");
+        }
     }
 
     private void notifyArmListening() {
@@ -592,6 +902,8 @@ public final class PrimarySinkBeacon {
         armBroadcastApprover();
     }
 
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void armBroadcastApprover() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || manager == null || channel == null || !wanted) {
@@ -624,10 +936,10 @@ public final class PrimarySinkBeacon {
             if (wpsTimeoutRunnable != null) {
                 handler.removeCallbacks(wpsTimeoutRunnable);
             }
-            
+
             pairingState = PairingState.PAIRING;
             pendingPairingMac = pairingMac;
-            
+
             // Set timeout for WPS pairing (120s)
             wpsTimeoutRunnable = () -> {
                 Log.w(TAG, "WPS pairing timed out for " + pairingMac);
@@ -781,6 +1093,8 @@ public final class PrimarySinkBeacon {
         return null;
     }
 
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void watchPeer(WifiP2pDevice device) {
         if (device == null || device.deviceAddress == null) {
             return;
@@ -812,8 +1126,10 @@ public final class PrimarySinkBeacon {
      * Drive GO negotiation ourselves with {@code groupOwnerIntent=0} so Windows
      * can become GO. Only Miracast sources (Win+K) are chased.
      */
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void maybeConnectAsClient(WifiP2pDevice device) {
-        if (!wanted || groupFormed || manager == null || channel == null) {
+        if (!wanted || groupTracker.isFormed() || manager == null || channel == null) {
             return;
         }
         WifiP2pWfdInfo wfd = device.getWfdInfo();
@@ -867,6 +1183,8 @@ public final class PrimarySinkBeacon {
     /** Peers we already issued {@link #maybeConnectAsClient} for (API &lt; 33). */
     private final Set<String> clientConnectAttempted = new HashSet<>();
 
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void removeApprovers() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return;
@@ -959,6 +1277,8 @@ public final class PrimarySinkBeacon {
      * Accept/reject a peer request. Prefer the overload that keeps our mutated
      * {@link WifiP2pConfig} (groupOwnerIntent=0) so Phh does not always become GO.
      */
+    // Runs as shell UID via Shizuku/app_process; permission is granted to UID 2000, not the app UID.
+    @SuppressLint("MissingPermission")
     private void setConnectionResult(String address, WifiP2pConfig config, int result) {
         try {
             MacAddress peer = MacAddress.fromString(address);
@@ -1012,23 +1332,60 @@ public final class PrimarySinkBeacon {
     }
 
     private static String p2pNeighbor() {
+        Process process = null;
         try {
-            Process process = new ProcessBuilder("ip", "-4", "neigh", "show")
+            process = new ProcessBuilder("ip", "-4", "neigh", "show")
                     .redirectErrorStream(true)
                     .start();
-            StringBuilder text = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String row;
-                while ((row = reader.readLine()) != null) {
-                    text.append(row).append('\n');
-                }
+            // shortcut: a full pipe times out; add bounded concurrent draining if discovery needs it.
+            if (!process.waitFor(NEIGHBOR_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "ip neigh timed out");
+                return null;
             }
-            process.waitFor();
-            return parseP2pNeighbor(text.toString());
+            if (process.exitValue() != 0) {
+                Log.w(TAG, "ip neigh exited with " + process.exitValue());
+                return null;
+            }
+            try (InputStream input = process.getInputStream()) {
+                ByteArrayOutputStream text = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int available;
+                while ((available = input.available()) > 0) {
+                    if (text.size() >= NEIGHBOR_OUTPUT_LIMIT) {
+                        Log.w(TAG, "ip neigh output exceeded limit");
+                        return null;
+                    }
+                    int count = input.read(buffer, 0, Math.min(available,
+                            Math.min(buffer.length, NEIGHBOR_OUTPUT_LIMIT - text.size())));
+                    if (count <= 0) {
+                        break;
+                    }
+                    text.write(buffer, 0, count);
+                }
+                return parseAvailableP2pNeighbor(text.toString(StandardCharsets.UTF_8.name()));
+            }
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "ip neigh interrupted", err);
+            return null;
         } catch (Exception err) {
             Log.w(TAG, "ip neigh failed", err);
             return null;
+        } finally {
+            if (process != null) {
+                try {
+                    process.destroyForcibly();
+                } catch (Exception err) {
+                    Log.w(TAG, "ip neigh destroy failed", err);
+                }
+                try (InputStream output = process.getInputStream();
+                        InputStream error = process.getErrorStream();
+                        OutputStream input = process.getOutputStream()) {
+                    // Closing all three pipes also runs when one close fails.
+                } catch (Exception err) {
+                    Log.w(TAG, "ip neigh pipe cleanup failed", err);
+                }
+            }
         }
     }
 

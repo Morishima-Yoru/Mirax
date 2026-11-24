@@ -39,6 +39,9 @@ Instead of driving Windows, trigger the Android app's required states via App au
 adb shell monkey -p <mirax.package.name> -c android.intent.category.LAUNCHER 1
 ```
 
+### Step A1: Shizuku authorization dialog (standing pre-authorization)
+The user has granted standing pre-authorization for future Mirax device tests: when a Shizuku authorization dialog appears, handle it via adb without waiting for the user. Use `adb -s <serial>` with the user-specified serial; confirm via UiAutomator dump that the foreground dialog is Shizuku's `Allow <AppLabel> to access Shizuku?` prompt (app label only, no package name in the dialog); attribute the requester to the Mirax package under test via launch context, foreground app, or activity task/caller info, never from dialog text alone. If the requester cannot be confirmed as the current Mirax test package, stop and ask. Tap `Allow` at its actual reported bounds, never hardcoded coordinates; then verify the dialog is gone, the Mirax test app is foreground again, and record the handling. Other devices, apps, permissions, WFD prompts, or data changes are out of scope: stop and wait.
+
 ### Step B: Monitor Logcat Assertions
 While the app is running and a connection is established, assert the following logs:
 ```pwsh

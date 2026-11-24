@@ -10,6 +10,8 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Privileged helper process. Listens on the abstract {@code mirax-helper} socket
@@ -106,6 +108,12 @@ public final class Helper {
             writeLine(out, beacon.groupState());
             return;
         }
+        String groupV2 = groupV2Response(line, () -> beacon.groupSnapshotV2(),
+                epoch -> beacon.endSessionIfEpoch(epoch));
+        if (groupV2 != null) {
+            writeLine(out, groupV2);
+            return;
+        }
         if ("LISTENING".equals(line)) {
             writeLine(out, beacon.isListening() ? "YES" : "NO");
             return;
@@ -149,6 +157,28 @@ public final class Helper {
             return;
         }
         writeLine(out, "ERR unknown");
+    }
+
+    /**
+     * Process only V2 group commands; return null for the legacy dispatcher.
+     *
+     * @param line complete request line
+     * @param snapshot current owner snapshot supplier
+     * @param end queues an epoch-guarded end
+     * @return response line; QUEUED confirms handler acceptance only, null means unrelated
+     */
+    static String groupV2Response(String line, Supplier<String> snapshot, Function<String, Boolean> end) {
+        if (line.startsWith("GROUP_V2")) {
+            return "GROUP_V2".equals(line) ? snapshot.get() : "ERR malformed";
+        }
+        if (line.startsWith("END_V2")) {
+            String epoch = line.startsWith("END_V2 ") ? line.substring("END_V2 ".length()) : null;
+            if (!PrimarySinkBeacon.isValidGroupEpoch(epoch)) {
+                return "ERR malformed";
+            }
+            return end.apply(epoch) ? "QUEUED" : "ERR unavailable";
+        }
+        return null;
     }
 
     /**

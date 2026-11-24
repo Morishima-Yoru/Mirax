@@ -46,3 +46,16 @@ helper/classes/
 
 # Ad-hoc script captures
 /scripts/after-click.png
+.playwright-mcp/
+
+# Local prototype review state
+/design/big-standby-motion-prototype/review-votes.json
+/design/__pycache__/
+
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees
+
+# deepwork state
+.slim/deepwork/

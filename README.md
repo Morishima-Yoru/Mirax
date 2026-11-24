@@ -42,7 +42,7 @@ adb shell "CLASSPATH=/data/local/tmp/mirax-helper.jar app_process /system/bin me
 
 Leave the ADB shell command running while Mirax uses the helper. Mirax prefers authorized Shizuku, then its root-started helper, then this manual ADB helper.
 
-Stock OEM phones that grant `CONFIGURE_WIFI_DISPLAY` neither to shell nor to a sideloaded APK (and are not rooted) are **out of scope**. The in-app Compatibility page explains that case when broadcast cannot start.
+Stock OEM phones that grant `CONFIGURE_WIFI_DISPLAY` neither to shell nor to a sideloaded APK (and are not rooted) are **out of scope**.
 
 ## Build from source
 

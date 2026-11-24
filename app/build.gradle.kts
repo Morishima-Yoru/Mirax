@@ -1,6 +1,45 @@
+import java.security.MessageDigest
+
+// Trial opt-in only: Shizuku-only privilege policy. Production default stays false.
+val trialShizukuOnlyBuild: Boolean = providers.gradleProperty("miraxTrialShizukuOnly").orNull == "true"
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Bind original prototype bytes only into instrumentation assets; existing assets stay untouched.
+val prototypeDesignDirectory = rootProject.layout.projectDirectory.dir("design")
+val prototypeAssetPaths = providers.provider {
+    val html = prototypeDesignDirectory.file("big-standby-prototype.html").asFile
+    val references = Regex("""(?:src|href)=["']([^"']+\.(?:css|js)(?:\?[^"']*)?)["']""")
+        .findAll(html.readText()).map { it.groupValues[1].substringBefore('?') }.toList()
+    (listOf(html.name) + references).distinct().sorted().onEach { path ->
+        require(path.matches(Regex("""[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\.(?:html|css|js)"""))) {
+            "Prototype asset must be an allowlisted relative source: $path"
+        }
+        require(prototypeDesignDirectory.file(path).asFile.isFile) { "Missing original design/$path" }
+    }
+}
+val bindStandbyPrototypeAssets = tasks.register<Sync>("bindStandbyPrototypeAssets") {
+    from(prototypeDesignDirectory) { include(prototypeAssetPaths.get()) }
+    into(layout.buildDirectory.dir("generated/androidTestAssets/standbyPrototype/standby-prototype"))
+    doLast {
+        val hashes = prototypeAssetPaths.get().associateWith { path ->
+            val original = prototypeDesignDirectory.file(path).asFile.readBytes()
+            check(original.contentEquals(destinationDir.resolve(path).readBytes())) {
+                "Instrumentation binding changed original design/$path"
+            }
+            MessageDigest.getInstance("SHA-256").digest(original).joinToString("") { "%02x".format(it) }
+        }
+        destinationDir.resolve("sources.sha256.json").writeText(groovy.json.JsonOutput.toJson(hashes))
+    }
+}
+
+tasks.configureEach {
+    if (name.matches(Regex("(compile.*AndroidTestKotlin|merge.*AndroidTestAssets)"))) {
+        dependsOn(bindStandbyPrototypeAssets)
+    }
 }
 
 android {
@@ -14,6 +53,7 @@ android {
         versionCode = 3
         versionName = "0.0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "TRIAL_SHIZUKU_ONLY", trialShizukuOnlyBuild.toString())
     }
 
     buildTypes {
@@ -35,6 +75,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
         aidl = true
     }
 
@@ -42,6 +83,9 @@ android {
         getByName("main") {
             // Shared shell-UID WFD beacon and helper entry (also packaged via helper/build.ps1).
             java.srcDir("${rootDir}/helper/src")
+        }
+        getByName("androidTest") {
+            assets.srcDir(bindStandbyPrototypeAssets.map { it.destinationDir.parentFile })
         }
     }
 
