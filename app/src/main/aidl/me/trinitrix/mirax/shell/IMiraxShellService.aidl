@@ -10,5 +10,8 @@ interface IMiraxShellService {
     String getPairingState() = 7;
     /** True after startListening succeeded for the current advertise request. */
     boolean isListening() = 8;
+    String groupSnapshotV2() = 9;
+    /** True means the owner handler accepted the runnable, not that removal occurred. */
+    boolean endSessionIfEpoch(String epoch) = 10;
     void destroy() = 16777114;
 }

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_media_import_title">Custom background</string>
+    <string name="standby_media_import_failed">Could not import that file. Your previous background is unchanged.</string>
+    <string name="standby_media_discard_failed">Could not cancel that background. Staged media may remain. Your previous background is unchanged.</string>
+    <string name="standby_media_import_uncertain">Import finished with an unknown result. Check the current background before retrying.</string>
+    <string name="standby_media_corrupt_fallback">Saved background was unreadable, showing theme instead. Connection unchanged.</string>
+    <string name="standby_media_read_failed">Could not read the saved background. Showing the theme instead.</string>
+    <string name="standby_media_playback_failed">Could not play this background. Showing the theme instead.</string>
+    <string name="standby_media_retry_confirmation">Retry confirmation</string>
+    <string name="standby_media_waiting_confirmation">The background confirmation is still pending.</string>
+    <string name="standby_media_importing">Importing background…</string>
+    <string name="standby_media_confirm">Confirm</string>
+    <string name="standby_media_cancel">Cancel</string>
+    <string name="standby_media_preview">Preview</string>
+    <string name="standby_media_zoom">Zoom</string>
+    <string name="standby_media_pan">Pan</string>
+</resources>
