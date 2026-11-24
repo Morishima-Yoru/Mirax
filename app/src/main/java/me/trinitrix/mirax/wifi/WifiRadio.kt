@@ -8,7 +8,6 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Looper
 import android.provider.Settings
-import android.view.ContextThemeWrapper
 import android.widget.Toast
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import me.trinitrix.mirax.MainActivity
@@ -76,10 +75,24 @@ object WifiRadio {
             }
             return
         }
-        showOn(ContextThemeWrapper(context.applicationContext, R.style.Theme_Mirax))
+        promptWithoutHost(context)
     }
 
-    private fun showOn(context: Context) {
+     /**
+  Prompt when no Activity owns a window.
+  
+  A Dialog constructed from the application context has no window token and
+  throws WindowManager.BadTokenException at show(), which crashed the app
+  instead of telling the user why broadcast cannot start. Use a toast, then
+  still open the Wi-Fi UI so the action stays reachable.
+  */
+ private fun promptWithoutHost(context: Context) {
+ val app = context.applicationContext
+ Toast.makeText(app, app.getString(R.string.wifi_required_toast), Toast.LENGTH_LONG).show()
+ openWifiUi(app)
+ }
+
+private fun showOn(context: Context) {
         val canPanel = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
         val message = if (canPanel) {
             context.getString(R.string.wifi_required_message_panel)
