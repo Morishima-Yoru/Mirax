@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_media_probe_idle">Probe idle: no media attached</string>
+    <string name="standby_media_probe_shown">Shown %1$d x %2$d, %3$d bytes, %4$d ms</string>
+    <string name="standby_media_probe_error_size">Probe rejected: untrusted size</string>
+    <string name="standby_media_probe_error_decode">Probe decode failed</string>
+</resources>

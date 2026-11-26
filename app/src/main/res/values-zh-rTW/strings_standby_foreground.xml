@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_foreground_receiver_label">接收裝置</string>
+    <string name="standby_foreground_menu">設定</string>
+    <string name="standby_foreground_menu_desc">開啟待機設定</string>
+    <string name="standby_foreground_broadcast_desc_on">廣播已開啟。啟用此控制項以停止廣播。</string>
+    <string name="standby_foreground_broadcast_desc_off">廣播已關閉。啟用此控制項以開始廣播。</string>
+    <string name="standby_foreground_matter_status_desc">微粒 · 黑白場域狀態：%1$s</string>
+    <string name="standby_foreground_connection_hint_format">Windows 按 Win + K，選擇「%1$s」</string>
+    <string name="standby_foreground_landscape_wifi_paused_hint">Wi-Fi 已關閉 · 請開啟 Wi-Fi 以廣播</string>
+    <string name="standby_foreground_hardline_status_ready">按下廣播按鈕以開始接收</string>
+    <string name="standby_foreground_hardline_status_arming">啟動中 · 尚未就緒</string>
+    <string name="standby_foreground_hardline_status_wifi_paused">Wi-Fi 已關閉 · 請開啟 Wi-Fi 以廣播</string>
+    <string name="standby_foreground_hardline_status_frozen">接收不可用 · 請檢查設定</string>
+    <string name="standby_foreground_hardline_status_failure">連接未成功 · 按 Win + K 重試</string>
+    <string name="standby_foreground_hint_prefix">Windows · 按 Win + K</string>
+    <string name="standby_foreground_phase_off_title">接收已關閉</string>
+    <string name="standby_foreground_phase_off_detail">廣播已關閉</string>
+    <string name="standby_foreground_phase_arming_title">啟動中</string>
+    <string name="standby_foreground_phase_arming_detail">接收啟動中</string>
+    <string name="standby_foreground_phase_waiting_title">等待連接</string>
+    <string name="standby_foreground_phase_waiting_detail">接收已開啟</string>
+    <string name="standby_foreground_phase_connecting_title">正在連接</string>
+    <string name="standby_foreground_phase_connecting_detail">正在連接 · 請稍候</string>
+    <string name="standby_foreground_phase_projecting_title">已連線</string>
+    <string name="standby_foreground_phase_wifi_paused_title">Wi-Fi 已關閉</string>
+    <string name="standby_foreground_phase_wifi_paused_detail">Wi-Fi 已關閉</string>
+    <string name="standby_foreground_phase_frozen_title">接收不可用</string>
+    <string name="standby_foreground_phase_frozen_detail">接收不可用</string>
+    <string name="standby_foreground_phase_failed_title">連接未成功</string>
+    <string name="standby_foreground_phase_off_eyebrow">廣播已關閉</string>
+    <string name="standby_foreground_phase_arming_eyebrow">啟動中</string>
+    <string name="standby_foreground_phase_waiting_eyebrow">廣播已開啟</string>
+    <string name="standby_foreground_phase_connecting_eyebrow">正在連接</string>
+    <string name="standby_foreground_phase_projecting_eyebrow">投放中</string>
+    <string name="standby_foreground_phase_wifi_paused_eyebrow">Wi-Fi 已關閉</string>
+    <string name="standby_foreground_phase_frozen_eyebrow">接收不可用</string>
+    <string name="standby_foreground_phase_failed_eyebrow">連接未成功</string>
+</resources>

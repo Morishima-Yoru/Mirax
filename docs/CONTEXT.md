@@ -52,6 +52,14 @@ _Avoid_: 斷線, 黑屏, 可觸控
 這台 Fold 的筆。與一般觸控是兩種輸入。
 _Avoid_: 觸控筆, stylus
 
+**背景取景**:
+自訂待機背景媒體（圖片、影片或 GIF）在面板上呈現的可見區域、位置平移與放大倍率。僅決定背景媒體當下顯示的視窗範圍，不同於影片時間軸的起訖剪輯（Trimming），亦不屬於投放畫面的縮放。
+_Avoid_: 裁切, 影片剪輯, 畫面縮放
+
+**連線建立失敗 (FAILED)**:
+投放開始播放前，連線建立或協商因錯誤或逾時而未能完成。不同於使用者主動取消、正常結束、接收不可用及 Wi-Fi 關閉；不包含已開始投放後的串流或解碼錯誤。
+_Avoid_: 播放失敗, 解碼異常, 接收不可用, 供給凍結
+
 ## 縮放
 
 **縮放**:
@@ -125,3 +133,32 @@ _Avoid_: 浮動按鈕, 吐司訊息
 _Avoid_: 無視覺驗證
 
 
+## Product Homes & State Vocabulary (Added 2026-10-31)
+
+**Big Standby**:
+The animated, full-window ambient standby homepage for Mirax, designed for always-on second-screen presence. Features slow ambient motion, clock, status, and formal theme visuals (山霧 · 流動地景 / Landscape, 微粒 · 黑白場域 / Matter, 硬線 · MIRAX 形構 / Hardline).
+_Avoid_: Simple view, static standby, legacy dashboard, 主題 A, 主題 C, 主題 D
+
+**山霧 · 流動地景 (Landscape)**:
+Full-window ambient theme featuring layered mountain silhouettes, drifting mist, dynamic celestial illumination (sun and moon), and daytime-responsive atmospheric brightness.
+_Avoid_: 主題 A, Theme A, 山霧主題
+
+**微粒 · 黑白場域 (Matter)**:
+Full-window ambient theme featuring monochrome particle dispersion and aggregation fields, dynamic typographic status presentation, and subtle spatial coordinate depth.
+_Avoid_: 主題 C, Theme C, 微粒主題
+
+**硬線 · MIRAX 形構 (Hardline)**:
+Full-window ambient theme pairing angular MIRAX geometry with moving linework and a horizontal status band.
+_Avoid_: 主題 D, Theme D, 硬線主題, 硬線 · 斜切指令流
+
+**Legacy Dashboard**:
+The original native dashboard view of Mirax, preserved and maintained alongside Big Standby. The browser prototype's "simple view" is a minimal web illustration for comparison, not an implemented reproduction of this native dashboard.
+_Avoid_: Deprecated home, web simple-view, abandoned dashboard
+
+**Receiver Unavailability**:
+Receiver session or Wi-Fi Direct service is unavailable due to no eligible privileged WFD owner per composeScreenPhase, missing permissions, or hardware denial (ScreenPhase.FROZEN); distinct from ordinary listen startup (ARMING) or active connection offer freeze (ConnectionPhase.OFFER_FROZEN). Broadcasting cannot start, but ambient Big Standby rendering remains active.
+_Avoid_: Connection offer frozen, OFFER_FROZEN, frozen screen, frozen animation
+
+**Connection Offer Frozen**:
+Internal state during active RTSP connection negotiation where a session offer parameter set is temporarily held unchanged (ConnectionPhase.OFFER_FROZEN).
+_Avoid_: Receiver unavailable, FROZEN, service disabled

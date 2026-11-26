@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_media_import_title">自訂背景</string>
+    <string name="standby_media_import_failed">無法匯入該檔案，既有背景維持不變。</string>
+    <string name="standby_media_discard_failed">無法取消該背景，暫存媒體可能仍在。既有背景維持不變。</string>
+    <string name="standby_media_restore_title">還原主題背景</string>
+    <string name="standby_media_import_uncertain">匯入結果不明，請先確認目前背景再重試。</string>
+    <string name="standby_media_corrupt_fallback">已存背景無法讀取，已改顯示主題，連線不受影響。</string>
+    <string name="standby_media_read_failed">無法讀取已儲存的背景，已改顯示主題。</string>
+    <string name="standby_media_playback_failed">無法播放此背景，已改顯示主題。</string>
+    <string name="standby_media_retry_confirmation">重試確認</string>
+    <string name="standby_media_waiting_confirmation">背景確認仍在處理中。</string>
+    <string name="standby_media_importing">正在匯入背景…</string>
+    <string name="standby_media_confirm">確認</string>
+    <string name="standby_media_cancel">取消</string>
+    <string name="standby_media_preview">預覽</string>
+    <string name="standby_media_zoom">縮放</string>
+    <string name="standby_media_pan">平移</string>
+</resources>

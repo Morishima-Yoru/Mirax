@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import me.trinitrix.mirax.session.ScreenPhase
@@ -27,13 +28,16 @@ class AdvertisingKeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val snapshot = MiraxApp.instance.session.snapshot()
-        if (!snapshot.advertisingEnabled) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        val action = AdvertisingKeepAlivePolicy.decide(snapshot.advertisingEnabled)
         startAsForeground(snapshot)
-        return START_STICKY
+        return when (action) {
+            AdvertisingKeepAlivePolicy.Action.START_FOREGROUND_AND_REMAIN -> START_STICKY
+            AdvertisingKeepAlivePolicy.Action.START_FOREGROUND_AND_STOP -> {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                START_NOT_STICKY
+            }
+        }
     }
 
     private fun startAsForeground(snapshot: SessionSnapshot) {
@@ -97,10 +101,38 @@ class AdvertisingKeepAliveService : Service() {
             val appContext = context.applicationContext
             val intent = Intent(appContext, AdvertisingKeepAliveService::class.java)
             if (snapshot.advertisingEnabled) {
-                appContext.startForegroundService(intent)
+                try {
+                    appContext.startForegroundService(intent)
+                } catch (e: Exception) {
+                    Log.w("KeepAlive", "Cannot start keep-alive service", e)
+                }
             } else {
-                appContext.stopService(intent)
+                try {
+                    appContext.stopService(intent)
+                } catch (e: Exception) {
+                    Log.w("KeepAlive", "Cannot stop keep-alive service", e)
+                }
             }
+        }
+    }
+}
+
+/**
+ * Pure decision policy for keep-alive service foreground lifecycle.
+ * Ensures the Android startForegroundService contract is always satisfied,
+ * preventing ForegroundServiceDidNotStartInTimeException when broadcast is cancelled.
+ */
+internal object AdvertisingKeepAlivePolicy {
+    enum class Action {
+        START_FOREGROUND_AND_REMAIN,
+        START_FOREGROUND_AND_STOP,
+    }
+
+    fun decide(advertisingEnabled: Boolean): Action {
+        return if (advertisingEnabled) {
+            Action.START_FOREGROUND_AND_REMAIN
+        } else {
+            Action.START_FOREGROUND_AND_STOP
         }
     }
 }

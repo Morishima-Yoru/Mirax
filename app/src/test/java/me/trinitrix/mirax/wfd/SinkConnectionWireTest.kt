@@ -3,7 +3,9 @@ package me.trinitrix.mirax.wfd
 import com.google.common.truth.Truth.assertThat
 import me.trinitrix.mirax.session.MiraxSession
 import me.trinitrix.mirax.session.SessionAction
+import me.trinitrix.mirax.session.SinkAttemptSource
 import me.trinitrix.mirax.session.TestConnectionHistory
+import me.trinitrix.mirax.session.WfdOwner
 import me.trinitrix.mirax.wfd.rtsp.RtspMessageBuffer
 import org.junit.Test
 import java.nio.charset.StandardCharsets
@@ -25,40 +27,54 @@ class SinkConnectionWireTest {
     }
 
     @Test
-    fun groupState_updatesSessionSourceNameThroughSinkConnectionEvent() {
+    fun groupState_updatesSessionSourceNameThroughSinkArbiterBegin() {
         val session = MiraxSession(connectionHistory = TestConnectionHistory())
-        val group = P2pGroupState.parse(
-            PrimarySinkBeacon.formatGroupState("192.168.137.1", true, "Alice's Surface"),
+        val epoch = "01234567-89ab-cdef-0123-456789abcdef-1"
+        val named = checkNotNull(
+            OwnerGroupSnapshot.parse(
+                WfdOwner.HELPER,
+                "V2 $epoch " + PrimarySinkBeacon.formatGroupState("192.168.137.1", true, "Alice's Surface"),
+            ),
         )
+        // V2 carries the advisory tab suffix; legacy parser keeps stripping it independently.
+        assertThat(P2pGroupState.parse("UP 192.168.137.1 OWNER\tAlice's Surface"))
+            .isEqualTo(P2pGroupState.Up("192.168.137.1", phoneIsOwner = true, sourceDeviceName = "Alice's Surface"))
+        val group = named.state
         require(group is P2pGroupState.Up)
 
-        val action = requireNotNull(beginConnectionRunAction(group, expectedGeneration = 1, currentGeneration = 1))
-        assertThat(action.remoteHost).isEqualTo("192.168.137.1")
-        session.handle(action)
-
+        val arbiter = arbiterFor(session)
+        val source = SinkAttemptSource(1, 1L)
+        arbiter.start(1)
+        assertThat(arbiter.accept(source)).isTrue()
+        val token = SinkRunToken(source, 1L)
+        assertThat(arbiter.begin(token, group.sourceAddress, group.sourceDeviceName)).isTrue()
         assertThat(session.snapshot().sourceDeviceName).isEqualTo("Alice's Surface")
 
         session.handle(SessionAction.ConnectionEnded)
         assertThat(session.snapshot().sourceDeviceName).isNull()
 
-        val legacyGroup = P2pGroupState.parse("UP 192.168.137.2")
+        val legacy = checkNotNull(OwnerGroupSnapshot.parse(WfdOwner.HELPER, "V2 $epoch UP 192.168.137.2"))
+        val legacyGroup = legacy.state
         require(legacyGroup is P2pGroupState.Up)
-        session.handle(
-            requireNotNull(beginConnectionRunAction(legacyGroup, expectedGeneration = 2, currentGeneration = 2)),
-        )
+        val replacement = SinkRunToken(source, 2L)
+        assertThat(arbiter.begin(replacement, legacyGroup.sourceAddress, legacyGroup.sourceDeviceName)).isTrue()
         assertThat(session.snapshot().sourceDeviceName).isNull()
     }
 
     @Test
     fun groupState_staleQueuedSourceCannotReplaceCurrentSessionName() {
         val session = MiraxSession(connectionHistory = TestConnectionHistory())
-        session.handle(SessionAction.BeginConnectionRun("192.0.2.2", "Current source"))
-        val oldGroup = P2pGroupState.Up("192.0.2.1", sourceDeviceName = "Previous source")
+        val arbiter = arbiterFor(session)
+        val current = SinkAttemptSource(1, 1L)
+        arbiter.start(1)
+        assertThat(arbiter.accept(current)).isTrue()
+        val currentToken = SinkRunToken(current, 1L)
+        assertThat(arbiter.begin(currentToken, "192.0.2.2", "Current source")).isTrue()
+        assertThat(session.snapshot().sourceDeviceName).isEqualTo("Current source")
 
-        val action = beginConnectionRunAction(oldGroup, expectedGeneration = 1, currentGeneration = 2)
-        action?.let(session::handle)
-
-        assertThat(action).isNull()
+        val stale = SinkAttemptSource(1, 0L)
+        val staleToken = SinkRunToken(stale, 0L)
+        assertThat(arbiter.begin(staleToken, "192.0.2.1", "Previous source")).isFalse()
         assertThat(session.snapshot().sourceDeviceName).isEqualTo("Current source")
     }
 
@@ -85,6 +101,15 @@ class SinkConnectionWireTest {
             .isNull()
         assertThat(PrimarySinkBeacon.parseP2pNeighbor(null)).isNull()
     }
+
+    private fun arbiterFor(session: MiraxSession): SinkEventArbiter =
+        SinkEventArbiter(
+            onAction = session::handle,
+            onAttempt = {},
+            onDrop = {},
+            onTerminal = { _, _ -> },
+            isMainThread = { true },
+        )
 
     @Test
     fun rtspBuffer_yieldsMessagesSplitAcrossReads() {

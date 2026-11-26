@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.session
 
+import io.reactivex.rxjava3.core.Completable
 
 /**
  * In-memory implementation of [ConnectionHistory] for testing.
@@ -71,6 +72,6 @@ class TestConnectionHistory : ConnectionHistory {
 
     override fun currentHandshakeLog(): String = openRun?.lines?.joinToString("\n") ?: ""
 
-    /** Clear finished runs immediately in the test store. */
-    override fun clear() { runs.clear() }
+    /** Clears finished runs synchronously when subscribed. */
+    override fun clear(): Completable = Completable.fromAction { runs.clear() }
 }

@@ -11,6 +11,7 @@ import android.util.Log
 import me.trinitrix.mirax.SessionHost
 import me.trinitrix.mirax.host.HelperClient
 import me.trinitrix.mirax.host.HelperUnavailableException
+import me.trinitrix.mirax.host.helperPathsAllowed
 import me.trinitrix.mirax.session.SessionAction
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
@@ -37,10 +38,13 @@ import kotlinx.coroutines.launch
  * Advertise hand-off alone is not enough for the UI: the bridge watches until
  * the owner reports listening (or times out) and feeds
  * [SessionAction.BeaconListening] / [SessionAction.BeaconFailed].
+ *
+ * All helper socket I/O goes through [HelperClient]; the V2 group path reuses
+ * it via [SocketHelperAdapter] with its own 750 ms deadline.
  */
 object WfdOwnerBridge {
     private const val TAG = "MiraxWfdBridge"
-    private const val USER_SERVICE_VERSION = 6
+    private const val USER_SERVICE_VERSION = 7
     private const val ARM_POLL_MS = 250L
     private const val ARM_TIMEOUT_MS = 4_000L
 
@@ -54,6 +58,14 @@ object WfdOwnerBridge {
     private val helperSyncGeneration = AtomicInteger(0)
     private val pendingHelperTarget = AtomicReference<HelperTarget?>(null)
     private val helperDrainScheduled = AtomicBoolean(false)
+    private val helperGroupAdapter = SocketHelperAdapter()
+    private val groupRoute = OwnerGroupRoute(activeOwner) { owner ->
+        when (owner) {
+            WfdOwner.HELPER -> if (helperPathsAllowed()) helperGroupAdapter else null
+            WfdOwner.SHIZUKU -> shellService.get()?.let { service -> ShizukuOwnerAdapter { service } }
+            WfdOwner.NONE -> null
+        }
+    }
     private var boundArgs: Shizuku.UserServiceArgs? = null
     private var userServiceConnection: ServiceConnection? = null
     private var pendingShizukuCommand: WfdAdvertiseCommand? = null
@@ -110,7 +122,7 @@ object WfdOwnerBridge {
                 return
             }
             val service = IMiraxShellService.Stub.asInterface(binder)
-            shellService.set(service)
+            groupRoute.updateEndpoint(WfdOwner.SHIZUKU) { shellService.set(service) }
             Log.i(TAG, "Shizuku user-service connected")
             val pending = pendingShizukuCommand
             pendingShizukuCommand = null
@@ -129,7 +141,7 @@ object WfdOwnerBridge {
         override fun onServiceDisconnected(name: ComponentName?) {
             if (userServiceConnection !== this || activeOwner.get() != WfdOwner.SHIZUKU) return
             Log.w(TAG, "Shizuku user-service disconnected")
-            shellService.set(null)
+            groupRoute.updateEndpoint(WfdOwner.SHIZUKU) { shellService.set(null) }
             boundArgs = null
             userServiceConnection = null
             // The new service process has not advertised anything yet.
@@ -148,7 +160,7 @@ object WfdOwnerBridge {
     fun syncOwner(context: Context, owner: WfdOwner) {
         val appCtx = context.applicationContext ?: context
         appContext = appCtx
-        val previous = activeOwner.getAndSet(owner)
+        val previous = groupRoute.switchOwner(owner)
         if (previous == WfdOwner.HELPER && owner != WfdOwner.HELPER) {
             helperSyncGeneration.incrementAndGet()
         }
@@ -179,12 +191,13 @@ object WfdOwnerBridge {
             stopAdvertising()
             return true
         }
-        val previousOwner = activeOwner.getAndSet(command.owner)
+        val previousOwner = groupRoute.switchOwner(command.owner)
         if (previousOwner == WfdOwner.SHIZUKU && command.owner != WfdOwner.SHIZUKU) {
             unbindShizukuQuietly()
         }
         when (command.owner) {
             WfdOwner.HELPER -> {
+                if (!helperPathsAllowed()) return false
                 pendingShizukuCommand = null
                 cancelArmWatch()
                 armReported.set(false)
@@ -225,6 +238,29 @@ object WfdOwnerBridge {
             WfdOwner.NONE -> null
         }
     }
+
+    /**
+     * Call off the main thread; the bounded wait can return null while IPC is still in flight.
+     *
+     * @return a validated current-owner snapshot, or null when unavailable
+     */
+    fun groupSnapshotV2(): OwnerGroupSnapshot? = groupRoute.snapshot()
+
+    /** Captures the local revision only when the requested owner is active. */
+    internal fun ownerRevision(owner: WfdOwner): Long? = groupRoute.revisionFor(owner)
+
+    /** Checks only the local owner and endpoint revision. */
+    internal fun isCurrentGroupOwner(snapshot: OwnerGroupSnapshot): Boolean = groupRoute.isCurrent(snapshot)
+
+    /** Submits guarded END and exposes local worker saturation. */
+    internal fun submitEndSession(snapshot: OwnerGroupSnapshot): OwnerEndSubmission = groupRoute.submitEnd(snapshot)
+
+    /**
+     * @param snapshot observation captured from this bridge
+     * @return true only when the local worker accepted the task; it may still be discarded
+     *         before dispatch and does not confirm remote queueing or removal
+     */
+    fun endSessionIfEpoch(snapshot: OwnerGroupSnapshot): Boolean = groupRoute.end(snapshot)
 
     /** End the current connection's P2P group; the owner keeps advertising. */
     fun endSession() {
@@ -650,6 +686,10 @@ object WfdOwnerBridge {
      * @return helper response, or null when the exchange fails
      */
     private fun defaultExchangeHelper(command: String, readAll: Boolean = false): String? {
+        if (!helperPathsAllowed()) {
+            // Trial sends no helper socket traffic; STOP is vacuously complete.
+            return if (command == "STOP_ADVERTISE") "OK" else null
+        }
         return try {
             HelperClient.exchange(command, readAll).also { response ->
                 if (response.startsWith("ERR")) Log.w(TAG, "helper rejected $command: $response")
@@ -668,12 +708,13 @@ object WfdOwnerBridge {
     }
 
     private fun unbindShizukuQuietly() {
+        cancelArmWatch()
         pendingShizukuCommand = null
         val args = boundArgs
         val connection = userServiceConnection
         boundArgs = null
         userServiceConnection = null
-        shellService.set(null)
+        groupRoute.updateEndpoint(WfdOwner.SHIZUKU) { shellService.set(null) }
         lastCommand.set(null)
         if (args != null && connection != null) {
             try {

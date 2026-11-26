@@ -1,0 +1,317 @@
+{
+  "author": "Parent assistant; no CHAOTIC ideation",
+  "goal": "Create thirty individually distinct sci-fi/punk D motion candidates informed by recorded review feedback.",
+  "constraints": [
+    "Preserve all existing candidates and their votes and notes; never treat a reject vote as a delete request.",
+    "Keep D black-and-white hard lines, original hollow double-outline X and central diamond, asymmetrical UI, and existing OLED shift. Do not add xMotion or change C.",
+    "Use the shared frame clock, deterministic animation, bounded loops, and non-flashing operation; no eased ping-pong or unnecessary particle systems.",
+    "Avoid large filled bands or fake scan lines, unrelated everyday objects, dense decoration, tiny nearly invisible ornament, and static empty backgrounds.",
+    "Make each candidate visibly distinct in structure and motion. Preserve negative space, but provide purposeful context, not a generic common grid.",
+    "Fictional readouts must be explicitly labelled SIM and must not imply real network state. The first group tests status bars as a hypothesis, not a requirement for all thirty.",
+    "Use scope field for content that must avoid foreground plates. Frame fields may overlap plate masks: for 320x568 avoid the lower field occupied by captions, use safe upper strip if necessary.",
+    "All candidates must remain within 800 Canvas calls/property writes and 24 paint operations per sampled frame, including fillText; this proxy is not a CPU benchmark.",
+    "Candidate filenames and registry IDs use the exact number and slug. New IDs start unrated with no note; sourceId records an inspiration, not an inherited vote."
+  ],
+  "candidates": [
+    {
+      "number": 149,
+      "slug": "uplink-status",
+      "title": "149 上行狀態條",
+      "family": "模擬系統介面",
+      "sourceId": "study-127-hardcut-slides",
+      "geometry": "上場左側至中央有一條低矮的不等寬分段狀態條，切角外框、SIM 標記、連線槽與極簡封包槽；一條斜向連接線與 X 輪廓保持構圖關聯。",
+      "motion": "四格封包由左至右逐格點亮、清空後重來；兩個連線槽以獨立較慢節奏換位，非整條閃爍。",
+      "distinction": "真正的狀態欄：橫向多欄位，而非投影片或掃描帶。"
+    },
+    {
+      "number": 150,
+      "slug": "queue-ledger",
+      "title": "150 多路緩衝列",
+      "family": "模擬系統介面",
+      "sourceId": "study-127-hardcut-slides",
+      "geometry": "上場形成三條不同長度的分段短列與一個共用左側 SIM 標籤，右端各接一條斜折匯流線；不畫整頁密集文字。",
+      "motion": "三列以交錯節拍逐格送出一個小封包，匯流點依先後接續；格子不做逐幀亂數。",
+      "distinction": "以三條不等長佇列與共用匯流點呈現多路資料，而非單一長條。"
+    },
+    {
+      "number": 151,
+      "slug": "dual-channel",
+      "title": "151 雙向通道視窗",
+      "family": "模擬系統介面",
+      "sourceId": "study-127-hardcut-slides",
+      "geometry": "在上下場各放一個不等寬切角窗，上窗標 SIM TX，下窗標 SIM RX；每窗各一條由三至五個直線段組成的簡短波形，窗角沿 X 對角互相指向。",
+      "motion": "上下波形的節點沿固定格階輪替，兩窗各自不等節拍更新；不讓整窗亮滅。",
+      "distinction": "雙窗與小型數位波形對照傳輸方向，和欄位進度條有不同輪廓。"
+    },
+    {
+      "number": 152,
+      "slug": "link-handshake",
+      "title": "152 鏈路握手面板",
+      "family": "模擬系統介面",
+      "sourceId": "study-127-hardcut-slides",
+      "geometry": "上場左右偏置的兩個方角端口框以三段折線連接；左框有 SIM，右框有 LINK，旁邊保留一條薄的三狀態刻度。",
+      "motion": "三段連線依序由左至右接通，再從相鄰通道交接到下一輪；不模擬真實連線狀態。",
+      "distinction": "兩端口與連線握手是整個構圖，不是狀態條重排。"
+    },
+    {
+      "number": 153,
+      "slug": "module-boot",
+      "title": "153 系統模組啟動",
+      "family": "模擬系統介面",
+      "sourceId": "study-127-hardcut-slides",
+      "geometry": "一條非對稱外殼中放三個大小不同的模組槽，標 SIM；槽內用極少量矩形、角括與細線呈現抽象模組記錄，斜軌向 X 引導。",
+      "motion": "三個槽逐一由外框變為分段實線，再交由下一槽；至少一槽持續帶有可見內容，週期接續不閃白。",
+      "distinction": "模組啟動序列具有不對稱大中小三槽，沒有滿版密集程式碼。"
+    },
+    {
+      "number": 154,
+      "slug": "edge-data-bus",
+      "title": "154 貼邊資料母線",
+      "family": "數據導線",
+      "sourceId": "study-74-cathode-weave",
+      "geometry": "選一至兩條真正可見 X 邊作主幹，外側保留雙層窄線，並接一條延伸入空場的折角導線；主 X 及菱形不變。",
+      "motion": "兩枚短的空心封包沿雙軌各自單向通過真正折角，位置錯開，不來回緩動。",
+      "distinction": "連續雙軌和清楚封包傳輸的路徑，取代獨立物件或整圈掃光。"
+    },
+    {
+      "number": 155,
+      "slug": "junction-routing",
+      "title": "155 轉角路由換接",
+      "family": "數據導線",
+      "sourceId": "study-73-cathode-nodes",
+      "geometry": "一個附著在 X 可見轉角的切角接點，連兩條不等長的折線出口；其中一條向外場延伸，保留上下黑色空間。",
+      "motion": "進線由同一方向接入，出口 A、B 依序切換，接點是可見的折線幾何交接而非閃光。",
+      "distinction": "一個明確轉角作兩出口切換，聚焦接線拓撲而非獨立儀表。"
+    },
+    {
+      "number": 156,
+      "slug": "offset-packet-lanes",
+      "title": "156 錯層封包軌",
+      "family": "數據導線",
+      "sourceId": "study-51-multi-section",
+      "geometry": "兩條相距明顯的平行斜向導線跨上、下場，局部以兩個開口折角框表達封包，並以少量短接線暗示深度。",
+      "motion": "上、下軌封包同向以不同速度流動，交錯通過連接點，離開可視區後才重入。",
+      "distinction": "上下錯層與不同速度構成可讀的深度流，沒有全幅掃描線。"
+    },
+    {
+      "number": 157,
+      "slug": "cross-field-link",
+      "title": "157 跨區折線接駁",
+      "family": "數據導線",
+      "sourceId": "study-58-cathode-spark",
+      "geometry": "上場和下場各有一組小型切角連接框；兩者透過緊貼主 X 邊與中間資訊帶外緣的兩段折線建立空間關聯。",
+      "motion": "短線段從上接點依序交接至下接點，原有路徑維持可見；避免任何穿過文字的填色。",
+      "distinction": "以跨場雙端點和連續接力為主，而非多條平行線或散落火花。"
+    },
+    {
+      "number": 158,
+      "slug": "split-bus",
+      "title": "158 雙支路匯流",
+      "family": "數據導線",
+      "sourceId": "study-20-shield",
+      "geometry": "一條長折角母線沿下場延伸至 X 方向，末端分出上、下兩條較短支路，兩條支路角度不同且共享一個幾何匯合面。",
+      "motion": "封包單向流至匯合面後輪流進入支路，支路輪廓一直存在；不使用來回運動。",
+      "distinction": "是一條母線、一個匯合面與兩個出口的全場構圖。"
+    },
+    {
+      "number": 159,
+      "slug": "single-depth-frame",
+      "title": "159 單層深度框",
+      "family": "空心深度",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "只在一至兩條可見 X 臂外緣畫一組稀疏後移輪廓，最多四條角接線形成空心框厚度；另有一小段場域輔助線而不是密網。",
+      "motion": "單個短截面沿深度單向移動並從遮擋邊界接回；主輪廓和菱形固定。",
+      "distinction": "保留 118 的空心延伸感，從四層縮成一層，刻意減少花紋。"
+    },
+    {
+      "number": 160,
+      "slug": "staggered-sections",
+      "title": "160 錯層截面艙",
+      "family": "空心深度",
+      "sourceId": "study-51-multi-section",
+      "geometry": "靠近 X 邊的兩個開口截面框一大一小，彼此以兩條長稜相連，朝安全場域延伸；所有形狀為幾何空心截面。",
+      "motion": "兩個截面錯時沿同一深度方向推進，前後輪廓交替被遮擋，沒有端點減速往返。",
+      "distinction": "兩個不等截面和清楚前後遮擋，與 159 的單框不同。"
+    },
+    {
+      "number": 161,
+      "slug": "offset-interface",
+      "title": "161 偏軸介面框",
+      "family": "空心深度",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "X 左下方向伸出一個大切角介面框，後方只有一個較小偏軸框，四角只連接兩條稜線；框內沒有厚色或滿版線。",
+      "motion": "後框內一條局部輪廓按順序接續到前框，形成方向明確的深度；整個框不整體往返。",
+      "distinction": "是一個有前後註冊關係的介面框，不是走廊消失點或密集隧道。"
+    },
+    {
+      "number": 162,
+      "slug": "edge-relief",
+      "title": "162 邊緣分層浮雕",
+      "family": "空心深度",
+      "sourceId": "study-75-shield-shingle",
+      "geometry": "在一條可見 X 邊沿線連三片不等長的切角輪廓層，層與層間只用少數短稜接合，內側仍留空。",
+      "motion": "重疊接縫依序前移，上一片仍接著下一片；只在前緣局部更新，不讓整片護甲擺動。",
+      "distinction": "連續疊層只存在於一條 X 邊，且有明確可讀的遮擋順序。"
+    },
+    {
+      "number": 163,
+      "slug": "depth-latch",
+      "title": "163 空間註冊鎖",
+      "family": "空心深度",
+      "sourceId": "study-76-shield-hinge",
+      "geometry": "兩個不同深度的細長切角矩形，分別掛在兩條 X 可見邊；用短稜及一段延伸場域線暗示互相固定。",
+      "motion": "線框中的註冊缺口逐段相接再交給下一邊，形成相鄰幀的連續接合；沒有物件翻折或固定路徑往返。",
+      "distinction": "偏向固定層間註冊與交接，不是機械鉸鏈或孤立圖示。"
+    },
+    {
+      "number": 164,
+      "slug": "rhombus-transfer",
+      "title": "164 菱格區域交接",
+      "family": "稀疏結構場",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "上、下場各一組最多六格共邊菱形；格與格有明顯空間，兩組以一條斜向連接脊呼應 X。",
+      "motion": "一道局部鄰接依序由左向右換接，一次只更換一至兩格，不整幅亮暗呼吸。",
+      "distinction": "利用少量共邊菱格提供場域結構，沒有 115/116 的密集台階。"
+    },
+    {
+      "number": 165,
+      "slug": "sparse-domain",
+      "title": "165 雙域邊界",
+      "family": "稀疏結構場",
+      "sourceId": "study-45-growth-front",
+      "geometry": "左右兩塊角度略異的低密度菱格各不超過六個單元，中間保留狹長黑色域縫；用稀疏直線連到 X 鄰近邊。",
+      "motion": "域縫沿格節點逐步換邊，局部共享邊被重建而不是全區整體平移。",
+      "distinction": "兩塊結構場和移動域縫，比單群菱格更強調接縫與空間分區。"
+    },
+    {
+      "number": 166,
+      "slug": "shared-corner",
+      "title": "166 三面共角",
+      "family": "稀疏結構場",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "兩處分離的菱面節點，每處三個空心四邊形共用一角，彼此由一條低對比對角脊相連；保留大片黑色。",
+      "motion": "角點鄰接依序在兩處交接，面緣次序變化表現前後層，非純線條亮度調節。",
+      "distinction": "兩個三面節點的真實幾何換接，而非全幅格網或等角磁磚地板。"
+    },
+    {
+      "number": 167,
+      "slug": "lattice-repair",
+      "title": "167 晶格斷口修復",
+      "family": "稀疏結構場",
+      "sourceId": "study-45-growth-front",
+      "geometry": "一組最多九格的稀疏斜菱格連到 X 的一側，另留一條長基準邊，使它讀成系統拓撲而非獨立花紋。",
+      "motion": "一條共享邊缺口按格序逐一補上，同時前方下一處形成缺口，始終有穩定結構背景。",
+      "distinction": "透過缺口與補邊表現網路修復，而不是整組格子的移動。"
+    },
+    {
+      "number": 168,
+      "slug": "depth-node-plane",
+      "title": "168 層節點平面",
+      "family": "稀疏結構場",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "X 附近兩層各三個切角多邊形節點，兩層用三條斜稜相連；背景只加一段較淡的延伸脊線。",
+      "motion": "每次只讓相鄰節點的共同邊向前層換接，維持少數連續空心面。",
+      "distinction": "有前後兩層與少量連稜的空心節點，不是密鋪的假立體地板。"
+    },
+    {
+      "number": 169,
+      "slug": "continuity-repair",
+      "title": "169 線路連續性修復",
+      "family": "通訊程序",
+      "sourceId": "study-58-cathode-spark",
+      "geometry": "一條連續折角訊號線跨越可見場域；局部缺口兩側有短接點，並以極細的第二路徑作背景參照。",
+      "motion": "短接線由前一缺口接至下一缺口，缺口跟著單向傳遞；不閃爍、不隨機掉幀。",
+      "distinction": "以一個被接續的真實斷口表現修復，而非閃電、火花或大面積故障特效。"
+    },
+    {
+      "number": 170,
+      "slug": "buffer-register",
+      "title": "170 緩衝區段登錄",
+      "family": "通訊程序",
+      "sourceId": "study-127-hardcut-slides",
+      "geometry": "L 形控制軌上方排四個不等長空心區段，標示 SIM；一個較大的空心區塊作當前暫存，與下方兩條導線相連。",
+      "motion": "資料從四個區段按順序進入暫存，再換下一槽，使用離散格階並保留常駐結構。",
+      "distinction": "L 形區段與較大暫存槽呈現資料交換，不是單純連續進度條。"
+    },
+    {
+      "number": 171,
+      "slug": "time-division",
+      "title": "171 分時訊號視窗",
+      "family": "通訊程序",
+      "sourceId": "study-17-cathode",
+      "geometry": "兩個互相錯位的長方切角窗共享一條邊，內部是相位不同的短折線，窗外僅一條連向 X 邊的指示線。",
+      "motion": "兩窗依序持續向前描出有限線段，前窗與後窗交接時共享邊順次改變，不做全窗閃爍。",
+      "distinction": "共享邊的兩層分時視窗，與雙向儀表的分離上下框不同。"
+    },
+    {
+      "number": 172,
+      "slug": "packet-stack",
+      "title": "172 封包堆疊卸載",
+      "family": "通訊程序",
+      "sourceId": "study-51-multi-section",
+      "geometry": "兩至三個窄長平行四邊形錯開疊成空心資料層，前後層以短斜稜相連；角度與 X 主臂一致。",
+      "motion": "上層短封包依序流向下層出口，層框本身固定；一個進出方向，不翻面也不折返。",
+      "distinction": "利用疊層和出口建立前後資料流，不以任何具象物件作主題。"
+    },
+    {
+      "number": 173,
+      "slug": "contour-recovery",
+      "title": "173 輪廓缺段回補",
+      "family": "通訊程序",
+      "sourceId": "study-72-cathode-orbit",
+      "geometry": "兩段彼此間隔的 X 可見輪廓旁各有一條細內軌和一個開口角，外場有一段角形連接路徑。",
+      "motion": "一個局部缺段沿連續輪廓前行，後方以接邊方式補回，轉角處接到下一段；主 X 透明空心不變。",
+      "distinction": "主角是 X 輪廓內的補線次序，與獨立跨場修復線不同。"
+    },
+    {
+      "number": 174,
+      "slug": "depth-telemetry",
+      "title": "174 深度線框遙測",
+      "family": "混合介面",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "一處稀疏 X 空心延伸框接一條簡短 SIM 狀態欄，欄位和延伸框共用一條斜稜；背景留一條遠場呼應線。",
+      "motion": "狀態欄的三格資料與框內一個斷續截面同步依序推進；資訊是示意不是實際遙測。",
+      "distinction": "118 精簡深度框與模擬狀態欄真正共用幾何，而不是各自飄浮。"
+    },
+    {
+      "number": 175,
+      "slug": "relay-topology",
+      "title": "175 轉接拓撲介面",
+      "family": "混合介面",
+      "sourceId": "study-73-cathode-nodes",
+      "geometry": "X 角外延伸三個大小不等的切角節點，從左向右以兩段折線連起；左側留一個標 SIM 的短狀態格。",
+      "motion": "路由依序點接三個節點，狀態格同步更換當前路徑標記；其餘節點保留輪廓。",
+      "distinction": "以三節點拓撲圖和一個同步狀態格構圖，沒有密網或儀表盤。"
+    },
+    {
+      "number": 176,
+      "slug": "lattice-diagnostics",
+      "title": "176 晶格診斷介面",
+      "family": "混合介面",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "一塊六至九格的共邊菱格與一條短 SIM 紀錄欄位以折線連接，場域另一端只有兩條對角延伸稜。",
+      "motion": "晶格的一條邊缺口逐個補回，紀錄欄中一格依序換位；格網其他部分始終穩定。",
+      "distinction": "稀疏拓撲修復與具體狀態欄連動，而不是 115/116 的全場高密度地景。"
+    },
+    {
+      "number": 177,
+      "slug": "redundant-link",
+      "title": "177 雙層備援鏈路",
+      "family": "混合介面",
+      "sourceId": "study-14-penetration",
+      "geometry": "兩條具前後層次的長折角路由穿過空心介面框，一條較亮另一條較淡，旁邊保留小型 SIM 標籤與兩格索引。",
+      "motion": "兩條路由輪流承接向前的封包，接手時只切換路徑的一段，背景和 X 不閃動。",
+      "distinction": "前後層備援路由和二格索引明確對照，和 151 的雙窗波形不同。"
+    },
+    {
+      "number": 178,
+      "slug": "asymmetric-shell",
+      "title": "178 非對稱控制殼",
+      "family": "混合介面",
+      "sourceId": "study-20-shield",
+      "geometry": "上場一個長開口 L 形框、下場一個較短切角框，兩框以少量 X 對角向稜線連接；一角配置 SIM 和三枚狀態槽。",
+      "motion": "局部輪廓逐段接續，三槽以不同節奏輪換；整體輪廓常駐，保留控制台的結構空間。",
+      "distinction": "整體非對稱控制殼結合稀疏空間稜與狀態槽，不是獨立小圖示或滿版字牆。"
+    }
+  ]
+}

@@ -56,7 +56,7 @@ class ConnectionHistoryFileTest {
                             while (history.runs().isEmpty()) delay(10)
                         }
                         assertThat(history.runs().map { it.remoteHost }).containsExactly("persisted-source")
-                        history.clear()
+                        assertThat(history.clear().blockingAwait(20, java.util.concurrent.TimeUnit.SECONDS)).isTrue()
                         withTimeout(20_000) {
                             snapshots.first { it[key] == "[]" }
                         }

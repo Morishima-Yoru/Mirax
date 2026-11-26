@@ -1,10 +1,7 @@
 package me.trinitrix.mirax.broadcast
 
 import android.content.Context
-import android.view.ContextThemeWrapper
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import me.trinitrix.mirax.PictureActivity
-import me.trinitrix.mirax.R
 
 /**
  * Confirmation before dropping the active Miracast session. Prefer the visible
@@ -19,13 +16,11 @@ object EndConnectionConfirm {
             }
             return
         }
-        val themed = ContextThemeWrapper(context.applicationContext, R.style.Theme_Mirax)
-        MaterialAlertDialogBuilder(themed)
-            .setMessage(R.string.end_connection_confirm_message)
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton(R.string.end_connection_confirm_action) { _, _ ->
-                onConfirmed()
-            }
-            .show()
+// No Activity can host a window here. A Dialog built on the application
+        // context has no window token and throws BadTokenException from show(),
+        // which crashed the app instead of asking the user to confirm. The
+        // caller consumes ConfirmEndConnection either way, so skipping the
+        // confirm is strictly better than crashing.
+        return
     }
 }

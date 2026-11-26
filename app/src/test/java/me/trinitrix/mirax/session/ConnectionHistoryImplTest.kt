@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.junit.Test
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Checks connection history through its public interface with controlled DataStore timing. */
@@ -79,8 +80,10 @@ class ConnectionHistoryImplTest {
             val store = GatedStore(mutablePreferencesOf(key to Gson().toJson(listOf(oldRun))))
             store.failNextRead = true
             val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
-            history.clear()
+            history.clear().test().awaitDone(20, TimeUnit.SECONDS).assertNoErrors().assertComplete()
             store.allowRead.complete(Unit)
+            // The late initial read must consume the injected failure before reopening.
+            await { !store.failNextRead }
 
             await { store.completedWrites.get() > 0 && store.savedHosts().isEmpty() }
             val restarted: ConnectionHistory = ConnectionHistoryImpl(store, scope)
@@ -102,7 +105,7 @@ class ConnectionHistoryImplTest {
             val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
             await { history.runs().size == 1 }
             store.failNextWrite = true
-            history.clear()
+            history.clear().test().awaitDone(20, TimeUnit.SECONDS).assertNoErrors().assertComplete()
 
             await { store.completedWrites.get() > 0 && store.savedHosts().isEmpty() }
             val restarted: ConnectionHistory = ConnectionHistoryImpl(store, scope)
@@ -115,12 +118,32 @@ class ConnectionHistoryImplTest {
     }
 
     @Test
+    fun transient_snapshot_write_failure_retries_without_another_finish(): Unit = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val store = GatedStore(mutablePreferencesOf(key to Gson().toJson(listOf(oldRun))))
+            store.allowRead.complete(Unit)
+            val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
+            await { history.runs() == listOf(oldRun) }
+
+            store.failNextWrite = true
+            history.start("new", emptyList())
+            history.finish(true, emptyList())
+
+            await { !store.failNextWrite }
+            await { store.savedHosts() == listOf("new", "old") }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun clear_before_load_stays_empty_after_restart() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val store = GatedStore(mutablePreferencesOf(key to Gson().toJson(listOf(oldRun))))
             val history: ConnectionHistory = ConnectionHistoryImpl(store, scope)
-            history.clear()
+            history.clear().test().awaitDone(20, TimeUnit.SECONDS).assertNoErrors().assertComplete()
             store.allowRead.complete(Unit)
             await { store.savedHosts().isEmpty() }
             assertThat(history.runs()).isEmpty()
@@ -144,9 +167,11 @@ class ConnectionHistoryImplTest {
             history.start("new", emptyList())
             history.finish(true, emptyList())
             withTimeout(20_000) { store.writeStarted.await() }
-            history.clear()
-            assertThat(history.runs()).isEmpty()
+            val clear = history.clear().test()
+            // The serialized clear waits for the preceding write to finish.
             store.allowWrite.complete(Unit)
+            clear.awaitDone(20, TimeUnit.SECONDS).assertNoErrors().assertComplete()
+            assertThat(history.runs()).isEmpty()
             await { store.completedWrites.get() >= 2 && store.savedHosts().isEmpty() }
             val restarted: ConnectionHistory = ConnectionHistoryImpl(store, scope)
             await { restarted.runs().isEmpty() }

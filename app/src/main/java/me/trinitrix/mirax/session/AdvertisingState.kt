@@ -38,6 +38,14 @@ internal class AdvertisingState(
         return SetAdvertisingResult.Applied(turnedOff = !enabled)
     }
 
+    /** Clears cached readiness on Wi-Fi loss without changing advertising intent. */
+    fun onWifiDisabled() {
+        beaconListening = false
+        if (_phase == AdvertisingPhase.BEACON_LISTENING) {
+            _phase = AdvertisingPhase.ADVERTISING
+        }
+    }
+
     fun onBeaconListening(owner: WfdOwner) {
         if (!advertisingEnabled || owner == WfdOwner.NONE) {
             return
@@ -62,6 +70,13 @@ internal class AdvertisingState(
         if (_phase != AdvertisingPhase.IDLE) {
             _phase = AdvertisingPhase.IDLE
         }
+    }
+
+    /** Invalidates old-owner readiness without changing advertising intent. */
+    fun onOwnerAvailable() {
+        if (!advertisingEnabled) return
+        beaconListening = false
+        _phase = AdvertisingPhase.ADVERTISING
     }
 
     fun isDeniedByPrivilege(): Boolean {
