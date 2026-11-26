@@ -1,5 +1,6 @@
 package me.trinitrix.mirax
 
+import android.content.ContextWrapper
 import com.google.common.truth.Truth.assertThat
 import java.util.concurrent.Executor
 import me.trinitrix.mirax.session.MiraxSession
@@ -16,6 +17,7 @@ import me.trinitrix.mirax.session.TileState
 import me.trinitrix.mirax.session.VideoMode
 import me.trinitrix.mirax.session.WfdAdvertiseCommand
 import me.trinitrix.mirax.session.WfdOwner
+import me.trinitrix.mirax.session.WifiReport
 import me.trinitrix.mirax.session.WidgetStatus
 import me.trinitrix.mirax.session.WmSizeReading
 import me.trinitrix.mirax.wfd.SinkProvisioningFence
@@ -285,6 +287,80 @@ class SessionHostAdvertisingTest {
         assertThat(fixture.session.snapshot().preferredMode).isNull()
         assertThat(fixture.ownerCommands).hasSize(1)
         assertThat(fixture.refreshes).isEqualTo(0)
+    }
+
+    @Test
+    fun tileClick_wifiOff_promptsFromTileOnceAndDoesNotEnable() {
+        val session = MiraxSession(
+            SessionSettings(advertisingEnabled = false, provisioningConsumed = true),
+            TestConnectionHistory(),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(WifiReport(enabled = false))
+        session.handle(SessionAction.TileTap)
+        var tilePrompts = 0
+        var defaultPrompts = 0
+        val applyEffects: (SessionSnapshot) -> Unit = { snapshot ->
+            SessionHost.applyEffects(
+                session = session,
+                context = ContextWrapper(null),
+                snapshot = snapshot,
+                tileWifiPrompt = { tilePrompts++ },
+                defaultWifiPrompt = { defaultPrompts++ },
+            )
+        }
+        val commit = {
+            SessionHost.commitAdvertising(
+                session = session,
+                syncAdvertise = { true },
+                applyEffects = applyEffects,
+                publish = {},
+                syncSink = {},
+            )
+        }
+
+        val snapshot = commit()
+        assertThat(tilePrompts).isEqualTo(1)
+        assertThat(defaultPrompts).isEqualTo(0)
+        assertThat(snapshot.advertisingEnabled).isFalse()
+        assertThat(snapshot.tileState).isEqualTo(TileState.OFF)
+        assertThat(snapshot.wfdAdvertise).isNull()
+        assertThat(snapshot.effects).isEmpty()
+
+        commit()
+        assertThat(tilePrompts).isEqualTo(1)
+        assertThat(defaultPrompts).isEqualTo(0)
+    }
+
+    @Test
+    fun promptEnableWifi_withoutTilePresenter_usesPlatformDefaultOnce() {
+        val session = MiraxSession(
+            SessionSettings(advertisingEnabled = false, provisioningConsumed = true),
+            TestConnectionHistory(),
+        )
+        session.report(PrivilegeReport(helperRunning = true))
+        session.report(WifiReport(enabled = false))
+        session.handle(SessionAction.TileTap)
+        var defaultPrompts = 0
+        val applyEffects: (SessionSnapshot) -> Unit = { snapshot ->
+            SessionHost.applyEffects(
+                session = session,
+                context = ContextWrapper(null),
+                snapshot = snapshot,
+                defaultWifiPrompt = { defaultPrompts++ },
+            )
+        }
+        val snapshot = SessionHost.commitAdvertising(
+            session = session,
+            syncAdvertise = { true },
+            applyEffects = applyEffects,
+            publish = {},
+            syncSink = {},
+        )
+
+        assertThat(defaultPrompts).isEqualTo(1)
+        assertThat(snapshot.advertisingEnabled).isFalse()
+        assertThat(snapshot.effects).isEmpty()
     }
 
     private class CalibrationFixture(

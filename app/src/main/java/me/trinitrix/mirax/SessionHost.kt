@@ -188,7 +188,12 @@ object SessionHost {
         } else {
             session.handle(SessionAction.TileTap)
         }
-        val snapshot = commit(context)
+        // Keep the tile's window token for the Wi-Fi prompt: a stopped
+        // MainActivity means the application context cannot show a dialog.
+        val snapshot = commit(
+            context,
+            tileWifiPrompt = { SessionPlatformBinding.platform.promptWifi(context) },
+        )
         // An explicit user stop via the tile supersedes any FAILED episode.
         if (!wasGray && wasAdvertising && !snapshot.advertisingEnabled) {
             explicitStopPrePlay()
@@ -220,7 +225,20 @@ object SessionHost {
      * @param context Activity or application context.
      * @return Reconciled session snapshot.
      */
-    fun commit(context: Context): SessionSnapshot {
+    fun commit(context: Context): SessionSnapshot = commit(context, tileWifiPrompt = null)
+
+    /**
+     * Commit with the Quick Settings tile context available to the Wi-Fi prompt.
+     *
+     * Only [SessionEffect.PromptEnableWifi] may run from the original tile
+     * context; every other effect, publish, and provisioning call still uses
+     * the application context.
+     *
+     * @param context Activity or application context.
+     * @param tileWifiPrompt Synchronous tile-context prompt presenter, or null.
+     * @return Reconciled session snapshot.
+     */
+    private fun commit(context: Context, tileWifiPrompt: (() -> Unit)?): SessionSnapshot {
         val appContext = context.applicationContext ?: context
         val platform = SessionPlatformBinding.platform
         val session = MiraxApp.instance.session
@@ -239,7 +257,14 @@ object SessionHost {
                 platform.syncOwner(appContext, session.snapshot().wfdOwner)
                 platform.syncAdvertise(appContext, command)
             },
-            applyEffects = { snapshot -> applyEffects(appContext, snapshot) },
+            applyEffects = { snapshot ->
+                applyEffects(
+                    session = session,
+                    context = appContext,
+                    snapshot = snapshot,
+                    tileWifiPrompt = tileWifiPrompt,
+                )
+            },
             publish = { snapshot ->
                 if (!snapshot.showPicture) projectionLaunchGeneration.incrementAndGet()
                 SessionPreferences.saveAdvertising(appContext, snapshot.advertisingEnabled)
@@ -611,7 +636,27 @@ object SessionHost {
         }
     }
 
-    private fun applyEffects(context: Context, snapshot: SessionSnapshot) {
+    /**
+     * Applies one-shot effects and acknowledges them.
+     *
+     * Only [SessionEffect.PromptEnableWifi] honours [tileWifiPrompt]; the
+     * fallback stays [defaultWifiPrompt] so every non-tile caller is unchanged.
+     *
+     * @param session Session owning the effects.
+     * @param context Application context used by every effect.
+     * @param snapshot Snapshot carrying the pending effects.
+     * @param tileWifiPrompt Tile-context Wi-Fi presenter, or null for the default.
+     * @param defaultWifiPrompt Platform Wi-Fi presenter used without a tile.
+     */
+    internal fun applyEffects(
+        session: MiraxSession,
+        context: Context,
+        snapshot: SessionSnapshot,
+        tileWifiPrompt: (() -> Unit)? = null,
+        defaultWifiPrompt: () -> Unit = {
+            SessionPlatformBinding.platform.promptWifi(context)
+        },
+    ) {
         var consumed = false
         if (SessionEffect.ShowShizukuNotOpenToast in snapshot.effects) {
             Toast.makeText(
@@ -669,11 +714,11 @@ object SessionHost {
             consumed = true
         }
         if (SessionEffect.PromptEnableWifi in snapshot.effects) {
-            SessionPlatformBinding.platform.promptWifi(context)
+            (tileWifiPrompt ?: defaultWifiPrompt)()
             consumed = true
         }
         if (consumed) {
-            MiraxApp.instance.session.handle(SessionAction.AcknowledgeEffects)
+            session.handle(SessionAction.AcknowledgeEffects)
         }
     }
 }

@@ -1,5 +1,6 @@
 package me.trinitrix.mirax.wifi
 
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -8,6 +9,10 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Looper
 import android.provider.Settings
+import android.service.quicksettings.TileService
+import android.util.Log
+import android.view.ContextThemeWrapper
+import android.view.WindowManager
 import android.widget.Toast
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import me.trinitrix.mirax.MainActivity
@@ -21,6 +26,7 @@ import me.trinitrix.mirax.session.WifiReport
  * while broadcast intent is on, and asking the user to turn it on.
  */
 object WifiRadio {
+    private const val TAG = "WifiRadio"
     private var registered = false
 
     private val receiver = object : BroadcastReceiver() {
@@ -75,7 +81,53 @@ object WifiRadio {
             }
             return
         }
+        if (context is TileService) {
+            promptFromTile(context)
+            return
+        }
         promptWithoutHost(context)
+    }
+
+    /**
+     * Prompts through a Quick Settings tile when no Activity is visible.
+     *
+     * The tile click token is valid only during the user interaction, so the
+     * dialog is created synchronously; locked devices use the platform unlock
+     * callback. A stale token is logged instead of retried from a background
+     * context that cannot show a window.
+     */
+    private fun promptFromTile(tile: TileService) {
+        if (tile.isLocked) {
+            tile.unlockAndRun { showOnTile(tile) }
+        } else {
+            showOnTile(tile)
+        }
+    }
+
+    private fun showOnTile(tile: TileService) {
+        val dialog = MaterialAlertDialogBuilder(ContextThemeWrapper(tile, R.style.Theme_Mirax))
+            .setTitle(R.string.wifi_required_title)
+            .setMessage(R.string.wifi_required_message_panel)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.wifi_required_turn_on) { _, _ ->
+                openWifiPanelFromTile(tile)
+            }
+            .create()
+        try {
+            tile.showDialog(dialog)
+        } catch (err: WindowManager.BadTokenException) {
+            Log.w(TAG, "Wi-Fi prompt token expired before the tile dialog opened", err)
+        }
+    }
+
+    private fun openWifiPanelFromTile(tile: TileService) {
+        val pendingIntent = PendingIntent.getActivity(
+            tile,
+            0,
+            Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        tile.startActivityAndCollapse(pendingIntent)
     }
 
      /**
