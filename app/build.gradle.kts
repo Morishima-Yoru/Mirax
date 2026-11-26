@@ -51,8 +51,8 @@ android {
         applicationId = "me.trinitrix.mirax"
         minSdk = 34
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.0.6"
+        versionCode = 6
+        versionName = "0.0.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "TRIAL_SHIZUKU_ONLY", trialShizukuOnlyBuild.toString())
     }
