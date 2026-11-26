@@ -25,6 +25,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.graphics.Insets
+import me.trinitrix.mirax.BuildConfig
 import me.trinitrix.mirax.R
 import me.trinitrix.mirax.session.PrePlayFailureCause
 import me.trinitrix.mirax.session.ScreenPhase
@@ -233,7 +234,7 @@ internal object StandbyForegroundKit {
         )
     }
 
-    /** Brand mark, name, and the prototype's simulated version subtext. */
+    /** Brand mark, name, and the current app version. */
     fun brandView(context: Context): LinearLayout {
         val size = dpToPx(context, 30f).toInt()
         val label = TextView(context).apply {
@@ -244,9 +245,8 @@ internal object StandbyForegroundKit {
             letterSpacing = 0.19f
             isFocusable = false
         }
-        // Prototype `<div class="brand-name">MIRAX<small>v0.0.4</small></div>`.
         val versionLabel = TextView(context).apply {
-            text = "v0.0.4"
+            text = "v${BuildConfig.VERSION_NAME}"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 8f)
             letterSpacing = 0.25f
             setTextColor(0xFFCBD0CB.toInt())

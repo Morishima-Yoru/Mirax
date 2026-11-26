@@ -430,6 +430,18 @@ internal class StandbyMediaOwner(
         binding?.view?.setFraming(currentFraming())
         publish()
     }
+
+    /**
+     * Whether the theme is currently replaced by committed custom media.
+     *
+     * Readiness-independent: when playback is hidden the settings surface still
+     * knows a committed background exists, so Restore stays meaningful. A file
+     * and kind are both required because the store can report
+     * [StandbySnapshot.Available] with neither, for example right after a clear.
+     */
+    val hasCommittedCustomBackground: Boolean
+        get() = active?.file != null && active?.kind != null
+
     /**
      * Removes the committed custom background so the selected theme shows again.
      *

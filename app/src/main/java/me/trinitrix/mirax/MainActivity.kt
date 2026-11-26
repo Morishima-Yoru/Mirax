@@ -931,7 +931,7 @@ class MainActivity : AppCompatActivity() {
         listOf(binding.pageStart, binding.pageEnd).forEach { pane ->
             pane.findViewWithTag<View>("standby-media-import")?.isEnabled = enabled
             pane.findViewWithTag<View>("standby-media-restore")?.isEnabled =
-                enabled && standbyMediaReady
+                enabled && MiraxApp.instance.standbyMediaOwner.hasCommittedCustomBackground
             pane.findViewWithTag<View>("standby-media-importing")?.visibility =
                 if (mediaStaging) View.VISIBLE else View.GONE
         }
@@ -2443,7 +2443,9 @@ class MainActivity : AppCompatActivity() {
             mediaLease?.let { MiraxApp.instance.standbyMediaOwner.clearCustomBackground(it) }
         }.apply {
             tag = "standby-media-restore"
-            isEnabled = mediaLease != null && standbyMediaReady && !mediaStaging && mediaEdit == null
+            isEnabled = mediaLease != null &&
+                MiraxApp.instance.standbyMediaOwner.hasCommittedCustomBackground &&
+                !mediaStaging && mediaEdit == null
         })
         return column
     }

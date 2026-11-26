@@ -842,6 +842,25 @@ class StandbyMediaStoreTest {
         assertThat(runBlocking { store.snapshot() }).isEqualTo(StandbySnapshot.NeverSet)
     }
 
+    /** Clear retires the committed store-owned copy, keeps an external original, and leaves no committed file or kind. */
+    @Test
+    fun clearActive_retiresCommittedCopyAndLeavesExternalOriginal() {
+        val fake = FakePreferencesDataStore()
+        val dir = storageDir()
+        val store = storeFor(fake, dir, StandbyMediaValidator { StandbyMediaKind.IMAGE })
+        val committed = commitFirst(store, bytesOf(1, 2), StandbyFraming(0.4f, 0.6f, 1.5f)).file
+        val external = File(folders.root, "external-original.bin").apply { writeBytes(bytesOf(1, 2)) }
+        val snapshot = runBlocking { store.clearActive() }
+        assertThat(snapshot).isInstanceOf(StandbySnapshot.Available::class.java)
+        val active = (snapshot as StandbySnapshot.Available).active
+        assertThat(active.file).isNull()
+        assertThat(active.kind).isNull()
+        assertThat(active.framing).isEqualTo(StandbyFraming.CENTERED)
+        assertThat(committed.exists()).isFalse()
+        assertThat(external.exists()).isTrue()
+        assertThat(external.readBytes()).isEqualTo(bytesOf(1, 2))
+    }
+
     @Test
     fun stageLeavesActiveUntouched() {
         val fake = FakePreferencesDataStore()
