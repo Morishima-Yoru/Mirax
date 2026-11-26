@@ -14,6 +14,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.graphics.Insets
@@ -23,11 +24,13 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import me.trinitrix.mirax.R
 import me.trinitrix.mirax.session.PrePlayFailureCause
 import me.trinitrix.mirax.session.ScreenPhase
 import me.trinitrix.mirax.standbyprobe.StandbyProbeActivity
+import me.trinitrix.mirax.ui.standby.StandbyViewportScale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -309,6 +312,59 @@ class StandbyForegroundProportionalTest {
                             assertEquals("text theme=$theme $width x $height dpi=$dpi", textReference, normalizedText, 0.1f)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun matterBrand_lockUpMatchesCssReferencesOnSquareAndKeepsOrdinaryAreaScale() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            fun measuredBrand(view: StandbyForegroundView): List<Float> {
+                val brand = requireNotNull(view.findViewWithTag<ViewGroup>(StandbyForegroundTags.BRAND))
+                val mark = brand.getChildAt(0)
+                val column = brand.getChildAt(1) as LinearLayout
+                val label = column.getChildAt(0) as TextView
+                val version = column.getChildAt(1) as TextView
+                return listOf(
+                    mark.width.toFloat(), mark.height.toFloat(),
+                    label.textSize, version.textSize,
+                    (version.layoutParams as LinearLayout.LayoutParams).topMargin.toFloat(),
+                    (column.layoutParams as LinearLayout.LayoutParams).marginStart.toFloat(),
+                )
+            }
+            for ((width, height, densityDpi) in listOf(
+                Triple(1812, 2176, 420),
+                Triple(390, 844, 160),
+                Triple(1080, 2340, 440),
+            )) {
+                val ctx = context(densityDpi)
+                val density = ctx.resources.displayMetrics.density
+                val matter = MatterStandbyForegroundView(ctx)
+                val landscape = LandscapeStandbyForegroundView(ctx)
+                val hardline = HardlineStandbyForegroundView(ctx)
+                for (view in listOf(matter, landscape, hardline)) {
+                    render(view)
+                    layout(view, width, height)
+                }
+                val viewport = StandbyViewportScale(width, height, density)
+                val matterScale = if (width == 1812) 1f else viewport.scale
+                fun expected(scale: Float): List<Float> = listOf(
+                    (30f * scale * density).roundToInt().toFloat(),
+                    (30f * scale * density).roundToInt().toFloat(),
+                    StandbyForegroundKit.spToPx(ctx, 18f) * scale,
+                    StandbyForegroundKit.spToPx(ctx, 8f) * scale,
+                    (7f * scale * density).roundToInt().toFloat(),
+                    (8f * scale * density).roundToInt().toFloat(),
+                )
+                assertEquals(
+                    "Matter brand ${width}x$height dpi=$densityDpi",
+                    expected(matterScale), measuredBrand(matter),
+                )
+                if (width == 1812 || width == 390) {
+                    val reference = expected(1f)
+                    assertEquals("Landscape brand reference", reference, measuredBrand(landscape))
+                    assertEquals("Hardline brand reference", reference, measuredBrand(hardline))
                 }
             }
         }

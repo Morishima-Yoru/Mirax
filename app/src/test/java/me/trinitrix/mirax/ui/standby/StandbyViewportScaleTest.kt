@@ -116,6 +116,47 @@ class StandbyViewportScaleTest {
     }
 
     @Test
+    fun matterTextScale_dampsSquareStages_preservesTallWideAndRotations() {
+        fun v(w: Int, h: Int, d: Float) = StandbyViewportScale(w, h, density = d)
+        // Reported display dims as representative fixture (not actual stage): ratio ~1.2009, AREA ~1.3185.
+        val fold5 = v(1812, 2176, 2.625f)
+        assertEquals(2176f / 1812f, fold5.logicalHeight / fold5.logicalWidth, 0.0001f)
+        assertEquals(1.3185f, fold5.scale, 0.001f)
+        assertEquals(1f, fold5.matterTextScale, 0.0001f)
+        // ~5:6 square portrait fixture damped to reference; dpi equivalence holds.
+        val nearSquare = v(1000, 1200, 1f)
+        assertEquals(1.9094f, nearSquare.scale, 0.001f)
+        assertEquals(1f, nearSquare.matterTextScale, 0.0001f)
+        val nearSquareHdpi = v(2000, 2400, 2f)
+        assertEquals(nearSquare.scale, nearSquareHdpi.scale, 0.0001f)
+        assertEquals(nearSquare.matterTextScale, nearSquareHdpi.matterTextScale, 0.0001f)
+        // Cross-orientation: rotated square fixture matches portrait/landscape (no abrupt jump).
+        val rotated = v(1200, 1000, 1f)
+        assertEquals(nearSquare.matterTextScale, rotated.matterTextScale, 0.0001f)
+        // The fade starts at the cap, interpolates halfway at the midpoint, and ends at AREA.
+        val full = v(1000, 1250, 1f)
+        assertEquals(1f, full.matterTextScale, 0.0001f)
+        val gone = v(1000, 1400, 1f)
+        assertEquals(gone.scale, gone.matterTextScale, 0.0001f)
+        val mid = v(1000, 1325, 1f)
+        assertEquals((1f + mid.scale) / 2f, mid.matterTextScale, 0.0001f)
+        val square = v(1200, 1200, 1f)
+        assertEquals(1f, square.matterTextScale, 0.0001f)
+        // Ordinary tall portrait + wide/ratio-check landscape keep exact AREA text.
+        assertEquals(1f, v(390, 844, 1f).matterTextScale, 0.0001f)
+        val tall = v(1080, 2340, 2.75f)
+        assertEquals(tall.scale, tall.matterTextScale, 0f)
+        val wide = v(1280, 720, 2f)
+        assertEquals(wide.scale, wide.matterTextScale, 0f)
+        val landscapeRatio = v(1792, 1184, 2f)
+        assertEquals(landscapeRatio.scale, landscapeRatio.matterTextScale, 0f)
+        // Larger square window: still bounded at reference, never above AREA.
+        val largeSquare = v(2880, 2880, 2f)
+        assertTrue(largeSquare.matterTextScale <= largeSquare.scale)
+        assertEquals(1f, largeSquare.matterTextScale, 0.0001f)
+    }
+
+    @Test
     fun emptyOrDegenerateViewport_isSafe() {
         val empty = StandbyViewportScale(0, 0)
         assertFalse(empty.isValid)

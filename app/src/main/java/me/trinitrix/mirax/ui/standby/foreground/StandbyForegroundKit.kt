@@ -135,6 +135,13 @@ internal object StandbyForegroundKit {
         if (view.textSize != pixels) view.setTextSize(TypedValue.COMPLEX_UNIT_PX, pixels)
     }
 
+    /** Matter-only text sizing: same SP/fontScale path, bounded squareness-weighted scale. */
+    fun updateMatterTextSize(view: TextView, nominalSp: Float, viewport: StandbyViewportScale) {
+        val metrics = view.resources.displayMetrics
+        val pixels = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, nominalSp, metrics) * viewport.matterTextScale
+        if (view.textSize != pixels) view.setTextSize(TypedValue.COMPLEX_UNIT_PX, pixels)
+    }
+
     /**
      * Applies CSS line boxes without Android's extra font padding, keeping native glyph metrics.
      *
@@ -189,11 +196,17 @@ internal object StandbyForegroundKit {
         return (baseline(strut) - baseline(eyebrow.paint)).toInt().coerceAtLeast(0)
     }
 
-    /** Updates the shared brand without replacing its native children. */
-    fun updateBrand(brand: LinearLayout, viewport: StandbyViewportScale) {
+    /**
+     * Updates the shared brand without replacing its native children.
+     * @param brand Shared mark/name/version lock-up.
+     * @param viewport Measured stage presentation units.
+     * @param useMatterScale true only for Matter's continuous lock-up sizing.
+     */
+    fun updateBrand(brand: LinearLayout, viewport: StandbyViewportScale, useMatterScale: Boolean = false) {
+        val scale = if (useMatterScale) viewport.matterTextScale else viewport.scale
         val mark = brand.getChildAt(0)
         val markParams = mark.layoutParams
-        val size = viewport.roundedPx(30f)
+        val size = (30f * scale * viewport.density).roundToInt()
         if (markParams.width != size || markParams.height != size) {
             markParams.width = size
             markParams.height = size
@@ -206,18 +219,21 @@ internal object StandbyForegroundKit {
             updateCssText(label, 18f, viewport, 1f)
             updateCssText(version, 8f, viewport, 1f)
             version.setTextColor(0xFFF3F2EB.toInt())
+        } else if (useMatterScale) {
+            updateMatterTextSize(label, 18f, viewport)
+            updateMatterTextSize(version, 8f, viewport)
         } else {
             updateTextSize(label, 18f, viewport)
             updateTextSize(version, 8f, viewport)
         }
         val versionParams = version.layoutParams as LinearLayout.LayoutParams
-        val versionGap = viewport.roundedPx(7f)
+        val versionGap = (7f * scale * viewport.density).roundToInt()
         if (versionParams.topMargin != versionGap) {
             versionParams.topMargin = versionGap
             version.layoutParams = versionParams
         }
         val columnParams = textColumn.layoutParams as LinearLayout.LayoutParams
-        val gap = viewport.roundedPx(8f)
+        val gap = (8f * scale * viewport.density).roundToInt()
         if (columnParams.marginStart != gap) {
             columnParams.marginStart = gap
             textColumn.layoutParams = columnParams

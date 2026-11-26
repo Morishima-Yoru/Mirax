@@ -142,11 +142,11 @@ class MatterStandbyForegroundView @JvmOverloads constructor(
     }
 
     private fun updateScaledChildren() {
-        StandbyForegroundKit.updateBrand(brand, viewport)
-        StandbyForegroundKit.updateTextSize(word, StandbyForegroundKit.MATTER_STATUS_TEXT_SP, viewport)
-        StandbyForegroundKit.updateTextSize(time, StandbyForegroundKit.MATTER_CLOCK_TEXT_SP, viewport)
-        StandbyForegroundKit.updateTextSize(hintTitle, 14f, viewport)
-        StandbyForegroundKit.updateTextSize(hintDescription, 11f, viewport)
+        StandbyForegroundKit.updateBrand(brand, viewport, useMatterScale = true)
+        StandbyForegroundKit.updateMatterTextSize(word, StandbyForegroundKit.MATTER_STATUS_TEXT_SP, viewport)
+        StandbyForegroundKit.updateMatterTextSize(time, StandbyForegroundKit.MATTER_CLOCK_TEXT_SP, viewport)
+        StandbyForegroundKit.updateMatterTextSize(hintTitle, 14f, viewport)
+        StandbyForegroundKit.updateMatterTextSize(hintDescription, 11f, viewport)
         val lightParams = light.layoutParams as LinearLayout.LayoutParams
         val lightSize = viewport.roundedPx(StandbyForegroundKit.MATTER_LIGHT_DP)
         if (lightParams.width != lightSize || lightParams.height != lightSize) {
