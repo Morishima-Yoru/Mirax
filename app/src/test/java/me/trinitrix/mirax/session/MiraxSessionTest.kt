@@ -171,6 +171,40 @@ class MiraxSessionTest {
         assertThat(snap.effects).contains(SessionEffect.ShowAdvertiseFailedToast)
     }
 
+    /** Verifies domain rejection preserves pending provisioning without replaying acknowledged failure effects. */
+    @Test
+    fun beaconFailed_afterBroadcastNameChange_keepsDomainOffAndProvisioningPending() {
+        val session = sessionWithBroadcast()
+        val before = session.snapshot()
+        assertThat(before.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(before.wfdAdvertise).isNotNull()
+        assertThat(before.effects).containsExactly(SessionEffect.ReadPlainWmSizeForProvisioning)
+
+        session.handle(SessionAction.SetDisplayNameOverride("Renamed receiver"))
+        val changed = session.snapshot()
+        assertThat(changed.wfdAdvertise?.broadcastName).isEqualTo("Renamed receiver")
+        assertThat(changed.wfdAdvertise).isNotEqualTo(before.wfdAdvertise)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.BeaconFailed)
+
+        val failed = session.snapshot()
+        assertThat(failed.phase).isEqualTo(ScreenPhase.READY)
+        assertThat(failed.advertisingEnabled).isFalse()
+        assertThat(failed.wfdAdvertise).isNull()
+        assertThat(session.exportSettings().advertisingEnabled).isFalse()
+        assertThat(failed.widgetStatus).isEqualTo(WidgetStatus.OFF)
+        assertThat(failed.effects).containsExactly(
+            SessionEffect.ReadPlainWmSizeForProvisioning,
+            SessionEffect.ShowAdvertiseFailedToast,
+        )
+
+        session.handle(SessionAction.AcknowledgeEffects)
+        val acknowledged = session.snapshot()
+        assertThat(acknowledged.effects).containsExactly(SessionEffect.ReadPlainWmSizeForProvisioning)
+        session.handle(SessionAction.BeaconFailed)
+        assertThat(session.snapshot()).isEqualTo(acknowledged)
+    }
+
     @Test
     fun ownerDisappears_returnsToFrozen_switchPreserved_noSpawnEffects() {
         val session = sessionWithBroadcast()
@@ -186,14 +220,117 @@ class MiraxSessionTest {
 
     @Test
     fun frozen_orBeaconFailed_showsCompatibilityNotice() {
-        val frozen = freshSession()
-        assertThat(frozen.snapshot().showCompatibilityNotice).isTrue()
+        val frozen = freshSession().snapshot()
+        assertThat(frozen.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(frozen.showCompatibilityNotice).isTrue()
 
         val denied = MiraxSession(SessionSettings(advertisingEnabled = true), TestConnectionHistory())
         denied.report(PrivilegeReport(helperRunning = true))
+        assertThat(denied.snapshot().showCompatibilityNotice).isFalse()
         denied.handle(SessionAction.BeaconFailed)
-        assertThat(denied.snapshot().showCompatibilityNotice).isTrue()
-        assertThat(denied.snapshot().advertisingEnabled).isFalse()
+        val snapshot = denied.snapshot()
+        assertThat(snapshot.phase).isEqualTo(ScreenPhase.READY)
+        assertThat(snapshot.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(snapshot.advertisingEnabled).isFalse()
+        assertThat(snapshot.showCompatibilityNotice).isTrue()
+        assertThat(snapshot.effects).contains(SessionEffect.ShowAdvertiseFailedToast)
+    }
+
+    @Test
+    fun broadcastAutoStop_defaultsToOneMinute() {
+        val session = freshSession()
+        assertThat(session.exportSettings().broadcastAutoStopMinutes).isEqualTo(1)
+    }
+
+    @Test
+    fun standbyNavigation_allDestinationsAndHierarchy() {
+        val start = StandbyNavigationState()
+        assertThat(start.current).isEqualTo(StandbyDestination.STANDBY)
+        assertThat(start.homeOrigin).isEqualTo(StandbyDestination.STANDBY)
+        assertThat(start.parent()).isNull()
+        assertThat(start.stepUp()).isNull()
+
+        // Switch to legacy dashboard home
+        val dashboard = start.openHome(StandbyDestination.DASHBOARD)
+        assertThat(dashboard.current).isEqualTo(StandbyDestination.DASHBOARD)
+        assertThat(dashboard.homeOrigin).isEqualTo(StandbyDestination.DASHBOARD)
+        assertThat(dashboard.parent()).isNull()
+
+        // From Dashboard: sections return to Dashboard
+        val dashHistory = dashboard.navigateTo(StandbyDestination.HISTORY)
+        assertThat(dashHistory.parent()).isEqualTo(StandbyDestination.DASHBOARD)
+        assertThat(dashHistory.stepUp()?.current).isEqualTo(StandbyDestination.DASHBOARD)
+
+        val dashAbout = dashboard.navigateTo(StandbyDestination.ABOUT)
+        assertThat(dashAbout.parent()).isEqualTo(StandbyDestination.DASHBOARD)
+        assertThat(dashAbout.stepUp()?.current).isEqualTo(StandbyDestination.DASHBOARD)
+
+        // From Standby: sections return to Standby
+        val standby = dashboard.openHome(StandbyDestination.STANDBY)
+        for (section in listOf(
+            StandbyDestination.HISTORY,
+            StandbyDestination.GENERAL,
+            StandbyDestination.PICTURE,
+            StandbyDestination.ADVANCED,
+            StandbyDestination.ABOUT,
+        )) {
+            val state = standby.navigateTo(section)
+            assertThat(state.parent()).isEqualTo(StandbyDestination.STANDBY)
+            assertThat(state.stepUp()?.current).isEqualTo(StandbyDestination.STANDBY)
+        }
+
+        // Subpages: Language -> General -> Standby
+        val lang = standby.navigateTo(StandbyDestination.LANGUAGE)
+        assertThat(lang.parent()).isEqualTo(StandbyDestination.GENERAL)
+        val general = lang.stepUp()
+        assertThat(general?.current).isEqualTo(StandbyDestination.GENERAL)
+        assertThat(general?.stepUp()?.current).isEqualTo(StandbyDestination.STANDBY)
+
+        // Subpages: Custom/Modes/Scale -> Picture -> Standby
+        for (sub in listOf(StandbyDestination.CUSTOM, StandbyDestination.MODES, StandbyDestination.SCALE)) {
+            val subState = standby.navigateTo(sub)
+            assertThat(subState.parent()).isEqualTo(StandbyDestination.PICTURE)
+            val picState = subState.stepUp()
+            assertThat(picState?.current).isEqualTo(StandbyDestination.PICTURE)
+            assertThat(picState?.stepUp()?.current).isEqualTo(StandbyDestination.STANDBY)
+        }
+    }
+
+    @Test
+    fun rootExitConfirmation_firstInsideBoundaryExpiredAndReset() {
+        var currentTime = 1_000L
+        val confirmation = RootExitConfirmation(timeoutMs = 2_000L, clock = { currentTime })
+
+        assertThat(confirmation.isPending).isFalse()
+
+        // 1. First press: arms confirmation, returns false (show toast)
+        assertThat(confirmation.onPress()).isFalse()
+        assertThat(confirmation.isPending).isTrue()
+
+        // 2. Second press inside window (e.g. +1000ms): returns true (leave app)
+        currentTime += 1_000L
+        assertThat(confirmation.onPress()).isTrue()
+        assertThat(confirmation.isPending).isFalse()
+
+        // 3. Exact boundary (press at t=0, second press at t=2000): should confirm
+        currentTime = 5_000L
+        assertThat(confirmation.onPress()).isFalse()
+        currentTime = 7_000L // exact 2000ms boundary
+        assertThat(confirmation.isPending).isTrue()
+        assertThat(confirmation.onPress()).isTrue()
+
+        // 4. Expired boundary (press at t=0, second press at t=2001): expired, arms new cycle
+        currentTime = 10_000L
+        assertThat(confirmation.onPress()).isFalse()
+        currentTime = 12_001L // 2001ms (expired)
+        assertThat(confirmation.isPending).isFalse()
+        assertThat(confirmation.onPress()).isFalse() // first press of new cycle
+        assertThat(confirmation.isPending).isTrue()
+
+        // 5. Reset on navigation/background/overlay cancels pending state
+        confirmation.reset()
+        assertThat(confirmation.isPending).isFalse()
+        assertThat(confirmation.onPress()).isFalse()
     }
 
     @Test
@@ -522,30 +659,49 @@ class MiraxSessionTest {
         assertThat(session.snapshot().preferredMode).isNotEqualTo(VideoMode(2176, 1812, 60))
     }
 
+    /** Verifies preferred text rounds to integer Hz, ties up, within 24 through 240. */
     @Test
-    fun refresh_snapsToNearestAllowed_tieTakesHigher() {
-        assertThat(PreferredModeCorrection.snapRefreshHz(27.0)).isEqualTo(25)
-        assertThat(PreferredModeCorrection.snapRefreshHz(27.5)).isEqualTo(30)
-        assertThat(PreferredModeCorrection.snapRefreshHz(55.0)).isEqualTo(60)
-        assertThat(PreferredModeCorrection.snapRefreshHz(42.0)).isEqualTo(50)
-
+    fun preferredRefresh_roundsToIntegerWithTiesUp_andClampsPositiveInputs() {
+        val cases = listOf(
+            "24" to 24,
+            "27" to 27,
+            "27.5" to 28,
+            "42" to 42,
+            "55" to 55,
+            "59.49" to 59,
+            "59.5" to 60,
+            "119.5" to 120,
+            "144" to 144,
+            "239.49" to 239,
+            "239.5" to 240,
+            "240" to 240,
+            "0.1" to 24,
+            "23" to 24,
+            "240.5" to 240,
+            "1000" to 240,
+        )
         val session = freshSession()
-        session.handle(SessionAction.CommitPreferredModeText("1280×720@55"))
-        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+        for ((input, expectedHz) in cases) {
+            session.handle(SessionAction.CommitPreferredModeText("1280×720@$input"))
+            assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, expectedHz))
+        }
     }
 
+    /** Verifies high refresh shrinks the picture along its aspect, not the requested Hz. */
     @Test
     fun preferredMode_overLevel51_shrinksAlongAspect() {
         val session = freshSession()
-        // Far beyond level 5.1 at 60 Hz; must shrink, not swap to a table mode.
-        session.handle(SessionAction.CommitPreferredModeText("7680×4320@60"))
-        val mode = session.snapshot().preferredMode
-        assertThat(mode).isNotNull()
-        checkNotNull(mode)
-        assertThat(H264Level51.fits(mode)).isTrue()
-        val aspect = 7680.0 / 4320.0
-        assertThat(mode.width.toDouble() / mode.height.toDouble()).isWithin(0.05).of(aspect)
-        assertThat(mode).isNotEqualTo(VideoMode(1920, 1080, 60))
+        for (refreshHz in listOf(60, 120, 240)) {
+            session.handle(SessionAction.CommitPreferredModeText("7680×4320@$refreshHz"))
+            val mode = checkNotNull(session.snapshot().preferredMode)
+            assertThat(mode.refreshHz).isEqualTo(refreshHz)
+            assertThat(mode.width).isLessThan(7680)
+            assertThat(mode.height).isLessThan(4320)
+            assertThat(H264Level51.fits(mode)).isTrue()
+            val aspect = 7680.0 / 4320.0
+            assertThat(mode.width.toDouble() / mode.height.toDouble()).isWithin(0.05).of(aspect)
+            assertThat(mode).isNotEqualTo(VideoMode(1920, 1080, 60))
+        }
     }
 
     @Test
@@ -555,12 +711,19 @@ class MiraxSessionTest {
         assertThat(session.snapshot().preferredMode).isNull()
         assertThat(session.snapshot().preferredModeText).isEmpty()
 
-        session.handle(SessionAction.CommitPreferredModeText("1280×720@60"))
-        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@144"))
+        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
 
-        session.handle(SessionAction.CommitPreferredModeText("garbage"))
-        assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 60))
-        assertThat(session.snapshot().preferredModeText).isEqualTo("1280×720@60")
+        val invalidInputs = listOf(
+            "garbage", "0×720@60", "1280×0@60", "2147483648×720@60",
+            "1280×720@0", "1280×720@-1", "1280×720@NaN", "1280×720@Infinity",
+            "1280×720@1e2", "1280×720@.5", "1280×720@60.",
+        )
+        for (input in invalidInputs) {
+            session.handle(SessionAction.CommitPreferredModeText(input))
+            assertThat(session.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
+            assertThat(session.snapshot().preferredModeText).isEqualTo("1280×720@144")
+        }
     }
 
     @Test
@@ -1019,6 +1182,8 @@ class MiraxSessionTest {
             ),
         )
         assertThat(usedButton.snapshot().preferredMode).isEqualTo(VideoMode(1812, 2176, 60))
+        assertThat(usedButton.snapshot().effects)
+            .doesNotContain(SessionEffect.ReadPlainWmSizeForProvisioning)
         usedButton.report(PrivilegeReport())
         usedButton.report(PrivilegeReport(helperRunning = true))
         assertThat(usedButton.snapshot().effects)
@@ -1531,6 +1696,87 @@ class MiraxSessionTest {
         assertThat(snap.effects).contains(SessionEffect.DropActiveConnection)
     }
 
+    /** Recover a connected picture when its initial launch was consumed without presentation. */
+    @Test
+    fun connected_openedDashboard_beforePicturePresented_retriesConsumedLaunch() {
+        val session = connectedSession()
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    /** Never launch a picture after its connection has ended. */
+    @Test
+    fun disconnected_openedDashboard_doesNotLaunchPicture() {
+        val session = connectedSession()
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.ConnectionEnded)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+    }
+
+    /** Keep repeated PLAY events from relaunching or ending an already-playing connection. */
+    @Test
+    fun connected_duplicatePlay_doesNotRelaunchPicture() {
+        val session = connectedSession()
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.EnteredPlay)
+
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    /** Leave the dashboard visible after the connected picture has already been presented. */
+    @Test
+    fun connected_openedDashboard_afterPicturePresented_doesNotStealSettings() {
+        val session = connectedSession()
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    /** Hide the home-screen ball on presentation without requesting another launch. */
+    @Test
+    fun connected_projectionPresented_hidesBall_withoutLaunchingAgain() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.ProjectionPresented)
+
+        assertThat(session.snapshot().showFloatingBall).isFalse()
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+    }
+
+    /** Retry a new connection even when the preceding picture was already presented. */
+    @Test
+    fun nextConnection_openedDashboard_retriesEvenWhenPreviousPictureWasPresented() {
+        val session = connectedSession()
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.ConnectionEnded)
+        session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
+        session.handle(SessionAction.EnteredPlay)
+        session.handle(SessionAction.AcknowledgeEffects)
+
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+    }
+
     @Test
     fun connected_openedDashboard_keepsConnection_doesNotShowBall() {
         val session = connectedSession()
@@ -1544,6 +1790,31 @@ class MiraxSessionTest {
         assertThat(snap.phase).isEqualTo(ScreenPhase.CONNECTED)
         assertThat(snap.showFloatingBall).isFalse()
         assertThat(snap.effects).doesNotContain(SessionEffect.DropActiveConnection)
+    }
+
+    /** Recover an explicit return through the owner even after the picture was previously presented. */
+    @Test
+    fun floatingBallTap_afterPresentation_recoversThroughOwnerDashboard() {
+        val session = connectedSession()
+        session.report(OverlayPermissionReport(granted = true))
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.LeftProjectionToHome)
+        assertThat(session.snapshot().showFloatingBall).isTrue()
+
+        session.handle(SessionAction.FloatingBallTapped)
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.OpenedMiraxDashboard)
+
+        assertThat(session.snapshot().effects).contains(SessionEffect.BringProjectionToFront)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(session.snapshot().showFloatingBall).isFalse()
+
+        session.handle(SessionAction.AcknowledgeEffects)
+        session.handle(SessionAction.ProjectionPresented)
+        session.handle(SessionAction.OpenedMiraxDashboard)
+        assertThat(session.snapshot().effects).doesNotContain(SessionEffect.BringProjectionToFront)
     }
 
     @Test
@@ -1760,6 +2031,43 @@ class MiraxSessionTest {
         assertThat(snap.customModes).containsExactly(fold).inOrder()
     }
 
+    /** Verifies every allowed integer Hz survives adding, exporting, and restoring settings. */
+    @Test
+    fun customRefresh_everyIntegerFrom24Through240_survivesSettingsRestore() {
+        val session = freshSession()
+        val modes = (24..240).map { VideoMode(1280, 720, it) }
+        for (mode in modes) {
+            session.handle(SessionAction.AddCustomMode(mode.width, mode.height, mode.refreshHz))
+        }
+        assertThat(session.snapshot().customModes).containsExactlyElementsIn(modes).inOrder()
+        assertThat(session.snapshot().nextAdvertisementModes).containsAtLeastElementsIn(modes)
+
+        session.handle(SessionAction.CommitPreferredModeText("1280×720@144"))
+        val restored = MiraxSession(session.exportSettings(), TestConnectionHistory())
+        assertThat(restored.snapshot().customModes).containsExactlyElementsIn(modes).inOrder()
+        assertThat(restored.snapshot().nextAdvertisementModes).containsAtLeastElementsIn(modes)
+        assertThat(restored.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
+        restored.handle(SessionAction.CommitPreferredModeText("1280×720"))
+        assertThat(restored.snapshot().preferredMode).isEqualTo(VideoMode(1280, 720, 144))
+    }
+
+    /** Verifies custom inputs clamp only positive Hz and still reject invalid dimensions. */
+    @Test
+    fun customRefresh_clampsPositiveOutOfRange_andIgnoresNonpositiveInputs() {
+        val session = freshSession()
+        for (refreshHz in listOf(1, 23, 241, Int.MAX_VALUE)) {
+            session.handle(SessionAction.AddCustomMode(1280, 720, refreshHz))
+        }
+        for (refreshHz in listOf(0, -1, Int.MIN_VALUE)) {
+            session.handle(SessionAction.AddCustomMode(640, 480, refreshHz))
+        }
+        session.handle(SessionAction.AddCustomMode(0, 720, 120))
+        session.handle(SessionAction.AddCustomMode(1280, -1, 120))
+        assertThat(session.snapshot().customModes).containsExactly(
+            VideoMode(1280, 720, 24), VideoMode(1280, 720, 240),
+        ).inOrder()
+    }
+
     @Test
     fun customModes_addMoveRemove_keepsOrder_andAdvertisesThem() {
         val session = sessionWithBroadcast()
@@ -1858,10 +2166,24 @@ class MiraxSessionTest {
         session.report(PrivilegeReport(helperRunning = true))
         session.handle(SessionAction.SetAdvertising(true))
         session.handle(SessionAction.BeaconListening)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+
         session.report(WifiReport(enabled = false))
+        val paused = session.snapshot()
+        assertThat(paused.advertisingEnabled).isTrue()
+        assertThat(paused.phase).isEqualTo(ScreenPhase.WIFI_PAUSED)
+        assertThat(paused.wfdAdvertise).isNull()
+
         session.report(WifiReport(enabled = true))
+        val arming = session.snapshot()
+        assertThat(arming.advertisingEnabled).isTrue()
+        assertThat(arming.phase).isEqualTo(ScreenPhase.ARMING)
+        assertThat(arming.wfdAdvertise).isNotNull()
+
+        session.handle(SessionAction.BeaconListening)
         val snap = session.snapshot()
         assertThat(snap.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(snap.advertisingEnabled).isTrue()
         assertThat(snap.wfdAdvertise).isNotNull()
     }
 
@@ -2001,11 +2323,254 @@ class MiraxSessionTest {
         assertThat(session.snapshot().sourceDeviceName).isNull()
     }
 
+    @Test
+    fun wifiPaused_lateBeaconListening_stillRequiresFreshReadiness() {
+        val session = freshSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.SetAdvertising(true))
+        session.handle(SessionAction.BeaconListening)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+
+        session.report(WifiReport(enabled = false))
+        session.handle(SessionAction.BeaconListening)
+        val paused = session.snapshot()
+        assertThat(paused.advertisingEnabled).isTrue()
+        assertThat(paused.phase).isEqualTo(ScreenPhase.WIFI_PAUSED)
+        assertThat(paused.wfdAdvertise).isNull()
+
+        session.report(WifiReport(enabled = true))
+        val arming = session.snapshot()
+        assertThat(arming.advertisingEnabled).isTrue()
+        assertThat(arming.phase).isEqualTo(ScreenPhase.ARMING)
+        assertThat(arming.wfdAdvertise).isNotNull()
+
+        session.handle(SessionAction.BeaconListening)
+        val listening = session.snapshot()
+        assertThat(listening.advertisingEnabled).isTrue()
+        assertThat(listening.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(listening.wfdAdvertise).isNotNull()
+    }
+
+    @Test
+    fun wifiEnabled_duplicateReports_preserveListeningReadiness() {
+        val session = freshSession()
+        session.report(PrivilegeReport(helperRunning = true))
+        session.handle(SessionAction.SetAdvertising(true))
+        session.handle(SessionAction.BeaconListening)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+
+        session.report(WifiReport(enabled = true))
+        session.report(WifiReport(enabled = true))
+        val listening = session.snapshot()
+        assertThat(listening.advertisingEnabled).isTrue()
+        assertThat(listening.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(listening.wfdAdvertise).isNotNull()
+    }
+
     private fun connectedSession(): MiraxSession {
         val session = sessionWithBroadcast()
         session.handle(SessionAction.SourceSelectedMode(VideoMode(1920, 1080, 60)))
         session.handle(SessionAction.EnteredPlay)
         assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.CONNECTED)
         return session
+    }
+
+    /** Requires fresh public readiness for each replaced owner, but not for same-owner reports. */
+    @Test
+    fun ownerReplacement_requiresFreshReadiness() {
+        val helper = PrivilegeReport(helperRunning = true)
+        val shizuku = PrivilegeReport(
+            shizukuServiceRunning = true,
+            shizukuAuthorized = true,
+            helperRunning = true,
+        )
+        val session = sessionWithBroadcast(
+            settings = SessionSettings(advertisingEnabled = true, provisioningConsumed = true),
+            privilege = helper,
+        )
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().wfdOwner).isEqualTo(WfdOwner.HELPER)
+
+        session.report(shizuku)
+        val shizukuArming = session.snapshot()
+        assertThat(shizukuArming.phase).isEqualTo(ScreenPhase.ARMING)
+        assertThat(shizukuArming.tileState).isEqualTo(TileState.ARMING)
+        assertThat(shizukuArming.wfdOwner).isEqualTo(WfdOwner.SHIZUKU)
+        assertThat(shizukuArming.advertisingEnabled).isTrue()
+        assertThat(shizukuArming.wfdAdvertise).isNotNull()
+        assertThat(shizukuArming.wfdAdvertise?.owner).isEqualTo(WfdOwner.SHIZUKU)
+        session.handle(SessionAction.AutoWait)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ARMING)
+        session.handle(SessionAction.OpenedMiraxDashboard)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ARMING)
+        session.handle(SessionAction.BeaconListening)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().tileState).isEqualTo(TileState.ADVERTISING)
+
+        session.report(shizuku.copy(helperRunning = false, rootAvailable = true))
+        val sameShizuku = session.snapshot()
+        assertThat(sameShizuku.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(sameShizuku.tileState).isEqualTo(TileState.ADVERTISING)
+        assertThat(sameShizuku.wfdOwner).isEqualTo(WfdOwner.SHIZUKU)
+        assertThat(sameShizuku.advertisingEnabled).isTrue()
+        assertThat(sameShizuku.wfdAdvertise?.owner).isEqualTo(WfdOwner.SHIZUKU)
+
+        session.report(helper)
+        val helperArming = session.snapshot()
+        assertThat(helperArming.phase).isEqualTo(ScreenPhase.ARMING)
+        assertThat(helperArming.tileState).isEqualTo(TileState.ARMING)
+        assertThat(helperArming.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(helperArming.advertisingEnabled).isTrue()
+        assertThat(helperArming.wfdAdvertise).isNotNull()
+        assertThat(helperArming.wfdAdvertise?.owner).isEqualTo(WfdOwner.HELPER)
+        session.handle(SessionAction.AutoWait)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ARMING)
+        session.handle(SessionAction.OpenedMiraxDashboard)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ARMING)
+        session.handle(SessionAction.BeaconListening)
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        session.report(helper.copy(rootAvailable = true))
+        val sameHelper = session.snapshot()
+        assertThat(sameHelper.phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(sameHelper.tileState).isEqualTo(TileState.ADVERTISING)
+        assertThat(sameHelper.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(sameHelper.advertisingEnabled).isTrue()
+        assertThat(sameHelper.wfdAdvertise?.owner).isEqualTo(WfdOwner.HELPER)
+
+        session.handle(SessionAction.SetAdvertising(false))
+        session.report(shizuku)
+        val offReplacement = session.snapshot()
+        assertThat(offReplacement.phase).isEqualTo(ScreenPhase.READY)
+        assertThat(offReplacement.tileState).isEqualTo(TileState.OFF)
+        assertThat(offReplacement.wfdOwner).isEqualTo(WfdOwner.SHIZUKU)
+        assertThat(offReplacement.advertisingEnabled).isFalse()
+        assertThat(offReplacement.wfdAdvertise).isNull()
+
+        session.handle(SessionAction.SetAdvertising(true))
+        session.handle(SessionAction.BeaconFailed)
+        session.report(helper)
+        val deniedReplacement = session.snapshot()
+        assertThat(deniedReplacement.phase).isEqualTo(ScreenPhase.READY)
+        assertThat(deniedReplacement.tileState).isEqualTo(TileState.OFF)
+        assertThat(deniedReplacement.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(deniedReplacement.advertisingEnabled).isFalse()
+        assertThat(deniedReplacement.wfdAdvertise).isNull()
+        assertThat(deniedReplacement.effects).containsExactly(SessionEffect.ShowAdvertiseFailedToast)
+    }
+
+    /** Retains intent across no-owner and Wi-Fi-off paths without treating availability as readiness. */
+    @Test
+    fun ownerRestoration_whileWifiOff_preservesIntentAndWaitsForReadiness() {
+        val settings = SessionSettings(advertisingEnabled = true, provisioningConsumed = true)
+        val helper = PrivilegeReport(helperRunning = true)
+        val acquisition = MiraxSession(settings, TestConnectionHistory())
+        // An explicit no-owner report retires the constructor's initial advertising phase.
+        acquisition.report(PrivilegeReport())
+        acquisition.report(WifiReport(enabled = false))
+        val unavailable = acquisition.snapshot()
+        assertThat(unavailable.wfdOwner).isEqualTo(WfdOwner.NONE)
+        assertThat(unavailable.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(unavailable.advertisingEnabled).isTrue()
+        assertThat(unavailable.wfdAdvertise).isNull()
+
+        acquisition.report(helper)
+        val acquiredPaused = acquisition.snapshot()
+        assertThat(acquiredPaused.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(acquiredPaused.phase).isEqualTo(ScreenPhase.WIFI_PAUSED)
+        assertThat(acquiredPaused.advertisingEnabled).isTrue()
+        assertThat(acquiredPaused.wfdAdvertise).isNull()
+        acquisition.handle(SessionAction.BeaconListening)
+        assertThat(acquisition.snapshot()).isEqualTo(acquiredPaused)
+        acquisition.report(WifiReport(enabled = true))
+        val acquiredArming = acquisition.snapshot()
+        assertThat(acquiredArming.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(acquiredArming.phase).isEqualTo(ScreenPhase.ARMING)
+        assertThat(acquiredArming.tileState).isEqualTo(TileState.ARMING)
+        assertThat(acquiredArming.advertisingEnabled).isTrue()
+        assertThat(acquiredArming.wfdAdvertise).isNotNull()
+        assertThat(acquiredArming.wfdAdvertise?.owner).isEqualTo(WfdOwner.HELPER)
+        acquisition.handle(SessionAction.BeaconListening)
+        assertThat(acquisition.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+
+        val restoration = sessionWithBroadcast(settings, helper)
+        assertThat(restoration.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        restoration.report(WifiReport(enabled = false))
+        val beforeLoss = restoration.snapshot()
+        assertThat(beforeLoss.phase).isEqualTo(ScreenPhase.WIFI_PAUSED)
+        assertThat(beforeLoss.advertisingEnabled).isTrue()
+        assertThat(beforeLoss.wfdAdvertise).isNull()
+        restoration.report(PrivilegeReport())
+        val lostOwner = restoration.snapshot()
+        assertThat(lostOwner.wfdOwner).isEqualTo(WfdOwner.NONE)
+        assertThat(lostOwner.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(lostOwner.advertisingEnabled).isTrue()
+        assertThat(lostOwner.wfdAdvertise).isNull()
+        restoration.report(helper)
+        val restoredPaused = restoration.snapshot()
+        assertThat(restoredPaused.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(restoredPaused.phase).isEqualTo(ScreenPhase.WIFI_PAUSED)
+        assertThat(restoredPaused.advertisingEnabled).isTrue()
+        assertThat(restoredPaused.wfdAdvertise).isNull()
+        restoration.handle(SessionAction.BeaconListening)
+        assertThat(restoration.snapshot()).isEqualTo(restoredPaused)
+        restoration.report(WifiReport(enabled = true))
+        val restoredArming = restoration.snapshot()
+        assertThat(restoredArming.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(restoredArming.phase).isEqualTo(ScreenPhase.ARMING)
+        assertThat(restoredArming.tileState).isEqualTo(TileState.ARMING)
+        assertThat(restoredArming.advertisingEnabled).isTrue()
+        assertThat(restoredArming.wfdAdvertise).isNotNull()
+        assertThat(restoredArming.wfdAdvertise?.owner).isEqualTo(WfdOwner.HELPER)
+        restoration.handle(SessionAction.BeaconListening)
+        assertThat(restoration.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+
+        restoration.report(WifiReport(enabled = false))
+        restoration.handle(SessionAction.SetAdvertising(false))
+        restoration.report(PrivilegeReport())
+        val stoppedWithoutOwner = restoration.snapshot()
+        assertThat(stoppedWithoutOwner.phase).isEqualTo(ScreenPhase.FROZEN)
+        assertThat(stoppedWithoutOwner.advertisingEnabled).isFalse()
+        assertThat(stoppedWithoutOwner.wfdAdvertise).isNull()
+        restoration.report(helper)
+        val stoppedRestoration = restoration.snapshot()
+        assertThat(stoppedRestoration.wfdOwner).isEqualTo(WfdOwner.HELPER)
+        assertThat(stoppedRestoration.phase).isEqualTo(ScreenPhase.READY)
+        assertThat(stoppedRestoration.tileState).isEqualTo(TileState.OFF)
+        assertThat(stoppedRestoration.advertisingEnabled).isFalse()
+        assertThat(stoppedRestoration.wfdAdvertise).isNull()
+        restoration.report(WifiReport(enabled = true))
+        assertThat(restoration.snapshot().phase).isEqualTo(ScreenPhase.READY)
+        assertThat(restoration.snapshot().advertisingEnabled).isFalse()
+        assertThat(restoration.snapshot().wfdAdvertise).isNull()
+    }
+
+    /** Checks exact public entry effects independently of incidental provisioning work. */
+    @Test
+    fun connectionPhaseTransitions_emitExactPublicEntryEffects() {
+        val session = sessionWithBroadcast(
+            SessionSettings(advertisingEnabled = true, provisioningConsumed = true),
+        )
+        assertThat(session.snapshot().phase).isEqualTo(ScreenPhase.ADVERTISING)
+        assertThat(session.snapshot().effects).isEmpty()
+        session.handle(SessionAction.PrePlayProgress)
+        val connecting = session.snapshot()
+        assertThat(connecting.phase).isEqualTo(ScreenPhase.CONNECTING)
+        assertThat(connecting.effects).isEmpty()
+
+        session.handle(SessionAction.EnteredPlay)
+        val connected = session.snapshot()
+        assertThat(connected.phase).isEqualTo(ScreenPhase.CONNECTED)
+        assertThat(connected.showPicture).isTrue()
+        assertThat(connected.effects).containsExactly(SessionEffect.BringProjectionToFront)
+        session.handle(SessionAction.AcknowledgeEffects)
+        assertThat(session.snapshot().effects).isEmpty()
+
+        session.report(WifiReport(enabled = false))
+        val paused = session.snapshot()
+        assertThat(paused.phase).isEqualTo(ScreenPhase.WIFI_PAUSED)
+        assertThat(paused.showPicture).isFalse()
+        assertThat(paused.wfdAdvertise).isNull()
+        assertThat(paused.advertisingEnabled).isTrue()
+        assertThat(paused.effects).containsExactly(SessionEffect.DropActiveConnection)
     }
 }

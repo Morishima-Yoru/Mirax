@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_media_probe_idle">探針閒置：尚未附加媒體</string>
+    <string name="standby_media_probe_shown">已顯示 %1$d x %2$d，%3$d 位元組，%4$d 毫秒</string>
+    <string name="standby_media_probe_error_size">探針已拒絕：不可信的大小</string>
+    <string name="standby_media_probe_error_decode">探針解碼失敗</string>
+</resources>

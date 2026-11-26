@@ -84,10 +84,8 @@ class MiraxSession(
             }
         } else {
             maybeRequestProvisioningRead()
-            // If owner changed from NONE to a valid owner and advertising is enabled,
-            // we need to re-apply the advertising state with the new owner
-            if (prevOwner == WfdOwner.NONE && advertisingState.advertisingEnabledState) {
-                advertisingState.setAdvertising(true, nextOwner, wifiEnabled)
+            if (prevOwner != nextOwner) {
+                advertisingState.onOwnerAvailable()
             }
         }
     }
@@ -103,6 +101,9 @@ class MiraxSession(
     fun report(report: WifiReport) {
         val wasEnabled = wifiEnabled
         wifiEnabled = report.enabled
+        if (!report.enabled) {
+            advertisingState.onWifiDisabled()
+        }
         if (!report.enabled && advertisingState.advertisingEnabledState) {
             if (activeConnection.isConnected) {
                 endConnectionState(emitDrop = true)
@@ -209,6 +210,7 @@ class MiraxSession(
             is SessionAction.UseThisScreen -> {
                 if (resolveOwner(privilege) != WfdOwner.NONE) {
                     caps.useThisScreen(action.reading, pictureRotationDegrees)
+                    pendingEffects = pendingEffects - SessionEffect.ReadPlainWmSizeForProvisioning
                 }
             }
             is SessionAction.ApplyProvisioningWmSize -> {
@@ -249,6 +251,12 @@ class MiraxSession(
             }
             SessionAction.OpenedMiraxDashboard -> {
                 activeConnection.setAwayOnHomeScreen(false)
+                if (activeConnection.isConnected && !activeConnection.picturePresented) {
+                    enqueueEffect(SessionEffect.BringProjectionToFront)
+                }
+            }
+            SessionAction.ProjectionPresented -> {
+                activeConnection.onProjectionPresented()
             }
             SessionAction.FloatingBallTapped -> {
                 onFloatingBallTapped()
@@ -278,13 +286,10 @@ class MiraxSession(
                 caps.setMaxVideoBitrateBps(action.bps)
             }
             is SessionAction.FreezeConnectionOffer -> freezeConnectionOffer(action.reading)
-            SessionAction.ClearConnectionHistory -> {
-                try {
-                    connectionHistory.clear()
-                } catch (err: Exception) {
-                    Log.w(TAG, "Failed to clear connection history", err)
-                }
-            }
+            SessionAction.ClearConnectionHistory -> connectionHistory.clear().subscribe(
+                { },
+                { error -> Log.e(TAG, "Failed to clear connection history", error) },
+            )
             SessionAction.ToggleControlPanel -> {
                 activeConnection.setControlPanelExpanded(!activeConnection.controlPanelExpandedState)
             }
@@ -297,7 +302,7 @@ class MiraxSession(
         }
     }
 
-fun snapshot(): SessionSnapshot {
+    fun snapshot(): SessionSnapshot {
         val owner = resolveOwner(privilege)
         val phase = composeScreenPhase(
             owner = owner,
@@ -330,8 +335,7 @@ fun snapshot(): SessionSnapshot {
             advertisingEnabled = advertisingState.advertisingEnabledState,
             shouldRequestShizukuPermission = pendingPermissionRequest,
             canReadWmSize = canRead,
-            showCompatibilityNotice =
-                phase == ScreenPhase.FROZEN || advertisingState.isDeniedByPrivilege(),
+            showCompatibilityNotice = phase == ScreenPhase.FROZEN || advertisingState.isDeniedByPrivilege(),
             rootAvailable = privilege.rootAvailable,
             effects = pendingEffects,
             languagePreference = languagePreference,
@@ -440,7 +444,7 @@ fun snapshot(): SessionSnapshot {
 
     private fun onFloatingBallTapped() {
         if (!activeConnection.isConnected || !activeConnection.awayOnHomeScreenState) return
-        activeConnection.setAwayOnHomeScreen(false)
+        activeConnection.requestProjectionPresentation()
         pendingEffects = pendingEffects.filterNot { it is SessionEffect.ConfirmEndConnection }
         enqueueEffect(SessionEffect.BringProjectionToFront)
     }
@@ -483,6 +487,9 @@ fun snapshot(): SessionSnapshot {
     }
 
     private fun onBeaconListening() {
+        if (!wifiEnabled) {
+            return
+        }
         advertisingState.onBeaconListening(resolveOwner(privilege))
     }
 
@@ -556,7 +563,9 @@ fun snapshot(): SessionSnapshot {
     }
 
     private fun enterPlay() {
-        if (resolveOwner(privilege) != WfdOwner.NONE && advertisingState.advertisingEnabledState) {
+        if (!activeConnection.isConnected &&
+            resolveOwner(privilege) != WfdOwner.NONE && advertisingState.advertisingEnabledState
+        ) {
             activeConnection.enterPlay()
             activeConnection.onPlayStarted()
             enqueueEffect(SessionEffect.BringProjectionToFront)
@@ -688,11 +697,13 @@ fun snapshot(): SessionSnapshot {
         if (advertisingPhase == AdvertisingPhase.IDLE) {
             return ScreenPhase.READY
         }
-        if (!wifiEnabled && advertisingPhase == AdvertisingPhase.ADVERTISING) {
+        if (!wifiEnabled &&
+            (advertisingPhase == AdvertisingPhase.ADVERTISING || advertisingPhase == AdvertisingPhase.BEACON_LISTENING)
+        ) {
             return ScreenPhase.WIFI_PAUSED
         }
         // Negotiating or offer frozen = connecting
-        if (connectionPhase == ConnectionPhase.NEGOTIATING 
+        if (connectionPhase == ConnectionPhase.NEGOTIATING
             || connectionPhase == ConnectionPhase.OFFER_FROZEN) {
             return ScreenPhase.CONNECTING
         }

@@ -48,6 +48,31 @@ enum class AdvertisingPhase {
 }
 
 /**
+ * Source identity for one sink worker group attempt.
+ *
+ * Issued when the worker observes a group or retries its registration, never
+ * at terminal time. [generation] is the controller generation, and
+ * [groupSequence] is a process-wide monotonic source-registration sequence.
+ * The pair distinguishes attempts even when they reuse the same generation,
+ * so a stale timer or outcome carrying an older identity can never overwrite
+ * newer reality. Ordering is lexicographic: first [generation], then
+ * [groupSequence].
+ *
+ * @property generation Controller generation at registration.
+ * @property groupSequence Monotonic source-registration sequence.
+ */
+data class SinkAttemptSource(
+    val generation: Int,
+    val groupSequence: Long,
+) : Comparable<SinkAttemptSource> {
+    override fun compareTo(other: SinkAttemptSource): Int {
+        val genCmp = generation.compareTo(other.generation)
+        if (genCmp != 0) return genCmp
+        return groupSequence.compareTo(other.groupSequence)
+    }
+}
+
+/**
  * Who currently owns WFD advertise privileges for Mirax.
  */
 enum class WfdOwner {
@@ -716,6 +741,9 @@ sealed interface SessionAction {
      * User opened Mirax's own dashboard. Not "going home"; connection continues.
      */
     data object OpenedMiraxDashboard : SessionAction
+
+    /** The projection activity resumed and can present the current connection's picture. */
+    data object ProjectionPresented : SessionAction
 
     /**
      * User tapped the floating ball to return to projection.

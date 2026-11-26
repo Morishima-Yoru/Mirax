@@ -1,6 +1,7 @@
 package me.trinitrix.mirax
 
 import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -70,6 +71,8 @@ class FloatingBallService : Service() {
         super.onDestroy()
     }
 
+    // ic_mirax_mark is a fixed fillColor vector with no tint need, so plain ImageView is safe here.
+    @SuppressLint("AppCompatCustomView")
     private fun ensureViews() {
         if (ballView != null) {
             return
@@ -89,6 +92,7 @@ class FloatingBallService : Service() {
         }
         trashIcon = TextView(this).apply {
             text = "×"
+            contentDescription = getString(R.string.end_connection_confirm_action)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 36f)
             gravity = Gravity.CENTER

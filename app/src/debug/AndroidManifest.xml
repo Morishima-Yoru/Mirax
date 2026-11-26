@@ -6,5 +6,11 @@
             android:name=".PictureActivity"
             android:exported="true"
             tools:replace="android:exported" />
+        <activity
+            android:name="me.trinitrix.mirax.standbyprobe.StandbyProbeActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|locale|layoutDirection"
+            android:theme="@style/Theme.Mirax" />
     </application>
 </manifest>

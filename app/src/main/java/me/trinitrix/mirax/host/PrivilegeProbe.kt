@@ -47,23 +47,18 @@ object PrivilegeProbe {
         } catch (e: Exception) {
             Log.d(TAG, "Cannot check hotspot state via reflection", e)
         }
-        
+
         if (hotspotActive) {
             Log.d(TAG, "Hotspot active, skipping privilege probe")
-            return PrivilegeReport(
-                shizukuServiceRunning = false,
-                shizukuAuthorized = false,
-                helperRunning = false,
-                rootAvailable = RootHelper.availableCached(),
-            )
+            return PrivilegeReport(rootAvailable = helperPathsAllowed() && RootHelper.availableCached())
         }
-        
+
         val shizuku = probeShizuku()
         return PrivilegeReport(
             shizukuServiceRunning = shizuku.serviceRunning,
             shizukuAuthorized = shizuku.authorized,
             helperRunning = helperUid(UI_PROBE_TIMEOUT_MS) != null,
-            rootAvailable = RootHelper.availableCached(),
+            rootAvailable = helperPathsAllowed() && RootHelper.availableCached(),
         )
     }
 
@@ -81,6 +76,8 @@ object PrivilegeProbe {
      * @return reported UID, or null when no helper responds within the deadline
      */
     fun helperUid(timeoutMs: Int = Helper.COMMAND_TIMEOUT_MS): Int? {
+        // Trial never opens the helper socket.
+        if (!helperPathsAllowed()) return null
         return try {
             val response = exchangeCommand("UID", timeoutMs)
             response.toIntOrNull() ?: run {
@@ -119,6 +116,8 @@ object PrivilegeProbe {
 
     /** Stop the currently listening helper process. */
     fun requestStopHelper() {
+        // Trial never signals the shared helper.
+        if (!helperPathsAllowed()) return
         try {
             if (exchangeCommand("STOP", Helper.COMMAND_TIMEOUT_MS) != "OK") {
                 Log.w(TAG, "Helper stop was rejected")

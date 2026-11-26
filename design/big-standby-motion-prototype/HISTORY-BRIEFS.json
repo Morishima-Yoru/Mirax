@@ -1,0 +1,316 @@
+{
+  "author": "Parent assistant, based on historical ratings and notes; no CHAOTIC ideation",
+  "interpretation": "Kept 17/72/73/74 indicate coherent contour relations; 36/45 support meaningful fields; 51/118 support hollow depth, with 118 explicitly too busy. 127 hints at a status bar but 149–153 rejection does not endorse simulated widgets. Rejected 153 explicitly suggests stronger glitch and real content as a possibility, not approval of that proposal. Unrated is not approval. CPU feedback was specific, not a general design constraint.",
+  "constraints": [
+    "Do not impose CPU, operation-count, paint-count or density budgets. Density and composition are aesthetic decisions; 115/116 were explicitly called too dense, while 36 and 45 were kept.",
+    "Preserve D fixed hollow double-outline X, central diamond, asymmetric information, original OLED movement and C. Do not use xMotion.",
+    "Honor the 117 rejection of fixed-path back-and-forth with endpoint slow-down; use coherent single-direction or local neighbor-to-neighbor transitions.",
+    "Never depict fictitious data as real. For 199–203 text must derive from the real frame geometry/time or from actual generated phase; do not claim network, CPU, GPU, file, or service state.",
+    "No full-screen rapid flash. Text must remain readable for substantial periods; use restrained localized glitch with stable surrounding elements.",
+    "Use shared frame time and existing geometry; no timers, external libraries, random nondeterminism, DOM mutation or side effects. Keep meaningful visual content in both desktop and narrow portrait.",
+    "Filename, registry id and sourceId exactly match each entry; category 第九批 · 歷史回饋. New IDs do not inherit votes or notes.",
+    "Aim for distinct whole compositions and mechanisms, not merely changes to speed or alpha; preserved negative space is purposeful, not a reason for tiny detached motifs."
+  ],
+  "candidates": [
+    {
+      "number": 179,
+      "slug": "cathode-branches",
+      "title": "179 陰極分岔續寫",
+      "family": "輪廓能量",
+      "sourceId": "study-17-cathode",
+      "geometry": "沿可見 X 外緣保留連續細線和較長殘像；在兩個真正轉角分出相連的上、下場折線，組成有空間份量的訊號路徑。",
+      "motion": "描線前鋒逐角接續；抵達節點後向兩條不同支路分流，分支沿單一方向成長並衰退，不做整圈呼吸。",
+      "distinction": "以 17 長殘像和 73 接點為基礎，強調分岔的拓撲而非孤立火花。"
+    },
+    {
+      "number": 180,
+      "slug": "woven-return",
+      "title": "180 雙軌回路交織",
+      "family": "輪廓能量",
+      "sourceId": "study-74-cathode-weave",
+      "geometry": "兩條細軌貼合 X 臂並延伸至場域內形成完整的偏置回路；共用多個斜接肋，保留層次和空心輪廓。",
+      "motion": "線距、交會節點按路徑相位依次換接；亮段與接肋同步推進，線路本體持續可見。",
+      "distinction": "相較 74 將交織擴張成連續回路，而非單條軌道或離散封包。"
+    },
+    {
+      "number": 181,
+      "slug": "corner-conductor",
+      "title": "181 轉角導體",
+      "family": "輪廓能量",
+      "sourceId": "study-73-cathode-nodes",
+      "geometry": "數個相連的三角形轉角節點沿 X 可見邊分布，兩端各接長短不同的雙向斜軌；背景由關聯線構成而非額外小物件。",
+      "motion": "輸入邊收束、輸出邊延伸，接點開口隨拓撲重組；相鄰節點依序接手，轉角輪廓始終連貫。",
+      "distinction": "延伸 73 的連接構造，主角是節點幾何轉接而不是移動的亮點。"
+    },
+    {
+      "number": 182,
+      "slug": "spark-web",
+      "title": "182 跳火脈絡網",
+      "family": "輪廓能量",
+      "sourceId": "study-58-cathode-spark",
+      "geometry": "跨越上、下場的數條不等長折線與 X 臂緣共同形成稀疏連結網；接續點清楚，避免均勻點陣。",
+      "motion": "折角電弧依相鄰連結接力，上一落點引出下一段，殘線短暫保留；事件時序錯開而不整屏閃爍。",
+      "distinction": "保留 58 的因果接力，從局部擴展到有構圖關係的完整網路。"
+    },
+    {
+      "number": 183,
+      "slug": "crossed-sweeps",
+      "title": "183 交錯描寫",
+      "family": "輪廓能量",
+      "sourceId": "study-72-cathode-orbit",
+      "geometry": "內外兩層長線從不同 X 臂出發，與遠場斜向長弧軌相交；交會處以細肋和局部遮擋維持前後關係。",
+      "motion": "兩個描寫前鋒錯相單向繞角，在交會處先後通行並留下不同長度殘像；沒有整體來回位移。",
+      "distinction": "比較 72 雙軌與 17 描線的交錯時序，突出兩路通過關係。"
+    },
+    {
+      "number": 184,
+      "slug": "shield-fold-chain",
+      "title": "184 薄甲連鎖折面",
+      "family": "輪廓薄甲",
+      "sourceId": "study-76-shield-hinge",
+      "geometry": "多片連續的空心薄甲掛在 X 一側，長短不同並共用鉸線；適量場域延伸線顯示薄甲的空間層次。",
+      "motion": "前一片折面角度引發下一片跟進，接縫與斜撐同步變形；整條接合線固定於 X。",
+      "distinction": "從 76 的兩片鉸面延展成有依序關係的多片，不讓 X 字形移動。"
+    },
+    {
+      "number": 185,
+      "slug": "shield-swept-seam",
+      "title": "185 疊甲接縫前緣",
+      "family": "輪廓薄甲",
+      "sourceId": "study-75-shield-shingle",
+      "geometry": "一組不同長度的連續折邊甲片沿兩條 X 邊展開，疊壓區有前後遮擋，場域內有一道與其共邊的輪廓。",
+      "motion": "共同接縫依序跨過相鄰片，後片露出、前片局部收攏，明確可讀的重疊關係向前移交。",
+      "distinction": "集中研究 75 的接縫與遮擋，不使用來回滑塊。"
+    },
+    {
+      "number": 186,
+      "slug": "pressure-refraction",
+      "title": "186 護面折射鏈",
+      "family": "輪廓薄甲",
+      "sourceId": "study-20-shield",
+      "geometry": "兩層薄護面由 X 邊緣向外延伸成不等寬空心帶，接點以斜向支稜與遠場框線相連。",
+      "motion": "局部壓入到第一層後沿支稜傳至第二層，再折射到下一個接點，層次依時序改變而非整塊閃爍。",
+      "distinction": "聚焦 20 的壓力接力和內外層折射，不畫實心遮住 X。"
+    },
+    {
+      "number": 187,
+      "slug": "shield-braided-plates",
+      "title": "187 交織層甲",
+      "family": "輪廓薄甲",
+      "sourceId": "study-74-cathode-weave",
+      "geometry": "兩條細長輪廓帶和薄甲邊緣交織，共邊接肋在前後層穿越；延展至上下空場形成非對稱長形構圖。",
+      "motion": "交織處的前後順序逐段交換，薄甲接縫隨交接開合；線條不脫離共同底邊。",
+      "distinction": "結合 74 連續雙線與 75 的疊甲，既不是單獨軌道也不是單純描亮。"
+    },
+    {
+      "number": 188,
+      "slug": "shield-depth-bridge",
+      "title": "188 護甲深度橋",
+      "family": "輪廓薄甲",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "兩段 X 臂緣各有短組薄甲，之間以兩層空心斜稜橋接至遠側截面，清楚表現前、後遮擋。",
+      "motion": "甲片接縫朝橋面逐段交接，遠側截面的局部輪廓同步前進；空心體積維持固定註冊。",
+      "distinction": "探索 75 與 118 的連接，簡化 118 過花的多層裝飾但保留完整空間。"
+    },
+    {
+      "number": 189,
+      "slug": "quasi-phase-stream",
+      "title": "189 準晶相位流",
+      "family": "準晶場域",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "上、下場各有連續的共邊菱格鋪面，單元尺寸有層次、構圖延伸至可見區域，不縮成單個漂浮符號。",
+      "motion": "兩道斜向相位前緣穿過鋪面，沿前緣的三菱面局部換鄰接，其他結構穩定。",
+      "distinction": "以 36 全幅準晶為正向參考；有節奏的拓撲轉換，不是密集階梯地景。"
+    },
+    {
+      "number": 190,
+      "slug": "quasi-interference",
+      "title": "190 雙域相位界",
+      "family": "準晶場域",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "兩塊方向及尺度不同的菱格域相接，邊界不直切屏幕而沿共享稜形成曲折帶，留出前景閱讀空間。",
+      "motion": "兩側前緣錯相推進，共邊依序重組；域內保持連續格面，過渡帶有實際幾何交替。",
+      "distinction": "強調相鄰網域的曲折邊界，與單向掃描格子或兩個獨立菱形群不同。"
+    },
+    {
+      "number": 191,
+      "slug": "growth-branching",
+      "title": "191 晶格分枝生長",
+      "family": "準晶場域",
+      "sourceId": "study-45-growth-front",
+      "geometry": "從兩個不對稱種點生出連續的共邊菱格帶，格帶沿不同方向延展後透過共享接點相接，周圍仍有空間。",
+      "motion": "生長前緣沿相鄰面逐格接合，後緣在另一條路徑逐格退去，保留接合過程與已存在骨架。",
+      "distinction": "以 45 的生長與退去作核心，觀察雙前緣相遇而非滿版密鋪。"
+    },
+    {
+      "number": 192,
+      "slug": "quasi-fold-depth",
+      "title": "192 準晶折面縱深",
+      "family": "準晶場域",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "一條橫跨場域的菱格帶內有前後兩層透視截面，節點以短稜連接且保有清楚的共邊空間。",
+      "motion": "三面結構依序翻轉鄰接，近側邊緣局部遮擋遠側邊緣，形成可辨的折面深度而非亮度呼吸。",
+      "distinction": "結合 36 的相位翻轉與 118 的假透視，地形密度低於被拒的 115/116。"
+    },
+    {
+      "number": 193,
+      "slug": "quasi-cutout",
+      "title": "193 截面鑲嵌場",
+      "family": "準晶場域",
+      "sourceId": "study-51-multi-section",
+      "geometry": "上下場有大小變化的連續共邊菱格，從 X 附近開出一片空心的斜向截面，截面邊與格邊互相註冊。",
+      "motion": "截面單向穿過格域，沿路菱面順次換接，交點留下可讀的前後邊界。",
+      "distinction": "比較 36 全場結構和 51 的交切截面，不把格網縮成裝飾性小圖示。"
+    },
+    {
+      "number": 194,
+      "slug": "extrusion-single-layer",
+      "title": "194 單層空心引伸",
+      "family": "空心縱深",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "依可見 X 臂的真實輪廓後移一層，主要角以稜線連接形成完整空心引伸；少量連續背景線呼應其消失方向。",
+      "motion": "短截面以單向循環穿過引伸體，前後輪廓透過遮擋交代進深；X 原本輪廓固定。",
+      "distinction": "直接回應 118 整體滿意但過花：保留形體與空間，減少多層花飾而不縮成短線。"
+    },
+    {
+      "number": 195,
+      "slug": "extrusion-offset-gates",
+      "title": "195 錯層開口截面",
+      "family": "空心縱深",
+      "sourceId": "study-51-multi-section",
+      "geometry": "同一空心縱深軌上有兩個大小不同的開口截面，與 X 外緣及遠處輔助稜相接，框內不填滿。",
+      "motion": "前後截面以不同相位向同方向推進，交會處只遮斷真正的交叉邊，不做端點減速反向。",
+      "distinction": "借 51 的交切關係，呈現前後通過；與固定的單層引伸框不同。"
+    },
+    {
+      "number": 196,
+      "slug": "extrusion-fan",
+      "title": "196 分歧截面扇",
+      "family": "空心縱深",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "從一段 X 邊緣向兩個略不同的後方方向展開空心稜線，兩組截面有共享起點和不同消失方向。",
+      "motion": "局部截面交錯由近到遠接續，兩方向以不同節奏更新，X 與共用邊不移動。",
+      "distinction": "比較單一引伸和分歧空間，但禁止透視走廊或未關聯的具象物件。"
+    },
+    {
+      "number": 197,
+      "slug": "extrusion-cross-section",
+      "title": "197 交會稜柱切片",
+      "family": "空心縱深",
+      "sourceId": "study-51-multi-section",
+      "geometry": "兩條空心的斜向稜柱沿不同角度穿過 X 臂周圍，交叉面只以線框及遮擋顯示交接。",
+      "motion": "一個截面沿每條稜柱單向移動，交會時前後線順序交替，留下不同長度殘線。",
+      "distinction": "承接 51 的雙向交切和 118 的空心延伸，重點是兩個空間體的相交。"
+    },
+    {
+      "number": 198,
+      "slug": "extrusion-stepped-shell",
+      "title": "198 層階稜框",
+      "family": "空心縱深",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "X 的一側連出兩層不同尺度的開口輪廓，幾條稜線勾出局部折階；保留疏密變化，避免滿版階梯。",
+      "motion": "從近到遠的輪廓依次接合，短缺口在相鄰層轉移；各層空間註冊固定而非整組呼吸。",
+      "distinction": "比較 118 多層引伸的結構簡化，兩層尺度有差異，不使用假掃描線。"
+    },
+    {
+      "number": 199,
+      "slug": "glitch-frame-log",
+      "title": "199 幾何實況紀錄",
+      "family": "Glitch 真實內文",
+      "sourceId": "study-127-hardcut-slides",
+      "geometry": "X 邊與空場形成不對稱資訊層；以可讀文字列出目前 D 視窗尺寸、可見 X 邊數與共享動畫時間，這些全部來自 frame，不能虛構系統狀態。",
+      "motion": "文字以短暫錯位／切片修復出現，幾何線段異步接回，讀值持續可辨，禁止連續高頻閃爍。",
+      "distinction": "直接回應 153「更 Glitch、真實內文」的可能方向；不重做被拒絕的純 SIM 條列。"
+    },
+    {
+      "number": 200,
+      "slug": "glitch-edge-index",
+      "title": "200 輪廓索引漂移",
+      "family": "Glitch 真實內文",
+      "sourceId": "study-17-cathode",
+      "geometry": "沿 X 可見邊附近佈置少量與真實可見邊索引、長度對應的文字，遠場有稜線相連；標籤不能遮住既有資訊。",
+      "motion": "某個索引的字形暫時水平切片錯位再恢復，對應輪廓以描線前鋒接續；其餘文字與輪廓仍穩定。",
+      "distinction": "真實可見邊測量和 17 陰極描邊結合，並非模擬網路狀態。"
+    },
+    {
+      "number": 201,
+      "slug": "glitch-section-readout",
+      "title": "201 截面座標錯位",
+      "family": "Glitch 真實內文",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "一層空心引伸框旁置實際中央菱形頂點座標與視窗尺寸的可讀文字，文本與相關幾何線相連。",
+      "motion": "數字局部短暫錯列與重新對齊，框邊同步段落式重註冊；每輪有穩定閱讀時間。",
+      "distinction": "用畫面實際幾何產生真實內文，將 Glitch 應用於 118 的空心空間。"
+    },
+    {
+      "number": 202,
+      "slug": "glitch-phase-log",
+      "title": "202 準晶相位紀錄",
+      "family": "Glitch 真實內文",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "一條連續共邊菱格帶接一段真正的動畫相位紀錄；顯示來源為共享 frame.time 及實際生成的格面／相位數，不宣稱網路或硬體讀值。",
+      "motion": "菱格前緣換接的同時，對應行以短暫局部字元偏移或重排更新，其餘紀錄可讀。",
+      "distinction": "以準晶幾何的真實演算法狀態為內容，而非幾個偽造狀態槽。"
+    },
+    {
+      "number": 203,
+      "slug": "glitch-contour-log",
+      "title": "203 輪廓重建記錄",
+      "family": "Glitch 真實內文",
+      "sourceId": "study-74-cathode-weave",
+      "geometry": "X 附近的兩條互連細線跨到一列分行文字；文字實際呈現可見邊數、共享時間和畫布尺寸，與細線拓撲有視覺對應。",
+      "motion": "條列逐行重註冊、局部位移後回復，交織線的交點同期接續；保持低頻、非整屏閃爍。",
+      "distinction": "把真實文字融入連續輪廓的故障重建，而非重做獨立儀表窗。"
+    },
+    {
+      "number": 204,
+      "slug": "cathode-quasi-link",
+      "title": "204 準晶陰極接續",
+      "family": "輪廓與場域",
+      "sourceId": "study-36-quasicrystal",
+      "geometry": "上方一片完整準晶菱格沿共邊向 X 的兩條連續陰極線靠攏，兩者在清楚接點處共用幾何。",
+      "motion": "準晶相位邊界到達接點後觸發描線沿 X 臂推進；前者持續存在，後者接入下一節點。",
+      "distinction": "真正連接 36 場域和 17 描線，不是將一個小網格貼在原圖旁。"
+    },
+    {
+      "number": 205,
+      "slug": "shield-quasi-interlock",
+      "title": "205 菱格薄甲咬合",
+      "family": "輪廓與場域",
+      "sourceId": "study-75-shield-shingle",
+      "geometry": "多片空心薄甲沿 X 邊疊接，外側是一片連續菱格；甲片的外緣與相鄰菱格共邊。",
+      "motion": "接縫逐片交接並驅動相鄰菱格的局部面翻接，背景剩餘格面保持穩定。",
+      "distinction": "結合 75 的疊片與 36 的場，強調共邊和因果關係而非互不相干的圖案。"
+    },
+    {
+      "number": 206,
+      "slug": "depth-cathode-bridge",
+      "title": "206 縱深描線接駁",
+      "family": "輪廓與場域",
+      "sourceId": "study-118-section-extrusion",
+      "geometry": "一層 X 空心引伸形成遠近框，原 X 外緣的兩條細描線經角稜連到後框，背景有同方向連續長線。",
+      "motion": "描線由近邊向角稜和遠邊單向接續，長殘像揭示空間深度，後框與 X 始終固定。",
+      "distinction": "連接 17 的描線與 118 的空心體，減少裝飾不減少構圖範圍。"
+    },
+    {
+      "number": 207,
+      "slug": "growth-spark-front",
+      "title": "207 生長跳火前緣",
+      "family": "輪廓與場域",
+      "sourceId": "study-45-growth-front",
+      "geometry": "一組多方向共邊菱格從一側成帶狀延伸至 X 附近，接觸處與一條折角電弧線共用節點。",
+      "motion": "生長前緣每到一個 X 接點就引發下一次跳火；格面接續與火花路徑依時間交錯。",
+      "distinction": "讓 45 的生長與 58 的跳火有明確因果，避免隨機散點。"
+    },
+    {
+      "number": 208,
+      "slug": "section-weave-depth",
+      "title": "208 交織截面縱深",
+      "family": "輪廓與場域",
+      "sourceId": "study-51-multi-section",
+      "geometry": "沿 X 兩條空心斜向截面與雙軌互相穿越，交會區域由前後遮擋和共用斜肋連成一個整體。",
+      "motion": "截面以不同速度單向推進，雙線交會節點依次換接；交錯稜保留連貫，不整體折返。",
+      "distinction": "融合 51 空間交切與 74 雙軌織構，呈現可辨別的層次和動作。"
+    }
+  ]
+}

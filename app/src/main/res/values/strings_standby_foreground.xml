@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand mark text; prototype #standby-view .brand-name "MIRAX" (prototype 747-749). Version omitted: no approved native source. -->
+    <string name="standby_foreground_brand" translatable="false">MIRAX</string>
+    <!-- Receiver identification label; separate from the raw receiver name. -->
+    <string name="standby_foreground_receiver_label">RECEIVER</string>
+    <!-- Menu / settings handle; prototype #settings-handle aria-label. Host wiring pending; explicit callback contract only. -->
+    <string name="standby_foreground_menu">Settings</string>
+    <string name="standby_foreground_menu_desc">Open standby settings</string>
+    <string name="standby_foreground_broadcast_desc_on">Broadcast on. Activate to stop broadcast.</string>
+    <string name="standby_foreground_broadcast_desc_off">Broadcast off. Activate to start broadcast.</string>
+    <!-- Hardline caption; prototype .hardline-caption "MIRAX / WIRELESS DISPLAY / RECEIVER" (759). -->
+    <string name="standby_foreground_hardline_caption" translatable="false">MIRAX</string>
+    <string name="standby_foreground_hardline_sub" translatable="false">WIRELESS DISPLAY / RECEIVER</string>
+    <!-- Matter plate accessibility wrapper: %1$s is the localized phase or generic failure meaning, not the visible code. -->
+    <string name="standby_foreground_matter_status_desc">Matter status: %1$s</string>
+    <!-- Landscape connection hint; prototype #connection-hint Win+K copy (big-standby-prototype.html 783). %1$s is the receiver name. -->
+    <string name="standby_foreground_connection_hint_format">Windows: press Win + K · Choose %1$s</string>
+    <!-- Landscape non-invitation hint uses phase.detail, not Matter's shorter phase.hint. -->
+    <string name="standby_foreground_landscape_wifi_paused_hint">Wi-Fi is off · Turn on Wi-Fi to broadcast</string>
+    <!-- Hardline Row 3 status stream copy; prototype e-scene.js STATUS_COPY, reusing connection_hint_format and phase_connecting_detail where identical. -->
+    <string name="standby_foreground_hardline_status_ready">Press the broadcast button to start receiving</string>
+    <string name="standby_foreground_hardline_status_arming">Starting · Not ready</string>
+    <string name="standby_foreground_hardline_status_wifi_paused">Wi-Fi is off · Please turn on Wi-Fi to broadcast</string>
+    <string name="standby_foreground_hardline_status_frozen">Receiver unavailable · Check settings</string>
+    <string name="standby_foreground_hardline_status_failure">Connection failed · Press Win + K to retry</string>
+    <!-- Matter connection hint; prototype #connection-hint Windows Win+K copy (big-standby-prototype.html:1894). -->
+    <string name="standby_foreground_hint_prefix">Windows · Press Win + K</string>
+    <!-- Phase copy; prototype phases table (big-standby-prototype.html 1125-1132) without the simulation-only suffixes. -->
+    <string name="standby_foreground_phase_off_title">Receiver Off</string>
+    <string name="standby_foreground_phase_off_detail">Broadcast is off</string>
+    <string name="standby_foreground_phase_arming_title">Starting</string>
+    <string name="standby_foreground_phase_arming_detail">Receiver starting</string>
+    <string name="standby_foreground_phase_waiting_title">Waiting for Connection</string>
+    <string name="standby_foreground_phase_waiting_detail">Receiver ready</string>
+    <string name="standby_foreground_phase_connecting_title">Connecting</string>
+    <string name="standby_foreground_phase_connecting_detail">Connecting · Please wait</string>
+    <string name="standby_foreground_phase_projecting_title">Connected</string>
+    <string name="standby_foreground_phase_wifi_paused_title">Wi-Fi is Off</string>
+    <string name="standby_foreground_phase_wifi_paused_detail">Wi-Fi is off</string>
+    <string name="standby_foreground_phase_frozen_title">Receiver Unavailable</string>
+    <string name="standby_foreground_phase_frozen_detail">Receiver unavailable</string>
+    <string name="standby_foreground_phase_failed_title">Connection Failed</string>
+    <!-- Localized phase indicators, distinct from Matter's fixed visible codes. -->
+    <string name="standby_foreground_phase_off_eyebrow">BROADCAST OFF</string>
+    <string name="standby_foreground_phase_arming_eyebrow">STARTING</string>
+    <string name="standby_foreground_phase_waiting_eyebrow">BROADCAST ON</string>
+    <string name="standby_foreground_phase_connecting_eyebrow">CONNECTING</string>
+    <string name="standby_foreground_phase_projecting_eyebrow">PROJECTING</string>
+    <string name="standby_foreground_phase_wifi_paused_eyebrow">WI-FI PAUSED</string>
+    <string name="standby_foreground_phase_frozen_eyebrow">RECEIVER UNAVAILABLE</string>
+    <string name="standby_foreground_phase_failed_eyebrow">CONNECTION FAILED</string>
+</resources>

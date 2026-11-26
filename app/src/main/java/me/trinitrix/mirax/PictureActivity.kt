@@ -366,11 +366,7 @@ class PictureActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (session.snapshot().orientationLockEnabled && requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
             lockedDirectionIsLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         }
-        if (session.snapshot().showFloatingBall) {
-            applySession(SessionHost.openedMiraxDashboard(this))
-        } else {
-            applySession(session.snapshot())
-        }
+        applySession(SessionHost.projectionPresented(this))
         startDebugOverlayUpdates()
     }
 

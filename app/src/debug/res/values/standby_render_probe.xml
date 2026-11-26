@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_probe_reference">Standby probe reference line</string>
+    <string name="standby_probe_long_name">Deliberately overlong standby receiver name for ellipsis observation 0123456789 ABCDEFGHIJ abcdefghij</string>
+    <string name="standby_probe_overlay">Native overlay</string>
+    <string name="standby_probe_overlay_desc">Probe overlay description. Native text bound for custom draw comparison.</string>
+</resources>

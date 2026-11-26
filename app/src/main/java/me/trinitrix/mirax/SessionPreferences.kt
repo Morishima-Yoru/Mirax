@@ -1,6 +1,8 @@
 package me.trinitrix.mirax
 
 import android.content.Context
+import android.util.Log
+import androidx.annotation.VisibleForTesting
 import me.trinitrix.mirax.session.ControlPanelEntry
 import me.trinitrix.mirax.session.LanguagePreference
 import me.trinitrix.mirax.session.PictureScale
@@ -35,9 +37,25 @@ object SessionPreferences {
     private const val KEY_CONTROL_PANEL_ENTRY = "control_panel_entry"
     private const val KEY_ORIENTATION_LOCK_ENABLED = "orientation_lock_enabled"
 
+    /** Last settings written by [saveResolutionSettings]; skips redundant startup writes. */
+    @Volatile
+    private var lastSavedResolutionSettings: SessionSettings? = null
+
+    /** Clears the write cache so tests observe real persistence. */
+    @VisibleForTesting
+    fun resetCacheForTesting() {
+        lastSavedResolutionSettings = null
+    }
+
     fun load(context: Context): SessionSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val language = when (prefs.getString(KEY_LANGUAGE, LanguagePreference.FOLLOW_SYSTEM.name)) {
+        val languageRaw = try {
+            prefs.getString(KEY_LANGUAGE, LanguagePreference.FOLLOW_SYSTEM.name)
+        } catch (failure: ClassCastException) {
+            Log.e("SessionPreferences", "Invalid language preference type", failure)
+            null
+        }
+        val language = when (languageRaw) {
             LanguagePreference.TRADITIONAL_CHINESE.name -> LanguagePreference.TRADITIONAL_CHINESE
             LanguagePreference.ENGLISH.name -> LanguagePreference.ENGLISH
             else -> LanguagePreference.FOLLOW_SYSTEM
@@ -96,10 +114,10 @@ object SessionPreferences {
     }
 
     fun saveAdvertising(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_ADVERTISING, enabled)
-            .apply()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_ADVERTISING, false) != enabled) {
+            prefs.edit().putBoolean(KEY_ADVERTISING, enabled).apply()
+        }
     }
 
     fun saveLanguagePreference(context: Context, preference: LanguagePreference) {
@@ -129,6 +147,7 @@ object SessionPreferences {
      * floating-ball, picture-scale, and control-panel entry settings.
      */
     fun saveResolutionSettings(context: Context, settings: SessionSettings) {
+        if (settings == lastSavedResolutionSettings) return
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .apply {
@@ -160,6 +179,7 @@ object SessionPreferences {
                 putBoolean(KEY_ORIENTATION_LOCK_ENABLED, settings.orientationLockEnabled)
             }
             .apply()
+        lastSavedResolutionSettings = settings
     }
 
     /** Persist whether the floating ball appears outside the projection activity. */

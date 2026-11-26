@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="standby_settings_panel_title">待機設定</string>
+    <string name="standby_settings_theme_section">主題</string>
+    <string name="standby_settings_language_section">語言</string>
+    <string name="standby_settings_theme_landscape">山霧 · 流動地景</string>
+    <string name="standby_settings_theme_matter">微粒 · 黑白場域</string>
+    <string name="standby_settings_theme_hardline">硬線 · MIRAX 形構</string>
+    <string name="standby_settings_theme_legacy">傳統儀表板</string>
+    <string name="standby_settings_lang_follow">跟隨系統</string>
+    <string name="standby_settings_lang_zh">繁體中文</string>
+    <string name="standby_settings_lang_en">English</string>
+    <string name="standby_settings_theme_read_failed">無法載入待機主題。</string>
+    <string name="standby_settings_theme_save_failed">無法確認待機主題設定。</string>
+    <string name="standby_settings_language_failed">無法確認語言設定。</string>
+    <string name="standby_settings_selected_suffix">（已選取）</string>
+    <string name="standby_settings_cd_theme_landscape">選擇待機主題：山霧 · 流動地景</string>
+    <string name="standby_settings_cd_theme_matter">選擇待機主題：微粒 · 黑白場域</string>
+    <string name="standby_settings_cd_theme_hardline">選擇待機主題：硬線 · MIRAX 形構</string>
+    <string name="standby_settings_cd_theme_legacy">選擇待機主題：傳統儀表板</string>
+    <string name="standby_settings_cd_lang_follow">選擇語言：跟隨系統</string>
+    <string name="standby_settings_cd_lang_zh">選擇語言：繁體中文</string>
+    <string name="standby_settings_cd_lang_en">選擇語言：English</string>
+</resources>

@@ -18,6 +18,17 @@ Single-context: `../docs/CONTEXT.md` and `../docs/adr/`. See `../docs/agents/dom
 See `.agents/e2e-testing.md` for `adb` + `UiAutomator` verification procedures.
 
 # Policy
+## Device Testing Protocol (Shared Test Devices)
+
+When deploying to shared test devices, **always uninstall the existing app before installing a new build**. Do not attempt in-place upgrades, versionCode checks, or data backup strategies. The test device is disposable — clean install is the only supported flow.
+
+```pwsh
+adb uninstall me.trinitrix.mirax
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+This avoids `INSTALL_FAILED_VERSION_DOWNGRADE` and stale data issues. VersionCode in `build.gradle.kts` is for release tracking only; it does not constrain local test installs.
+
 ## When Kotlin / Java
 * Aim to use Kotlin (Java only when required for JNI/legacy).
 * Use Gradle (KTS) for builds.

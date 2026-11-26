@@ -1,38 +1,29 @@
 package me.trinitrix.mirax.session
 
+import kotlin.math.roundToInt
+
 /**
  * Parse and correct preferred-mode text: keep legal positive-integer width/height,
- * snap refresh to the allowed set, and shrink along aspect when over H.264 level 5.1.
+ * round refresh into 24 through 240 Hz, and shrink along aspect when over H.264 level 5.1.
  */
 object PreferredModeCorrection {
-    private val ALLOWED_REFRESH: IntArray = intArrayOf(24, 25, 30, 50, 60)
-
     private val MODE_PATTERN = Regex(
         """^\s*(\d+)\s*[x×X*]\s*(\d+)(?:\s*@\s*(\d+(?:\.\d+)?))?\s*$""",
     )
 
     /**
-     * Snap a refresh rate to the nearest of 24, 25, 30, 50, 60.
-     * Exact ties take the higher rate.
+     * Round a refresh rate to integer Hz within the inclusive 24 through 240 range.
+     *
+     * @param raw positive refresh rate; exact ties take the higher integer
+     * @return the rounded rate clamped to 24 through 240 Hz
      */
-    fun snapRefreshHz(raw: Double): Int {
-        var best = ALLOWED_REFRESH[0]
-        var bestDistance = kotlin.math.abs(raw - best)
-        for (candidate in ALLOWED_REFRESH) {
-            val distance = kotlin.math.abs(raw - candidate)
-            if (distance < bestDistance || (distance == bestDistance && candidate > best)) {
-                best = candidate
-                bestDistance = distance
-            }
-        }
-        return best
-    }
+    fun snapRefreshHz(raw: Double): Int = raw.roundToInt().coerceIn(24, 240)
 
     /**
      * Correct width, height, and refresh into a legal preferred mode.
      *
      * Positive-integer dimensions are kept as given (including non-multiples of 16).
-     * Refresh is snapped; if the mode exceeds level 5.1, width and height shrink along
+     * Refresh is rounded and clamped; if the mode exceeds level 5.1, width and height shrink along
      * the current aspect until they fit, then correction runs again.
      */
     fun correct(width: Int, height: Int, refreshHz: Int): VideoMode? {

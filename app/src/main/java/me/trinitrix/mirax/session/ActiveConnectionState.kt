@@ -19,6 +19,24 @@ internal class ActiveConnectionState {
     val isConnected: Boolean
         get() = _phase == ConnectionPhase.PLAYING
 
+    /** Whether the latest requested foreground presentation has been acknowledged. */
+    var picturePresented: Boolean = false
+        private set
+
+    /** Require fresh presentation confirmation for an explicit return to the connected picture. */
+    fun requestProjectionPresentation() {
+        picturePresented = false
+        awayOnHomeScreen = false
+    }
+
+    /** Confirm that the connected picture reached the foreground, not merely that launch was requested. */
+    fun onProjectionPresented() {
+        if (isConnected) {
+            picturePresented = true
+            awayOnHomeScreen = false
+        }
+    }
+
     private var _selectedMode: VideoMode? = null
     val selectedMode: VideoMode?
         get() = _selectedMode
@@ -92,6 +110,7 @@ internal class ActiveConnectionState {
 
     fun onConnectionEnded() {
         _phase = ConnectionPhase.ENDED
+        picturePresented = false
         controlPanelExpanded = false
         awayOnHomeScreen = false
         _selectedMode = null
@@ -116,6 +135,7 @@ internal class ActiveConnectionState {
     /** Enter a connected session for debug verification with [mode]. */
     fun enterMockConnected(mode: VideoMode = VideoMode(1920, 1080, 60)) {
         _phase = ConnectionPhase.PLAYING
+        picturePresented = false
         _selectedMode = mode
         connectionPreferredModeInternal = mode
         connectionAdvertisedModesInternal = setOf(mode)

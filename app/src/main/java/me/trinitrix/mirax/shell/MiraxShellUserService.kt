@@ -44,6 +44,10 @@ class MiraxShellUserService : IMiraxShellService.Stub() {
 
     override fun groupState(): String = beacon.groupState()
 
+    override fun groupSnapshotV2(): String = beacon.groupSnapshotV2()
+
+    override fun endSessionIfEpoch(epoch: String?): Boolean = beacon.endSessionIfEpoch(epoch)
+
     override fun wmSize(displayId: Int): String = Helper.wmSize(displayId)
 
     override fun forgetAllPairings() {
@@ -54,6 +58,9 @@ class MiraxShellUserService : IMiraxShellService.Stub() {
     override fun getPairingState(): String = beacon.getPairingState().name
 
     override fun isListening(): Boolean = beaconReady && beacon.isListening
+
+    /** Launches the fixed exported entry activity under the service's shell UID. */
+    override fun bringProjectionToFront() = Helper.bringProjectionToFront()
 
     override fun destroy() {
         Log.i(TAG, "destroy")
